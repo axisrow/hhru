@@ -1079,6 +1079,19 @@ def edit_experience_on_hh(
     protected-field merge, #327/#815). The manual ``--entry`` CLI path sets
     this; the LLM fill path leaves it False because it re-saves existing
     rows in place by their real indexes.
+
+    #1046 (refactor of #1035 участок 3, behavior unchanged): the loop body
+    below is decomposed into explicit form scenarios — ``_RowScenario``
+    (snapshot of the observed row indexes before the change, the resolved
+    form shape and whether a save click has already happened), then one
+    helper per phase: ``_binding_precondition_failure`` (the #782 title
+    preconditions), ``_open_row_form_failure`` (the three opening paths),
+    ``_fill_row_form`` (shape-resolved filling) and ``_save_row`` (panel
+    reconciliation + the bounded save loop + the post-save readback). The
+    loop itself only walks plan entries and accumulates results. Every
+    failure result below is terminal — the original loop stopped at the
+    first failure and returned the accumulated results plus it, and so
+    does this one.
     """
     try:
         open_confirmed_resume(page, resume_id)
@@ -1091,543 +1104,661 @@ def edit_experience_on_hh(
         title for rid, title in (resume_titles or {}).items() if rid != resume_id and title
     ]
     selected = list(indexes if indexes is not None else range(len(plan.entries)))
-    results = []
+    results: list[ExperienceResult] = []
     for entry, index in zip(plan.entries, selected, strict=False):
-        trigger = page.locator(EXPERIENCE_EDIT_BUTTON.format(index=index))
-        # #815: EXPERIENCE_EDIT_BUTTON's {index} is a non-contiguous internal
-        # React counter, not a 0..N-1 row position — trigger.count()==0 no
-        # longer means "this resume has no experience rows" the way it did
-        # when indexes were assumed contiguous from 0. It now only means
-        # "this particular index is not currently in use", which is true for
-        # MOST indexes on any resume that has been edited before. Query the
-        # actual set of existing rows instead: "first entry" (the only path
-        # ever confirmed safe to CREATE a row, #786/#787) applies only when
-        # the resume genuinely has zero rows.
-        existing_indexes = _experience_row_indexes(page)
-        first_entry = not existing_indexes
-        # #782/#787/#840: a non-empty resume being asked to CREATE a new row
-        # (requested index not among the current ones) goes through the
-        # third, shared-profile-editor shape via EXPERIENCE_ADD_BUTTON — the
-        # #815 fail-closed guard used to stop here unconditionally because
-        # that shape was unresearched; #840/#787 have since confirmed its
-        # selectors and its checkbox-binding panel, so it is now used
-        # instead of refusing outright. It still fails closed below if the
-        # add trigger, the target title, or the panel itself cannot be
-        # confirmed.
-        # #957: append_only additionally forces this shape when the requested
-        # index COLLIDES with an existing row (count()==1) — a manual plan
-        # would otherwise open that row's editor and overwrite it. The index
-        # under append_only carries no addressing meaning at all; only the
-        # add shape is used.
-        via_add_button = not first_entry and (append_only or trigger.count() == 0)
-        if via_add_button and target_title is None:
-            return results + [
-                ExperienceResult(
-                    f"строка опыта {index}: индекс не найден среди существующих строк "
-                    f"({existing_indexes}), а название целевого резюме для панели "
-                    "привязки не передано — добавление новой записи отклонено (#782)"
-                )
-            ]
-        # codex review (PR #958 round 2): on a NEW row every account resume is
-        # pre-checked by default, and reconciliation can only uncheck resumes
-        # whose panel title it can resolve. A resume with an unconfirmed
-        # (empty) title from list_resume_cards is silently dropped from
-        # other_titles by the `and title` filter below — its checkbox would
-        # stay checked and the save would over-bind the row to a resume the
-        # caller never named. That is exactly the partial reconciliation the
-        # fail-closed contract forbids: refuse the save up front instead.
-        unconfirmed_titles = sorted(
-            rid for rid, title in (resume_titles or {}).items() if rid != resume_id and not title
-        )
-        if via_add_button and unconfirmed_titles:
-            return results + [
-                ExperienceResult(
-                    f"строка опыта {index}: название резюме {unconfirmed_titles[0]} "
-                    "в панели привязки не подтверждено — привязка новой записи "
-                    "к неразобранным резюме недопустима, добавление отклонено"
-                )
-            ]
-        # #796: snapshot the row count BEFORE opening the form for this entry
-        # — taking it after save cannot distinguish a bound save from a
-        # silent no-op, since both leave the count read at the same time.
-        before_indexes = set(existing_indexes)
-        if via_add_button:
-            add_trigger = page.locator(EXPERIENCE_ADD_BUTTON)
-            if add_trigger.count() != 1:
-                return results + [
-                    ExperienceResult(
-                        f"строка опыта {index}: add-триггер не подтверждён однозначно "
-                        f"({add_trigger.count()})"
-                    )
-                ]
-            try:
-                # #782 live trace (2026-08-30): _experience_row_indexes()
-                # just above expands the collapsed row list
-                # (_expand_experience_list), which reflows the page and can
-                # leave EXPERIENCE_ADD_BUTTON's bounding box above the
-                # current viewport (negative Y, confirmed live) — a
-                # different failure shape from the usual "visible !=
-                # hydrated" render race documented in CLAUDE.md.
-                # Locator.click()'s own actionability check scrolls the
-                # element into view too, but live testing found that
-                # auto-scroll intermittently loses the race against the
-                # reflow anyway (repeated 10-30s click timeouts observed
-                # live) — an explicit scroll_into_view_if_needed() before
-                # the click is a stronger, independent guarantee that does
-                # not depend on click()'s internal timing. An explicit
-                # finite click timeout is still set so a genuine
-                # actionability failure surfaces as a normal
-                # PlaywrightError here rather than the ambient 30s default.
-                add_trigger.scroll_into_view_if_needed(timeout=FORM_TIMEOUT_MS)
-                add_trigger.click(timeout=FORM_TIMEOUT_MS)
-                # #782 live trace (2026-08-30): a blind retry click here is
-                # unsafe — the first click above can succeed and already
-                # navigate the page to the shared-editor URL while the panel
-                # itself is still rendering (ordinary "commit is not
-                # painted" React race, just a slower one on this specific
-                # screen than PANEL_TIMEOUT_MS alone covers). Retrying
-                # add_trigger.click() at that point waits on a control that
-                # no longer exists on the NEW page (add_trigger was scoped
-                # to the old resume page's DOM) and only ever times out —
-                # confirmed live: this was the actual cause of every
-                # "не удалось открыть форму" failure observed while
-                # developing this fix, not a genuinely missed first click.
-                # A longer single wait for the panel is the correct fix;
-                # FORM_TIMEOUT_MS (10s) already covers the same class of
-                # slow-render race used everywhere else in this module.
-                page.locator(EXPERIENCE_RESUME_PANEL_SCOPE).wait_for(
-                    state="visible", timeout=FORM_TIMEOUT_MS
-                )
-            except PlaywrightError as exc:
-                return results + [
-                    ExperienceResult(f"строка опыта {index}: не удалось открыть форму: {exc}")
-                ]
-        elif first_entry:
-            # #786/#787: no in-page "add" trigger for the first experience row
-            # was ever confirmed by a research dump — the visible suggestion
-            # chip (`suitable-vacancies-suggest-item-experience`) navigates to
-            # the *shared* profile editor (`/profile/edit/experience`) without
-            # a reliable `resumeFrom` binding on an incomplete resume (#787
-            # live confirmation: the query param was dropped entirely). The
-            # resume-scoped route below was confirmed live (#787 write test)
-            # to open the form directly, pre-bound to this resume_id, with no
-            # click or checkbox panel involved.
-            edit_path = f"/resume/edit/{resume_id}/experience"
-            try:
-                goto_hh(page, f"{HH_BASE_URL}{edit_path}")
-            except PlaywrightError as exc:
-                return results + [
-                    ExperienceResult(
-                        f"строка опыта {index}: не удалось открыть новую запись: {exc}"
-                    )
-                ]
-            if not _expected_editor(page, resume_id, True):
-                return results + [
-                    ExperienceResult(
-                        f"строка опыта {index}: форма открыта не для того резюме ({page.url})"
-                    )
-                ]
-        elif trigger.count() != 1:
-            return results + [
-                ExperienceResult(f"строка опыта {index}: триггер не найден однозначно")
-            ]
-        # #786/#787/#840/#782: three distinct DOM shapes share this loop —
-        # the first-row editor (separate company/position/save/cancel data-
-        # qa), the indexed row editor (indexed company/position, shared
-        # profile-layout-*-button save/cancel), and the shared-add shape for
-        # a new row on a non-empty resume (SAME profile-layout-*-button
-        # save/cancel as the indexed editor, but PREFIX-scoped company/
-        # position selectors — its row index is a fresh React counter the
-        # caller cannot predict, see EXPERIENCE_SHARED_NEW_ROW_* provenance).
-        if first_entry:
-            company_selector = FIRST_EXPERIENCE_COMPANY
-            position_selector = FIRST_EXPERIENCE_POSITION
-        elif via_add_button:
-            company_selector = EXPERIENCE_SHARED_NEW_ROW_COMPANY
-            position_selector = EXPERIENCE_SHARED_NEW_ROW_POSITION
-        else:
-            company_selector = EXPERIENCE_COMPANY.format(index=index)
-            position_selector = EXPERIENCE_POSITION.format(index=index)
-        save_selector = FIRST_EXPERIENCE_SAVE if first_entry else EXPERIENCE_SAVE
-        cancel_selector = FIRST_EXPERIENCE_CANCEL if first_entry else EXPERIENCE_CANCEL
-        save_attempted = False
+        scenario = _start_row_scenario(page, index, append_only)
+        failure = _binding_precondition_failure(scenario, resume_id, resume_titles)
+        if failure is not None:
+            return results + [failure]
+        failure = _open_row_form_failure(page, resume_id, scenario)
+        if failure is not None:
+            return results + [failure]
         try:
-            if not first_entry and not via_add_button:
-                trigger.click()
-            page.locator(company_selector).wait_for(state="visible", timeout=FORM_TIMEOUT_MS)
-            if via_add_button and page.locator(company_selector).count() != 1:
-                return results + [
-                    ExperienceResult(
-                        f"строка опыта {index}: поле компании новой строки определяется "
-                        f"неоднозначно ({page.locator(company_selector).count()})"
-                    )
-                ]
-            company_locator = page.locator(company_selector)
-            position_locator = page.locator(position_selector)
-            start_year_locator = page.locator(EXPERIENCE_START_YEAR)
-            _fill_stable(page, company_locator, entry.company)
-            _fill_stable(page, position_locator, entry.position)
-            _fill_stable(page, start_year_locator, entry.start_year)
-            # #956: on the shared add-form (via_add_button) the month
-            # triggers carry NO resume-editor-*-month-input data-qa — they
-            # are the two bare magritte-select-activators (start=nth 0,
-            # end=nth 1). Using the wrong locator here reads count()==0 and
-            # SILENTLY SKIPS the month pick, after which hh.ru no-ops the
-            # save (live: validation "Пожалуйста, укажите" on the start
-            # month, no navigation, false uncertain).
-            if via_add_button:
-                start_month_locator = page.locator(SHARED_EXPERIENCE_START_MONTH)
-                end_month_locator = page.locator(SHARED_EXPERIENCE_END_MONTH)
-            elif first_entry:
-                # 2026-09-07 (census, read-only): first-entry form KEPT its own
-                # month data-qa (#811) when the indexed/shared editors dropped
-                # theirs (#956/#957) — it renders ZERO bare
-                # magritte-select-activators, so the positional pair reads
-                # count()==0 here and the pre-save verification fails closed.
-                start_month_locator = page.locator(FIRST_EXPERIENCE_START_MONTH)
-                end_month_locator = page.locator(FIRST_EXPERIENCE_END_MONTH)
-            else:
-                start_month_locator = page.locator(EXPERIENCE_START_MONTH)
-                end_month_locator = page.locator(EXPERIENCE_END_MONTH)
-            if start_month_locator.count() == 1 and entry.start_month:
-                _select_month_stable(page, start_month_locator, entry.start_month)
-            end_year_locator = page.locator(EXPERIENCE_END_YEAR)
-            if end_year_locator.count() == 1:
-                # #800: the end-year field is disabled while the "Работаю
-                # сейчас" checkbox is checked (checked by default on a new
-                # entry). Filling a disabled field just retries fill() until
-                # Playwright's timeout — check is_enabled() first rather than
-                # attempting the fill unconditionally. #811: end-month shares
-                # the exact same disabled/enabled gating (confirmed live), so
-                # it is filled right alongside end-year in each branch below.
-                end_year_enabled = end_year_locator.is_enabled()
-                if entry.current:
-                    if end_year_enabled:
-                        _fill(end_year_locator, "")
-                    # else: already disabled/blank — nothing to do.
-                elif end_year_enabled:
-                    _fill(end_year_locator, entry.end_year)
-                    if end_month_locator.count() == 1 and entry.end_month:
-                        _select_month_stable(page, end_month_locator, entry.end_month)
-                elif first_entry:
-                    # Checkbox selector is confirmed only on the first-row
-                    # editor's distinct DOM shape (#800) — uncheck it to
-                    # unlock the end-date fields before filling.
-                    checkbox = page.locator(FIRST_EXPERIENCE_CURRENT_CHECKBOX)
-                    if checkbox.count() != 1:
-                        return results + [
-                            ExperienceResult(
-                                f"строка {index}: чекбокс 'Работаю сейчас' "
-                                "не подтверждён однозначно"
-                            )
-                        ]
-                    checkbox.click()
-                    # No wait_for(state=...) covers "enabled" specifically —
-                    # the field is already visible while disabled, so that
-                    # would be a no-op. fill()'s own actionability check
-                    # already waits for enabled (with its own timeout), so
-                    # nothing further is needed here.
-                    _fill(end_year_locator, entry.end_year)
-                    if end_month_locator.count() == 1 and entry.end_month:
-                        _select_month_stable(page, end_month_locator, entry.end_month)
-                else:
-                    # Indexed row editor: no confirmed checkbox selector for
-                    # this DOM shape — fail closed rather than guess.
-                    return results + [
-                        ExperienceResult(
-                            f"строка {index}: поле окончания заблокировано, чекбокс "
-                            "'Работаю сейчас' для этой формы не подтверждён"
-                        )
-                    ]
-            description_locator = page.locator(EXPERIENCE_DESCRIPTION)
-            _fill_stable(page, description_locator, entry.description())
-            if entry.company_url and page.locator(EXPERIENCE_COMPANY_URL).count() == 1:
-                _fill(page.locator(EXPERIENCE_COMPANY_URL), entry.company_url)
+            filled = _fill_row_form(page, entry, scenario)
+            if isinstance(filled, ExperienceResult):
+                return results + [filled]
             if dry_run:
                 results.append(ExperienceResult(f"строка {index}: предложено, save не нажат", True))
-                page.locator(cancel_selector).click()
-            else:
-                if not first_entry:
-                    # #782: both the indexed row editor (existing row) and
-                    # the shared-add shape (via_add_button, new row) land on
-                    # the same profile-layout-*-button screen with the
-                    # "Резюме с этим местом работы" binding panel — reconcile
-                    # it before every save on this shape, not just the new-
-                    # row case, since the panel is present either way and an
-                    # unreconciled save on an EXISTING row would silently
-                    # trust whatever hh.ru's own default state happens to be.
-                    if target_title is None:
-                        return results + [
-                            ExperienceResult(
-                                f"строка {index}: название целевого резюме для панели "
-                                "привязки не передано — сохранение отклонено (#782)"
-                            )
-                        ]
-                    try:
-                        _reconcile_experience_resume_panel(
-                            page,
-                            target_title=target_title,
-                            other_titles=other_titles,
-                            is_new_row=via_add_button,
-                        )
-                    except ResumePanelReconciliationError as exc:
-                        return results + [ExperienceResult(f"строка {index}: {exc}")]
-                # #956: run this pass after panel reconciliation because
-                # checkbox clicks can trigger the same controlled-input
-                # remount that clears the form. Include every value written.
-                stable_fields = [
-                    (company_locator, entry.company),
-                    (position_locator, entry.position),
-                    (start_year_locator, entry.start_year),
-                    (description_locator, entry.description()),
-                ]
-                if entry.company_url:
-                    company_url_locator = page.locator(EXPERIENCE_COMPANY_URL)
-                    if company_url_locator.count() != 1:
-                        return results + [
-                            ExperienceResult(
-                                f"строка {index}: поле URL компании не подтверждено, "
-                                "save не нажат (#956)"
-                            )
-                        ]
-                    stable_fields.append((company_url_locator, entry.company_url))
-                if end_year_locator.count() == 1:
-                    stable_fields.append(
-                        (end_year_locator, "" if entry.current else entry.end_year)
-                    )
-                month_fields = []
-                if entry.start_month:
-                    if start_month_locator.count() != 1:
-                        return results + [
-                            ExperienceResult(
-                                f"строка {index}: месяц начала не подтверждён, save не нажат (#956)"
-                            )
-                        ]
-                    month_fields.append((start_month_locator, entry.start_month))
-                if entry.end_month and not entry.current:
-                    if end_month_locator.count() != 1:
-                        return results + [
-                            ExperienceResult(
-                                f"строка {index}: месяц окончания не подтверждён, "
-                                "save не нажат (#956)"
-                            )
-                        ]
-                    month_fields.append((end_month_locator, entry.end_month))
-
-                def _refill_and_verify_fields(
-                    stable_fields=stable_fields, month_fields=month_fields
-                ) -> bool:
-                    """Idempotent refill of every tracked control + one bounded
-                    settle pass (#956). Used before the first save click AND
-                    after a validation rejection — the async wipe can land in
-                    the window between the last verification and the submit
-                    itself (live 2026-09-03, dump-confirmed: description wiped
-                    in that window, 1x "Пожалуйста, укажите" on the rejected
-                    form although every pre-save check had just passed).
-                    Returns False when a value does not survive the settle
-                    wait — the caller fails closed without a blind re-save.
-                    """
-                    for stable_locator, stable_value in stable_fields:
-                        if stable_locator.input_value().strip() != stable_value.strip():
-                            stable_locator.fill(stable_value)
-                    for month_locator, month_value in month_fields:
-                        if _read_month(month_locator) != str(int(month_value)):
-                            _select_month(page, month_locator, month_value)
-                    page.wait_for_timeout(FIELD_SETTLE_WAIT_MS)
-                    return not any(
-                        stable_locator.input_value().strip() != stable_value.strip()
-                        for stable_locator, stable_value in stable_fields
-                    ) and not any(
-                        _read_month(month_locator) != str(int(month_value))
-                        for month_locator, month_value in month_fields
-                    )
-
-                if not _refill_and_verify_fields():
-                    return results + [
-                        ExperienceResult(
-                            f"строка {index}: форма сбросила значение перед "
-                            "сохранением, save не нажат (#956)"
-                        )
-                    ]
-                # #960: the save loop is flat and bounded. The invariant reads
-                # locally: the ONLY mutating click is `save.click()` below, it
-                # happens at most twice, and each iteration re-confirms —
-                # before clicking — that the page is still THIS resume's
-                # confirmed editor (_expected_editor; the attempt-2 re-check
-                # closes PR #958 cycle 3's drifted-retry finding). Every
-                # outcome leaves the loop in exactly one ledger state:
-                # saved → binding verification below, rejected after the
-                # refill retry → failed, anything else → uncertain.
-                save_attempted = False
-                for attempt in (1, 2):
-                    save = page.locator(save_selector)
-                    if save.count() != 1:
-                        return results + [
-                            ExperienceResult(f"строка {index}: save-кнопка не подтверждена")
-                        ]
-                    if save_attempted and not _expected_editor(page, resume_id, first_entry):
-                        # A save click already happened and its effect is
-                        # unknown — uncertain, never a blind re-click on an
-                        # unconfirmed form.
-                        return results + [
-                            ExperienceResult(
-                                f"строка {index}: повторный save отменён: редактор не подтверждён",
-                                uncertain=True,
-                            )
-                        ]
-                    save_attempted = True
-                    save.click()
-                    # wait_for_url is only the bounded timer that gives hh.ru
-                    # time to navigate; the verdict comes from
-                    # _classify_save_outcome's explicit path comparison below,
-                    # so a timeout here is not read as a failure (an SPA
-                    # pushState navigation need not raise the lifecycle event
-                    # wait_for_url waits for, #825). The trailing "**" matches
-                    # both the query suffix (live log 2026-09-03:
-                    # ".../resume/{id}?hhtmFrom=profile_experience") and a
-                    # trailing slash — the full-match-glob false-uncertains
-                    # from PR #958 review cycle 3.
-                    nav_error: PlaywrightError | None = None
-                    try:
-                        page.wait_for_url(
-                            f"**/resume/{resume_id}**",
-                            wait_until="commit",
-                            timeout=SAVE_TIMEOUT_MS,
-                        )
-                    except PlaywrightError as exc:
-                        nav_error = exc
-                    outcome = _classify_save_outcome(page, resume_id, first_entry)
-                    if outcome.kind == "saved":
-                        break
-                    if outcome.kind == "rejected" and attempt == 1:
-                        # Definite non-mutation: hh.ru refused the submit
-                        # client-side (#959). Answer it with ONE bounded
-                        # refill+verify pass and the second — and only —
-                        # re-click before reporting a failure; the #956 wipe
-                        # may have landed between the last verification and
-                        # THIS submit (live 2026-09-03, dump-confirmed).
-                        _dump_experience_save_failure(
-                            page,
-                            index,
-                            RuntimeError(f"hh.ru отклонил сохранение: {outcome.detail}"),
-                        )
-                        logger.warning(
-                            "experience: строка %s — save отклонён валидацией (%s); "
-                            "дозаполнение и один повторный save",
-                            index,
-                            outcome.detail,
-                        )
-                        try:
-                            refill_ok = _refill_and_verify_fields()
-                        except (PlaywrightError, ValueError) as refill_exc:
-                            # A save click has already happened, so the outcome
-                            # is uncertain, not a crash (PR #958 cycle 1).
-                            return results + [
-                                ExperienceResult(
-                                    f"строка {index}: дозаполнение после отклонения "
-                                    f"save не удалось: {refill_exc}",
-                                    uncertain=True,
-                                )
-                            ]
-                        if not refill_ok:
-                            return results + [
-                                ExperienceResult(
-                                    f"строка {index}: поле не удерживает значение "
-                                    f"после отклонения save: {outcome.detail}"
-                                )
-                            ]
-                        continue
-                    if outcome.kind == "rejected":
-                        # Dump here too: the validation text is generic
-                        # ("Пожалуйста, укажите") and does not name the field,
-                        # so without the HTML the rejected field is unprovable
-                        # and the next run repeats blind.
-                        _dump_experience_save_failure(
-                            page,
-                            index,
-                            RuntimeError(f"hh.ru отклонил сохранение: {outcome.detail}"),
-                        )
-                        return results + [
-                            ExperienceResult(
-                                f"строка {index}: hh.ru отклонил сохранение после "
-                                f"дозаполнения — валидация формы: {outcome.detail}"
-                            )
-                        ]
-                    # #956: dump the page at the moment of the unconfirmed save
-                    # (drifted editor, another page, unreadable state) so the
-                    # next investigation is reproducible without another live
-                    # attempt. nav_error (the raw Playwright timeout text) goes
-                    # into the dump/log; the CLI reason carries the classifier's
-                    # page-state detail.
-                    _dump_experience_save_failure(
-                        page,
-                        index,
-                        nav_error
-                        if nav_error is not None
-                        else RuntimeError(f"save не подтверждён: {outcome.detail}"),
-                    )
-                    return results + [
-                        ExperienceResult(
-                            f"строка {index}: сохранение не подтверждено: {outcome.detail}",
-                            uncertain=True,
-                        )
-                    ]
-                # #796/#787: a click succeeding and landing back on the resume
-                # page is not proof the row is bound to THIS resume — #787
-                # found saves that silently went to the shared profile
-                # instead. Reload and re-read the actual row set rather than
-                # trusting the in-memory DOM state right after save. This
-                # applies to a genuinely new row (first_entry AND the
-                # via_add_button add shape — both CREATE a row, so the row
-                # set must grow): editing an EXISTING row in place (fill mode
-                # re-saves the same index) must not be flagged just because
-                # the row set didn't change.
-                #
-                # #815 review: a bare count() comparison (before vs. after)
-                # is a weak positive signal — a resume that lost one row and
-                # gained a different one elsewhere on the same page (e.g. an
-                # unrelated concurrent edit) would show the same count and
-                # false-pass. The row set's *contents* is not directly
-                # comparable either — EXPERIENCE_EDIT_BUTTON's {index} is an
-                # internal React counter, so "a new index exists" is not the
-                # same claim as "our indexed one exists" if hh.ru is mid
-                # re-render across the reload. What IS decisive: at least one
-                # index present now that was not present before the save —
-                # that is only possible if hh.ru actually created a new row.
-                try:
-                    page.reload(wait_until="domcontentloaded")
-                    require_authenticated_page(page)
-                    if not resume_identity_matches(page, resume_id):
-                        return results + [
-                            ExperienceResult(
-                                f"строка {index}: после reload identity резюме не подтверждён",
-                                uncertain=True,
-                            )
-                        ]
-                    after_indexes = set(_experience_row_indexes(page))
-                except (PlaywrightError, NotAuthenticated) as exc:
-                    return results + [
-                        ExperienceResult(
-                            f"строка {index}: post-save проверка не подтверждена: {exc}",
-                            uncertain=True,
-                        )
-                    ]
-                if (first_entry or via_add_button) and not (after_indexes - before_indexes):
-                    return results + [
-                        ExperienceResult(
-                            f"строка {index}: запись не привязалась к резюме "
-                            f"(строк до={sorted(before_indexes)}, "
-                            f"после={sorted(after_indexes)})"
-                        )
-                    ]
-                results.append(
-                    ExperienceResult(f"строка {index}: сохранено и привязано к резюме", True)
-                )
+                page.locator(_form_button_selectors(scenario)[1]).click()
+                continue
+            outcome = _save_row(
+                page, resume_id, entry, scenario, filled, target_title, other_titles
+            )
         except (PlaywrightError, ValueError) as exc:
             return results + [
                 ExperienceResult(
                     f"строка {index}: {exc}",
-                    uncertain=save_attempted,
+                    uncertain=scenario.save_attempted,
                 )
             ]
+        if not outcome.success:
+            return results + [outcome]
+        results.append(outcome)
     return results
+
+
+@dataclass
+class _RowScenario:
+    """Resolved form scenario for one plan entry (#1046; behavior of the
+    pre-refactor loop body, unchanged).
+
+    ``first_entry``/``via_add_button`` keep their exact pre-refactor
+    semantics: first_entry — the resume genuinely has zero rows (the only
+    confirmed-safe way to CREATE one, #786/#787); via_add_button — the
+    shared-profile add shape, forced for every new row on a non-empty
+    resume and by ``append_only`` even on an index collision (#957).
+    ``existing_indexes``/``before_indexes`` are the #796 pre-change
+    snapshot; ``save_attempted`` is the #176-style uncertainty flag read
+    by the caller's exception handler.
+    """
+
+    index: int
+    existing_indexes: list[int]
+    before_indexes: set[int]
+    first_entry: bool
+    via_add_button: bool
+    save_attempted: bool = False
+
+
+def _start_row_scenario(page: Page, index: int, append_only: bool) -> _RowScenario:
+    """Classify the row's form scenario from the page BEFORE opening it.
+
+    The ``{index}`` in EXPERIENCE_EDIT_BUTTON is a non-contiguous internal
+    React counter, not a 0..N-1 row position (#815): trigger.count()==0
+    only means "this particular index is not currently in use", which is
+    true for MOST indexes on any resume that has been edited before. The
+    actual set of existing rows decides the scenario instead.
+    """
+    trigger = page.locator(EXPERIENCE_EDIT_BUTTON.format(index=index))
+    existing_indexes = _experience_row_indexes(page)
+    first_entry = not existing_indexes
+    # #782/#787/#840: a non-empty resume being asked to CREATE a new row
+    # (requested index not among the current ones) goes through the
+    # third, shared-profile-editor shape via EXPERIENCE_ADD_BUTTON — the
+    # #815 fail-closed guard used to stop here unconditionally because
+    # that shape was unresearched; #840/#787 have since confirmed its
+    # selectors and its checkbox-binding panel, so it is now used
+    # instead of refusing outright. It still fails closed in the open
+    # phase if the add trigger, the target title, or the panel itself
+    # cannot be confirmed.
+    # #957: append_only additionally forces this shape when the requested
+    # index COLLIDES with an existing row (count()==1) — a manual plan
+    # would otherwise open that row's editor and overwrite it. The index
+    # under append_only carries no addressing meaning at all; only the
+    # add shape is used.
+    via_add_button = not first_entry and (append_only or trigger.count() == 0)
+    # #796: snapshot the row count BEFORE opening the form for this entry
+    # — taking it after save cannot distinguish a bound save from a
+    # silent no-op, since both leave the count read at the same time.
+    return _RowScenario(
+        index=index,
+        existing_indexes=existing_indexes,
+        before_indexes=set(existing_indexes),
+        first_entry=first_entry,
+        via_add_button=via_add_button,
+    )
+
+
+def _binding_precondition_failure(
+    scenario: _RowScenario,
+    resume_id: str,
+    resume_titles: dict[str, str] | None,
+) -> ExperienceResult | None:
+    """Refuse rows whose binding panel cannot be reconciled BEFORE any
+    click (#782, #1046 refactor of the same checks, messages unchanged).
+
+    A row going through the shared-profile shape needs the target title
+    up front (fetching it mid-form would mean navigating away from an
+    already-open, unsaved form). Additionally — codex review (PR #958
+    round 2): on a NEW row every account resume is pre-checked by
+    default, and reconciliation can only uncheck resumes whose panel
+    title it can resolve. A resume with an unconfirmed (empty) title
+    from list_resume_cards is silently dropped from other_titles by the
+    ``and title`` filter — its checkbox would stay checked and the save
+    would over-bind the row to a resume the caller never named. That is
+    exactly the partial reconciliation the fail-closed contract forbids:
+    refuse the save up front instead. None means the row may proceed.
+    """
+    if not scenario.via_add_button:
+        return None
+    target_title = (resume_titles or {}).get(resume_id)
+    if target_title is None:
+        return ExperienceResult(
+            f"строка опыта {scenario.index}: индекс не найден среди существующих строк "
+            f"({scenario.existing_indexes}), а название целевого резюме для панели "
+            "привязки не передано — добавление новой записи отклонено (#782)"
+        )
+    unconfirmed_titles = sorted(
+        rid for rid, title in (resume_titles or {}).items() if rid != resume_id and not title
+    )
+    if unconfirmed_titles:
+        return ExperienceResult(
+            f"строка опыта {scenario.index}: название резюме {unconfirmed_titles[0]} "
+            "в панели привязки не подтверждено — привязка новой записи "
+            "к неразобранным резюме недопустима, добавление отклонено"
+        )
+    return None
+
+
+def _open_row_form_failure(
+    page: Page, resume_id: str, scenario: _RowScenario
+) -> ExperienceResult | None:
+    """Open the row's form according to its scenario; a failure result is
+    terminal, None means the form is open and filling may start (#1046).
+
+    Three distinct opening paths, one per confirmed DOM shape — they are
+    NOT unified behind one assumed selector (the React index is not the
+    row's position):
+    - via_add_button: click EXPERIENCE_ADD_BUTTON on the resume page and
+      wait for the binding panel of the shared-profile editor (#840);
+    - first_entry: navigate straight to the resume-scoped
+      /resume/edit/{id}/experience route, pre-bound to this resume_id
+      (#786/#787 — no in-page add trigger was ever confirmed);
+    - existing row: click THIS row's indexed edit trigger.
+    """
+    index = scenario.index
+    if scenario.via_add_button:
+        add_trigger = page.locator(EXPERIENCE_ADD_BUTTON)
+        if add_trigger.count() != 1:
+            return ExperienceResult(
+                f"строка опыта {index}: add-триггер не подтверждён однозначно "
+                f"({add_trigger.count()})"
+            )
+        try:
+            # #782 live trace (2026-08-30): _experience_row_indexes() just
+            # above expands the collapsed row list (_expand_experience_list),
+            # which reflows the page and can leave EXPERIENCE_ADD_BUTTON's
+            # bounding box above the current viewport (negative Y, confirmed
+            # live) — a different failure shape from the usual "visible !=
+            # hydrated" render race documented in CLAUDE.md.
+            # Locator.click()'s own actionability check scrolls the element
+            # into view too, but live testing found that auto-scroll
+            # intermittently loses the race against the reflow anyway
+            # (repeated 10-30s click timeouts observed live) — an explicit
+            # scroll_into_view_if_needed() before the click is a stronger,
+            # independent guarantee that does not depend on click()'s
+            # internal timing. An explicit finite click timeout is still set
+            # so a genuine actionability failure surfaces as a normal
+            # PlaywrightError here rather than the ambient 30s default.
+            add_trigger.scroll_into_view_if_needed(timeout=FORM_TIMEOUT_MS)
+            add_trigger.click(timeout=FORM_TIMEOUT_MS)
+            # #782 live trace (2026-08-30): a blind retry click here is
+            # unsafe — the first click above can succeed and already
+            # navigate the page to the shared-editor URL while the panel
+            # itself is still rendering (ordinary "commit is not painted"
+            # React race, just a slower one on this specific screen than
+            # PANEL_TIMEOUT_MS alone covers). Retrying add_trigger.click()
+            # at that point waits on a control that no longer exists on the
+            # NEW page (add_trigger was scoped to the old resume page's
+            # DOM) and only ever times out — confirmed live: this was the
+            # actual cause of every "не удалось открыть форму" failure
+            # observed while developing this fix, not a genuinely missed
+            # first click. A longer single wait for the panel is the
+            # correct fix; FORM_TIMEOUT_MS (10s) already covers the same
+            # class of slow-render race used everywhere else in this
+            # module.
+            page.locator(EXPERIENCE_RESUME_PANEL_SCOPE).wait_for(
+                state="visible", timeout=FORM_TIMEOUT_MS
+            )
+        except PlaywrightError as exc:
+            return ExperienceResult(f"строка опыта {index}: не удалось открыть форму: {exc}")
+        return None
+    if scenario.first_entry:
+        # #786/#787: no in-page "add" trigger for the first experience row
+        # was ever confirmed by a research dump — the visible suggestion
+        # chip (`suitable-vacancies-suggest-item-experience`) navigates to
+        # the *shared* profile editor (`/profile/edit/experience`) without
+        # a reliable `resumeFrom` binding on an incomplete resume (#787
+        # live confirmation: the query param was dropped entirely). The
+        # resume-scoped route below was confirmed live (#787 write test)
+        # to open the form directly, pre-bound to this resume_id, with no
+        # click or checkbox panel involved.
+        edit_path = f"/resume/edit/{resume_id}/experience"
+        try:
+            goto_hh(page, f"{HH_BASE_URL}{edit_path}")
+        except PlaywrightError as exc:
+            return ExperienceResult(f"строка опыта {index}: не удалось открыть новую запись: {exc}")
+        if not _expected_editor(page, resume_id, True):
+            return ExperienceResult(
+                f"строка опыта {index}: форма открыта не для того резюме ({page.url})"
+            )
+        return None
+    trigger = page.locator(EXPERIENCE_EDIT_BUTTON.format(index=index))
+    if trigger.count() != 1:
+        return ExperienceResult(f"строка опыта {index}: триггер не найден однозначно")
+    return None
+
+
+def _form_button_selectors(scenario: _RowScenario) -> tuple[str, str]:
+    """(save, cancel) selectors for the row's confirmed DOM shape (#1046).
+
+    The first-row editor carries its own namespace (#800); both the
+    indexed row editor and the shared-add shape share the
+    profile-layout-*-button pair (#782/#840).
+    """
+    if scenario.first_entry:
+        return FIRST_EXPERIENCE_SAVE, FIRST_EXPERIENCE_CANCEL
+    return EXPERIENCE_SAVE, EXPERIENCE_CANCEL
+
+
+def _row_field_selectors(scenario: _RowScenario) -> tuple[str, str]:
+    """(company, position) selectors for the row's confirmed DOM shape
+    (#1046).
+
+    #786/#787/#840/#782: three distinct DOM shapes share this loop —
+    the first-row editor (separate company/position/save/cancel data-
+    qa), the indexed row editor (indexed company/position, shared
+    profile-layout-*-button save/cancel), and the shared-add shape for
+    a new row on a non-empty resume (SAME profile-layout-*-button
+    save/cancel as the indexed editor, but PREFIX-scoped company/
+    position selectors — its row index is a fresh React counter the
+    caller cannot predict, see EXPERIENCE_SHARED_NEW_ROW_* provenance).
+    """
+    if scenario.first_entry:
+        return FIRST_EXPERIENCE_COMPANY, FIRST_EXPERIENCE_POSITION
+    if scenario.via_add_button:
+        return EXPERIENCE_SHARED_NEW_ROW_COMPANY, EXPERIENCE_SHARED_NEW_ROW_POSITION
+    return (
+        EXPERIENCE_COMPANY.format(index=scenario.index),
+        EXPERIENCE_POSITION.format(index=scenario.index),
+    )
+
+
+@dataclass
+class _FilledRowForm:
+    """Locators of one opened row form's controls (#1046).
+
+    The month locators are already resolved to the row's DOM shape; their
+    ``count()`` is re-checked at fill and save time exactly as in the
+    pre-refactor loop — a stale count is never cached.
+    """
+
+    company: Locator
+    position: Locator
+    start_year: Locator
+    description: Locator
+    start_month: Locator
+    end_month: Locator
+    end_year: Locator
+
+
+def _fill_row_form(
+    page: Page, entry: ExperienceEntry, scenario: _RowScenario
+) -> _FilledRowForm | ExperienceResult:
+    """Fill the opened form for one entry; an ExperienceResult return is a
+    terminal fail-closed refusal, _FilledRowForm means filling succeeded
+    (#1046; fill order and all refusal messages unchanged).
+
+    The month triggers are NOT one selector across shapes (#956/#811):
+    the shared add-form carries two bare magritte-select-activators, the
+    first-entry form kept its own data-qa, and the indexed editor has the
+    resume-editor-*-month-input pair — using the wrong one reads
+    count()==0 and SILENTLY SKIPS the month pick, after which hh.ru
+    no-ops the save.
+    """
+    index = scenario.index
+    company_selector, position_selector = _row_field_selectors(scenario)
+    # Existing-row shape: open THIS row's editor by its indexed trigger
+    # (#815 — the index is a React counter, not a row position). Kept in
+    # the fill phase because the caller's exception handler must catch a
+    # click failure here the same way it did pre-refactor.
+    if not scenario.first_entry and not scenario.via_add_button:
+        page.locator(EXPERIENCE_EDIT_BUTTON.format(index=index)).click()
+    page.locator(company_selector).wait_for(state="visible", timeout=FORM_TIMEOUT_MS)
+    if scenario.via_add_button and page.locator(company_selector).count() != 1:
+        return ExperienceResult(
+            f"строка опыта {index}: поле компании новой строки определяется "
+            f"неоднозначно ({page.locator(company_selector).count()})"
+        )
+    company_locator = page.locator(company_selector)
+    position_locator = page.locator(position_selector)
+    start_year_locator = page.locator(EXPERIENCE_START_YEAR)
+    _fill_stable(page, company_locator, entry.company)
+    _fill_stable(page, position_locator, entry.position)
+    _fill_stable(page, start_year_locator, entry.start_year)
+    if scenario.via_add_button:
+        # #956: on the shared add-form (via_add_button) the month
+        # triggers carry NO resume-editor-*-month-input data-qa — they
+        # are the two bare magritte-select-activators (start=nth 0,
+        # end=nth 1). Using the wrong locator here reads count()==0 and
+        # SILENTLY SKIPS the month pick, after which hh.ru no-ops the
+        # save (live: validation "Пожалуйста, укажите" on the start
+        # month, no navigation, false uncertain).
+        start_month_locator = page.locator(SHARED_EXPERIENCE_START_MONTH)
+        end_month_locator = page.locator(SHARED_EXPERIENCE_END_MONTH)
+    elif scenario.first_entry:
+        # 2026-09-07 (census, read-only): first-entry form KEPT its own
+        # month data-qa (#811) when the indexed/shared editors dropped
+        # theirs (#956/#957) — it renders ZERO bare
+        # magritte-select-activators, so the positional pair reads
+        # count()==0 here and the pre-save verification fails closed.
+        start_month_locator = page.locator(FIRST_EXPERIENCE_START_MONTH)
+        end_month_locator = page.locator(FIRST_EXPERIENCE_END_MONTH)
+    else:
+        start_month_locator = page.locator(EXPERIENCE_START_MONTH)
+        end_month_locator = page.locator(EXPERIENCE_END_MONTH)
+    if start_month_locator.count() == 1 and entry.start_month:
+        _select_month_stable(page, start_month_locator, entry.start_month)
+    end_year_locator = page.locator(EXPERIENCE_END_YEAR)
+    if end_year_locator.count() == 1:
+        # #800: the end-year field is disabled while the "Работаю
+        # сейчас" checkbox is checked (checked by default on a new
+        # entry). Filling a disabled field just retries fill() until
+        # Playwright's timeout — check is_enabled() first rather than
+        # attempting the fill unconditionally. #811: end-month shares
+        # the exact same disabled/enabled gating (confirmed live), so
+        # it is filled right alongside end-year in each branch below.
+        end_year_enabled = end_year_locator.is_enabled()
+        if entry.current:
+            if end_year_enabled:
+                _fill(end_year_locator, "")
+            # else: already disabled/blank — nothing to do.
+        elif end_year_enabled:
+            _fill(end_year_locator, entry.end_year)
+            if end_month_locator.count() == 1 and entry.end_month:
+                _select_month_stable(page, end_month_locator, entry.end_month)
+        elif scenario.first_entry:
+            # Checkbox selector is confirmed only on the first-row
+            # editor's distinct DOM shape (#800) — uncheck it to
+            # unlock the end-date fields before filling.
+            checkbox = page.locator(FIRST_EXPERIENCE_CURRENT_CHECKBOX)
+            if checkbox.count() != 1:
+                return ExperienceResult(
+                    f"строка {index}: чекбокс 'Работаю сейчас' не подтверждён однозначно"
+                )
+            checkbox.click()
+            # No wait_for(state=...) covers "enabled" specifically —
+            # the field is already visible while disabled, so that
+            # would be a no-op. fill()'s own actionability check
+            # already waits for enabled (with its own timeout), so
+            # nothing further is needed here.
+            _fill(end_year_locator, entry.end_year)
+            if end_month_locator.count() == 1 and entry.end_month:
+                _select_month_stable(page, end_month_locator, entry.end_month)
+        else:
+            # Indexed row editor: no confirmed checkbox selector for
+            # this DOM shape — fail closed rather than guess.
+            return ExperienceResult(
+                f"строка {index}: поле окончания заблокировано, чекбокс "
+                "'Работаю сейчас' для этой формы не подтверждён"
+            )
+    description_locator = page.locator(EXPERIENCE_DESCRIPTION)
+    _fill_stable(page, description_locator, entry.description())
+    if entry.company_url and page.locator(EXPERIENCE_COMPANY_URL).count() == 1:
+        _fill(page.locator(EXPERIENCE_COMPANY_URL), entry.company_url)
+    return _FilledRowForm(
+        company=company_locator,
+        position=position_locator,
+        start_year=start_year_locator,
+        description=description_locator,
+        start_month=start_month_locator,
+        end_month=end_month_locator,
+        end_year=end_year_locator,
+    )
+
+
+def _refill_and_verify_fields(
+    page: Page, stable_fields: list[tuple[Locator, str]], month_fields: list[tuple[Locator, str]]
+) -> bool:
+    """Idempotent refill of every tracked control + one bounded
+    settle pass (#956). Used before the first save click AND
+    after a validation rejection — the async wipe can land in
+    the window between the last verification and the submit
+    itself (live 2026-09-03, dump-confirmed: description wiped
+    in that window, 1x "Пожалуйста, укажите" on the rejected
+    form although every pre-save check had just passed).
+    Returns False when a value does not survive the settle
+    wait — the caller fails closed without a blind re-save.
+    """
+    for stable_locator, stable_value in stable_fields:
+        if stable_locator.input_value().strip() != stable_value.strip():
+            stable_locator.fill(stable_value)
+    for month_locator, month_value in month_fields:
+        if _read_month(month_locator) != str(int(month_value)):
+            _select_month(page, month_locator, month_value)
+    page.wait_for_timeout(FIELD_SETTLE_WAIT_MS)
+    return not any(
+        stable_locator.input_value().strip() != stable_value.strip()
+        for stable_locator, stable_value in stable_fields
+    ) and not any(
+        _read_month(month_locator) != str(int(month_value))
+        for month_locator, month_value in month_fields
+    )
+
+
+def _save_row(
+    page: Page,
+    resume_id: str,
+    entry: ExperienceEntry,
+    scenario: _RowScenario,
+    filled: _FilledRowForm,
+    target_title: str | None,
+    other_titles: list[str],
+) -> ExperienceResult:
+    """Save one filled row and verify the mutation landed (#1046; the
+    pre-refactor save path verbatim, including the bounded two-click loop
+    and the post-save readback).
+
+    Success is proven, never assumed: panel reconciliation before the
+    click (#782), a refill+verify pass so the #956 async wipe cannot
+    land between verification and submit, at most two save clicks with a
+    re-confirmed editor before the second one (#960 — never a blind
+    re-save), and a reload+row-set readback so "clicked and landed" is
+    distinguished from "bound to THIS resume" (#796/#787/#815).
+    """
+    index = scenario.index
+    save_selector, _ = _form_button_selectors(scenario)
+    if not scenario.first_entry:
+        # #782: both the indexed row editor (existing row) and the
+        # shared-add shape (via_add_button, new row) land on the same
+        # profile-layout-*-button screen with the "Резюме с этим местом
+        # работы" binding panel — reconcile it before every save on this
+        # shape, not just the new-row case, since the panel is present
+        # either way and an unreconciled save on an EXISTING row would
+        # silently trust whatever hh.ru's own default state happens to
+        # be.
+        if target_title is None:
+            return ExperienceResult(
+                f"строка {index}: название целевого резюме для панели "
+                "привязки не передано — сохранение отклонено (#782)"
+            )
+        try:
+            _reconcile_experience_resume_panel(
+                page,
+                target_title=target_title,
+                other_titles=other_titles,
+                is_new_row=scenario.via_add_button,
+            )
+        except ResumePanelReconciliationError as exc:
+            return ExperienceResult(f"строка {index}: {exc}")
+    # #956: run this pass after panel reconciliation because checkbox
+    # clicks can trigger the same controlled-input remount that clears
+    # the form. Include every value written.
+    stable_fields = [
+        (filled.company, entry.company),
+        (filled.position, entry.position),
+        (filled.start_year, entry.start_year),
+        (filled.description, entry.description()),
+    ]
+    if entry.company_url:
+        company_url_locator = page.locator(EXPERIENCE_COMPANY_URL)
+        if company_url_locator.count() != 1:
+            return ExperienceResult(
+                f"строка {index}: поле URL компании не подтверждено, save не нажат (#956)"
+            )
+        stable_fields.append((company_url_locator, entry.company_url))
+    if filled.end_year.count() == 1:
+        stable_fields.append((filled.end_year, "" if entry.current else entry.end_year))
+    month_fields = []
+    if entry.start_month:
+        if filled.start_month.count() != 1:
+            return ExperienceResult(
+                f"строка {index}: месяц начала не подтверждён, save не нажат (#956)"
+            )
+        month_fields.append((filled.start_month, entry.start_month))
+    if entry.end_month and not entry.current:
+        if filled.end_month.count() != 1:
+            return ExperienceResult(
+                f"строка {index}: месяц окончания не подтверждён, save не нажат (#956)"
+            )
+        month_fields.append((filled.end_month, entry.end_month))
+
+    if not _refill_and_verify_fields(page, stable_fields, month_fields):
+        return ExperienceResult(
+            f"строка {index}: форма сбросила значение перед сохранением, save не нажат (#956)"
+        )
+    # #960: the save loop is flat and bounded. The invariant reads
+    # locally: the ONLY mutating click is `save.click()` below, it
+    # happens at most twice, and each iteration re-confirms —
+    # before clicking — that the page is still THIS resume's
+    # confirmed editor (_expected_editor; the attempt-2 re-check
+    # closes PR #958 cycle 3's drifted-retry finding). Every
+    # outcome leaves the loop in exactly one ledger state:
+    # saved → binding verification below, rejected after the
+    # refill retry → failed, anything else → uncertain.
+    scenario.save_attempted = False
+    for attempt in (1, 2):
+        save = page.locator(save_selector)
+        if save.count() != 1:
+            return ExperienceResult(f"строка {index}: save-кнопка не подтверждена")
+        if scenario.save_attempted and not _expected_editor(page, resume_id, scenario.first_entry):
+            # A save click already happened and its effect is
+            # unknown — uncertain, never a blind re-click on an
+            # unconfirmed form.
+            return ExperienceResult(
+                f"строка {index}: повторный save отменён: редактор не подтверждён",
+                uncertain=True,
+            )
+        scenario.save_attempted = True
+        save.click()
+        # wait_for_url is only the bounded timer that gives hh.ru
+        # time to navigate; the verdict comes from
+        # _classify_save_outcome's explicit path comparison below,
+        # so a timeout here is not read as a failure (an SPA
+        # pushState navigation need not raise the lifecycle event
+        # wait_for_url waits for, #825). The trailing "**" matches
+        # both the query suffix (live log 2026-09-03:
+        # ".../resume/{id}?hhtmFrom=profile_experience") and a
+        # trailing slash — the full-match-glob false-uncertains
+        # from PR #958 review cycle 3.
+        nav_error: PlaywrightError | None = None
+        try:
+            page.wait_for_url(
+                f"**/resume/{resume_id}**",
+                wait_until="commit",
+                timeout=SAVE_TIMEOUT_MS,
+            )
+        except PlaywrightError as exc:
+            nav_error = exc
+        outcome = _classify_save_outcome(page, resume_id, scenario.first_entry)
+        if outcome.kind == "saved":
+            break
+        if outcome.kind == "rejected" and attempt == 1:
+            # Definite non-mutation: hh.ru refused the submit
+            # client-side (#959). Answer it with ONE bounded
+            # refill+verify pass and the second — and only —
+            # re-click before reporting a failure; the #956 wipe
+            # may have landed between the last verification and
+            # THIS submit (live 2026-09-03, dump-confirmed).
+            _dump_experience_save_failure(
+                page,
+                index,
+                RuntimeError(f"hh.ru отклонил сохранение: {outcome.detail}"),
+            )
+            logger.warning(
+                "experience: строка %s — save отклонён валидацией (%s); "
+                "дозаполнение и один повторный save",
+                index,
+                outcome.detail,
+            )
+            try:
+                refill_ok = _refill_and_verify_fields(page, stable_fields, month_fields)
+            except (PlaywrightError, ValueError) as refill_exc:
+                # A save click has already happened, so the outcome
+                # is uncertain, not a crash (PR #958 cycle 1).
+                return ExperienceResult(
+                    f"строка {index}: дозаполнение после отклонения save не удалось: {refill_exc}",
+                    uncertain=True,
+                )
+            if not refill_ok:
+                return ExperienceResult(
+                    f"строка {index}: поле не удерживает значение "
+                    f"после отклонения save: {outcome.detail}"
+                )
+            continue
+        if outcome.kind == "rejected":
+            # Dump here too: the validation text is generic
+            # ("Пожалуйста, укажите") and does not name the field,
+            # so without the HTML the rejected field is unprovable
+            # and the next run repeats blind.
+            _dump_experience_save_failure(
+                page,
+                index,
+                RuntimeError(f"hh.ru отклонил сохранение: {outcome.detail}"),
+            )
+            return ExperienceResult(
+                f"строка {index}: hh.ru отклонил сохранение после "
+                f"дозаполнения — валидация формы: {outcome.detail}"
+            )
+        # #956: dump the page at the moment of the unconfirmed save
+        # (drifted editor, another page, unreadable state) so the
+        # next investigation is reproducible without another live
+        # attempt. nav_error (the raw Playwright timeout text) goes
+        # into the dump/log; the CLI reason carries the classifier's
+        # page-state detail.
+        _dump_experience_save_failure(
+            page,
+            index,
+            nav_error
+            if nav_error is not None
+            else RuntimeError(f"save не подтверждён: {outcome.detail}"),
+        )
+        return ExperienceResult(
+            f"строка {index}: сохранение не подтверждено: {outcome.detail}",
+            uncertain=True,
+        )
+    # #796/#787: a click succeeding and landing back on the resume
+    # page is not proof the row is bound to THIS resume — #787
+    # found saves that silently went to the shared profile
+    # instead. Reload and re-read the actual row set rather than
+    # trusting the in-memory DOM state right after save. This
+    # applies to a genuinely new row (first_entry AND the
+    # via_add_button add shape — both CREATE a row, so the row
+    # set must grow): editing an EXISTING row in place (fill mode
+    # re-saves the same index) must not be flagged just because
+    # the row set didn't change.
+    #
+    # #815 review: a bare count() comparison (before vs. after)
+    # is a weak positive signal — a resume that lost one row and
+    # gained a different one elsewhere on the same page (e.g. an
+    # unrelated concurrent edit) would show the same count and
+    # false-pass. The row set's *contents* is not directly
+    # comparable either — EXPERIENCE_EDIT_BUTTON's {index} is an
+    # internal React counter, so "a new index exists" is not the
+    # same claim as "our indexed one exists" if hh.ru is mid
+    # re-render across the reload. What IS decisive: at least one
+    # index present now that was not present before the save —
+    # that is only possible if hh.ru actually created a new row.
+    try:
+        page.reload(wait_until="domcontentloaded")
+        require_authenticated_page(page)
+        if not resume_identity_matches(page, resume_id):
+            return ExperienceResult(
+                f"строка {index}: после reload identity резюме не подтверждён",
+                uncertain=True,
+            )
+        after_indexes = set(_experience_row_indexes(page))
+    except (PlaywrightError, NotAuthenticated) as exc:
+        return ExperienceResult(
+            f"строка {index}: post-save проверка не подтверждена: {exc}",
+            uncertain=True,
+        )
+    if (scenario.first_entry or scenario.via_add_button) and not (
+        after_indexes - scenario.before_indexes
+    ):
+        return ExperienceResult(
+            f"строка {index}: запись не привязалась к резюме "
+            f"(строк до={sorted(scenario.before_indexes)}, "
+            f"после={sorted(after_indexes)})"
+        )
+    return ExperienceResult(f"строка {index}: сохранено и привязано к резюме", True)
