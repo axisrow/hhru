@@ -462,12 +462,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_replies_topic_marker_success
 
 CREATE INDEX IF NOT EXISTS idx_replies_created_at ON replies(created_at);
 
+-- #robot-reply: резолв очереди робот-анкет — колонкой (resolved_at), не
+-- DELETE: таблица append-only, факт обнаружения — часть аудита. NULL = в
+-- очереди; комментарий ДО CREATE — комментарии в теле мешают DROP COLUMN.
 CREATE TABLE IF NOT EXISTS robot_questionnaires (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     topic TEXT NOT NULL UNIQUE,
     vacancy_id TEXT,
     reason TEXT NOT NULL,
-    detected_at TEXT NOT NULL
+    detected_at TEXT NOT NULL,
+    resolved_at TEXT,
+    answer TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_robot_questionnaires_detected_at
     ON robot_questionnaires(detected_at);

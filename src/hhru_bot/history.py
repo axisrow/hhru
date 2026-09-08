@@ -129,6 +129,9 @@ class History(
             _ensure_column(conn, "actions", "reason_code", "TEXT")
             _ensure_column(conn, "responses", "last_invitation_at", "TEXT")
             _ensure_column(conn, "command_runs", "owner_pid", "INTEGER")
+            # #robot-reply: резолв строки робот-анкеты (existing БД без колонок).
+            _ensure_column(conn, "robot_questionnaires", "resolved_at", "TEXT")
+            _ensure_column(conn, "robot_questionnaires", "answer", "TEXT")
             # #654: competitor collection predates durable ownership/checkpoints.
             # Existing rows stay NULL and are handled with the same legacy grace
             # window as command_runs before they can be reclaimed.
