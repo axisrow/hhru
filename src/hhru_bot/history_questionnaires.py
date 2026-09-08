@@ -28,6 +28,26 @@ class QuestionnairesMixin:
                 (topic, vacancy_id, reason, datetime.now().isoformat()),
             )
 
+    def reopen_robot_questionnaire(
+        self, topic: str, *, vacancy_id: str | None = None, reason: str
+    ) -> None:
+        """Вердикт пользователя «robot»: вернуть/завести строку очереди.
+
+        UPSERT, в отличие от ``mark_robot_questionnaire`` (INSERT OR IGNORE):
+        существующая строка получает reason вердикта, а её резолюция
+        (resolved_at, могла стоять после robot-reply) сбрасывается — очередь
+        снова показывает чат как ручной; гейт reply-employers и так скипает
+        его по вердикту, рассинхрона «очередь отвечает "отвечено"» нет.
+        """
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO robot_questionnaires "
+                "(topic, vacancy_id, reason, detected_at) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(topic) DO UPDATE SET "
+                "reason = excluded.reason, resolved_at = NULL",
+                (topic, vacancy_id, reason, datetime.now().isoformat()),
+            )
+
     def record_questionnaire(
         self,
         resume_id: str,
@@ -839,3 +859,34 @@ class QuestionnairesMixin:
                     (limit,),
                 ).fetchall()
             ]
+
+    def set_robot_verdict(self, topic: str, *, verdict: str) -> None:
+        """Записать вердикт пользователя «робот или человек» для topic.
+
+        UPSERT: повторная отметка тем же topic перезаписывает вердикт
+        (человек передумал — его прерогатива). Не-robot/human — ValueError:
+        невалидное значение не должно молча превращаться в «нет вердикта».
+        """
+        if verdict not in ("robot", "human"):
+            raise ValueError(f"robot_verdicts: недопустимый verdict={verdict!r}")
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO robot_verdicts (topic, verdict, annotated_at) "
+                "VALUES (?, ?, ?) "
+                "ON CONFLICT(topic) DO UPDATE SET verdict = excluded.verdict, "
+                "annotated_at = excluded.annotated_at",
+                (topic, verdict, datetime.now().isoformat()),
+            )
+
+    def robot_verdict(self, topic: str) -> str | None:
+        """Вердикт пользователя ('robot' | 'human') или None (не отмечен)."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT verdict FROM robot_verdicts WHERE topic = ?", (topic,)
+            ).fetchone()
+        return row["verdict"] if row else None
+
+    def clear_robot_verdict(self, topic: str) -> None:
+        """Снять вердикт: эвристики снова решают сами. Идемпотентно."""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM robot_verdicts WHERE topic = ?", (topic,))
