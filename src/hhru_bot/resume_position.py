@@ -157,6 +157,12 @@ CURRENCY_LABELS = {"RUR": "Рубли", "EUR": "Евро", "USD": "Доллар�
 EMPLOYMENT = "[data-qa='resume-edit-employment-forms']"
 WORK_FORMAT = "[data-qa='resume-edit-work-formats']"
 TRAVEL = "[data-qa='resume-edit-travel-time']"
+# Multi-select-панель (формат работы/занятость): футер с «Выбрать» — выбор
+# коммитится кнопкой, а не закрытием панели (живой дамп 2026-09-09,
+# workformat_panel.html). Отмеченная опция — чекбокс :checked внутри
+# label[role=option] (живое DOM-состояние, не SSR-атрибут).
+SELECT_APPLY = "[data-qa='magritte-select-apply']"
+SELECT_OPTION_CHECKED = "label[role='option']:has(input:checked)"
 BUSINESS_TRIPS = "[data-qa='resume-edit-business-trip-readiness']"
 CANCEL = "[data-qa='resume-partial-edit-cancel']"
 SAVE = "[data-qa='resume-partial-edit-save']"
@@ -998,6 +1004,7 @@ def _set_control(page: Page, selector: str, value: str, labels: dict[str, str]) 
     if loc.count() != 1:
         raise RuntimeError(f"селектор формы не подтверждён: {selector}")
     el = loc.first
+    logger.info("_set_control: %s → %s («%s»)", selector, value, labels[value])
     tag = el.evaluate("e=>e.tagName")
     if tag in ("INPUT", "TEXTAREA"):
         el.fill(value)
@@ -1012,19 +1019,57 @@ def _set_control(page: Page, selector: str, value: str, labels: dict[str, str]) 
         panel.wait_for(state="hidden", timeout=_CONTROL_WAIT_TIMEOUT_MS)
         el.click()
         panel.wait_for(state="visible", timeout=_CONTROL_WAIT_TIMEOUT_MS)
+        # Живой дамп панели work-format 2026-09-09: ДВА вида panel-контролов.
+        # (а) Однозначный select (время в пути): клик по опции = выбор,
+        #     панель закрывается outside-кликом (#823).
+        # (б) Multi-select с чекбоксами и футером «Выбрать»
+        #     (data-qa='magritte-select-apply', формат работы/занятость):
+        #     клик по опции ТОЛЬКО отмечает чекбокс, выбор коммитится
+        #     кнопкой; outside-клик вместо неё ОТМЕНЯЕТ выбор — форма
+        #     сохраняла прежнее значение, а команда рапортовала [OK]
+        #     (живой провал 2026-09-08: remote-формат не встал).
         option = panel.get_by_role("option", name=labels[value], exact=True)
         if option.count() != 1:
             raise RuntimeError(f"вариант формы не найден: {labels[value]}")
-        option.click()
-        # Re-clicking the trigger (the earlier approach) does not close this
-        # panel — confirmed live (#823): the panel re-opens/stays open even
-        # after a genuine value change, not just a no-op selection. This
-        # dropdown closes on an outside click instead, same as clicking away
-        # from any Magritte popup; (0, 0) is always outside the panel, which
-        # is positioned near the field, not the viewport corner. Escape is
-        # deliberately avoided because it can close the whole editor form.
-        page.mouse.click(0, 0)
+        apply_button = panel.locator(SELECT_APPLY)
+        if apply_button.count() == 1:
+            # Multi-select: снять прочие отмеченные опции — семантика одного
+            # значения (#526: несколько значений --work-format/--employment
+            # не подтверждены), «Выбрать» фиксирует выбор. Снапшот data-qa
+            # снимается ДО кликов: перерисовка после переключения чекбокса
+            # меняет доступное имя строки, и повторный резолв по имени
+            # истекает по таймауту (живой провал 2026-09-09).
+            target_qa = option.get_attribute("data-qa") or ""
+            checked = panel.locator(SELECT_OPTION_CHECKED)
+            other_qas = [
+                checked.nth(i).get_attribute("data-qa") or "" for i in range(checked.count())
+            ]
+            option.click()
+            for qa in other_qas:
+                if qa and qa != target_qa:
+                    panel.locator(f"label[role='option'][data-qa='{qa}']").click()
+            apply_button.click()
+        else:
+            option.click()
+            # Re-clicking the trigger (the earlier approach) does not close
+            # this panel — confirmed live (#823): the panel re-opens/stays
+            # open even after a genuine value change, not just a no-op
+            # selection. This dropdown closes on an outside click instead,
+            # same as clicking away from any Magritte popup; (0, 0) is always
+            # outside the panel, which is positioned near the field, not the
+            # viewport corner. Escape is deliberately avoided because it can
+            # close the whole editor form.
+            page.mouse.click(0, 0)
         panel.wait_for(state="hidden", timeout=_CONTROL_WAIT_TIMEOUT_MS)
+        # Решение по факту, не по исключению: тихий no-op (мёртвый клик,
+        # неоткрытая панель) здесь становится маркированным отказом, а не
+        # успехом с неизменившимся значением.
+        trigger_text = el.inner_text()
+        if labels[value] not in trigger_text:
+            raise RuntimeError(
+                f"выбор не применился: триггер показывает «{trigger_text.strip()}» "
+                f"после выбора «{labels[value]}»"
+            )
     except (PlaywrightError, RuntimeError) as exc:
         _dump_control_failure(page, selector, exc)
         raise

@@ -864,6 +864,14 @@ def test_set_control_closes_dropdown_via_outside_click_for_each_value():
             assert (role, exact) == ("option", True)
             return FakeOption(self, name)
 
+        def locator(self, selector):  # noqa: ARG002
+            # Однозначный select: футера «Выбрать» нет (count 0).
+            class _Absent:
+                def count(self):
+                    return 0
+
+            return _Absent()
+
     class FakeControl:
         def __init__(self, panel):
             self.panel = panel
@@ -880,11 +888,25 @@ def test_set_control_closes_dropdown_via_outside_click_for_each_value():
             self.clicks += 1
             self.panel.open = True
 
+        def inner_text(self):
+            # Триггер показывает последнее выбранное значение — топливо
+            # факт-верификации _set_control (решение по состоянию, не по
+            # отсутствию исключения).
+            return self.panel.selected[-1] if self.panel.selected else ""
+
+    class FakeAbsent:
+        def count(self):
+            return 0
+
     panel = FakePanel()
     control = FakeControl(panel)
     page = MagicMock()
     page.locator.side_effect = lambda selector: (
-        panel if selector == resume_position.RESUME_POSITION_DROPDOWN else control
+        panel
+        if selector == resume_position.RESUME_POSITION_DROPDOWN
+        else FakeAbsent()
+        if selector == resume_position.SELECT_APPLY
+        else control
     )
     # An outside click closes this dropdown (#823 live probe) — re-clicking
     # the trigger does not, even for a genuine value change.
@@ -912,9 +934,15 @@ def test_set_control_passes_explicit_timeout_to_panel_waits():
     control.count.return_value = 1
     control.first = control
     control.evaluate.return_value = "BUTTON"
+    # Факт-верификация: триггер показывает выбранное значение.
+    control.inner_text.return_value = "Удалённо"
     page = MagicMock()
     page.locator.side_effect = lambda selector: (
-        panel if selector == resume_position.RESUME_POSITION_DROPDOWN else control
+        panel
+        if selector == resume_position.RESUME_POSITION_DROPDOWN
+        else MagicMock(count=MagicMock(return_value=0))
+        if selector == resume_position.SELECT_APPLY
+        else control
     )
 
     resume_position._set_control(
