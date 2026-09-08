@@ -1,11 +1,19 @@
 """Автопоиски hh.ru: кнопка сохранения на /search/vacancy и страница списка.
 
-Подтверждено живым census залогиненной сессии 2026-09-08 (#1052):
-кнопка «Сохранить поиск» рядом с «Найти» и страница
-``/applicant/autosearch`` («Избранное → Поиски»). Попап, который кнопка
-открывает (поле имени, способ уведомлений, финальный submit), рендерится
-в DOM ТОЛЬКО после клика и живым замером не подтверждён — его селекторов
-здесь нет намеренно.
+Живые замеры #1052 (census + разведочный клик 2026-09-08, залогиненная
+сессия основного аккаунта):
+
+- Кнопка «Сохранить поиск» рядом с «Найти» на /search/vacancy; клик НЕ
+  мутирует hh.ru (контроль: список /applicant/autosearch остался пуст) и
+  открывает Magritte-tooltip «Куда присылать новые вакансии по этому
+  поиску?» с выбором канала: «На почту» / «В мессенджер». Поля имени в UI
+  НЕТ — hh.ru именует автопоиск сам.
+- Escape tooltip НЕ закрывает (замер 2026-09-08); следующий шаг после
+  выбора канала не исследован — клик по каналу считается мутирующей
+  границей и без боевого разрешения не выполняется.
+- Страница списка автопоисков — /applicant/autosearch («Избранное →
+  Поиски»). Подтверждено только пустое состояние; строки непустого списка
+  живым замером не наблюдались.
 """
 
 from __future__ import annotations
@@ -13,9 +21,17 @@ from __future__ import annotations
 from ._generated import selector as _selector
 
 # Кнопка «Сохранить поиск» в строке поиска /search/vacancy. Census 2026-09-08:
-# tag=button, innerText=«Сохранить поиск», видима. Попап сохранения рендерится
-# по клику (React), в покоящемся DOM отсутствует.
+# tag=button, innerText=«Сохранить поиск», видима. Tooltip с выбором канала
+# рендерится по клику (React), в покоящемся DOM отсутствует.
 SEARCH_SAVE_BUTTON = _selector("saved_search.SEARCH_SAVE_BUTTON")
+# Tooltip выбора канала уведомлений (magritte-tooltip + drop-base, role=tooltip).
+# Маркер того, что клик по SEARCH_SAVE_BUTTON открыл именно попап сохранения.
+SEARCH_SAVE_DROPDOWN = _selector("saved_search.SEARCH_SAVE_DROPDOWN")
+# Кнопка «На почту» в tooltip: выбирает email-канал для автопоиска.
+SEARCH_SAVE_CHANNEL_EMAIL = _selector("saved_search.SEARCH_SAVE_CHANNEL_EMAIL")
+# Кнопка «В мессенджер» в tooltip: выбирает мессенджер-канал (следующий шаг —
+# выбор конкретного мессенджера — не исследован).
+SEARCH_SAVE_CHANNEL_MESSENGERS = _selector("saved_search.SEARCH_SAVE_CHANNEL_MESSENGERS")
 # Вкладка «Поиски» на странице «Избранное» (/applicant/autosearch открывает её
 # сразу; селектор оставлен как маркер того, что открылась нужная вкладка).
 FAVORITES_SEARCHES_TAB = _selector("saved_search.FAVORITES_SEARCHES_TAB")

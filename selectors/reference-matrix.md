@@ -255,6 +255,9 @@
 | saved_search.AUTOSEARCH_EMPTY | `[data-qa='empty-favorites-saved-search-block']` | — | — | — | live_dom |
 | saved_search.FAVORITES_SEARCHES_TAB | `a[data-qa='favorites-tab-searches']` | — | — | — | live_dom |
 | saved_search.SEARCH_SAVE_BUTTON | `button[data-qa='vacancy-saved-search-create']` | — | — | — | live_dom |
+| saved_search.SEARCH_SAVE_CHANNEL_EMAIL | `button[data-qa='vacancy-saved-search-email']` | — | — | — | live_dom |
+| saved_search.SEARCH_SAVE_CHANNEL_MESSENGERS | `button[data-qa='vacancy-saved-search-messengers']` | — | — | — | live_dom |
+| saved_search.SEARCH_SAVE_DROPDOWN | `div[data-qa='drop-base'][role='tooltip']` | — | — | — | live_dom |
 | search_page.COMPANY_RATING_REVIEWS_COUNT | `[data-qa='company-review-rating-reviews-count']` | — | — | — | live_dom |
 | search_page.COMPANY_RATING_VALUE | `[data-qa='company-review-rating-value']` | — | — | — | live_dom |
 | search_page.PAGINATION_BLOCK | `[data-qa='pager-block']` | — | — | — | documented_live |

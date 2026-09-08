@@ -147,12 +147,13 @@ def test_not_authenticated_raises(monkeypatch):
         ss.save_search_on_hh(cast(PlaywrightPage, Page()), _resume(), None, dry_run=True)
 
 
-def test_force_refuses_to_click_until_popup_confirmed(monkeypatch):
-    """Боевой путь fail-closed: попап сохранения не подтверждён живым DOM.
+def test_force_refuses_to_click_until_channel_step_confirmed(monkeypatch):
+    """Боевой путь fail-closed: мутирующая граница — выбор канала уведомлений.
 
-    Тот же контракт, что у report-vacancy (#745): неподтверждённый
-    мутационный клик не выполняется, исход — обычный failed без uncertain
-    (клика не было, hh.ru не мутирован).
+    Разведка 2026-09-08: клик по кнопке открытия безвреден, но экран за
+    выбором канала не исследован. Тот же контракт, что у report-vacancy
+    (#745): неподтверждённый мутационный клик не выполняется, исход —
+    обычный failed без uncertain (клика не было, hh.ru не мутирован).
     """
     _patch_navigation(monkeypatch)
     page = Page()
@@ -161,7 +162,7 @@ def test_force_refuses_to_click_until_popup_confirmed(monkeypatch):
     assert result.acted is False
     assert result.uncertain is False
     assert page.clicks == []
-    assert "не подтверждены живым DOM" in result.reason
+    assert "выбор канала уведомлений" in result.reason
 
 
 # --- list_saved_searches ---

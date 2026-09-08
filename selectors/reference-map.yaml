@@ -5590,7 +5590,7 @@ selectors:
   saved_search.AUTOSEARCH_EMPTY:
     value: '[data-qa=''empty-favorites-saved-search-block'']'
     criticality: write
-    declared_at: src/hhru_bot/selector_groups/saved_search.py:28
+    declared_at: src/hhru_bot/selector_groups/saved_search.py:42
     decision: live_dom
     sources: {}
     live_matches:
@@ -5611,7 +5611,7 @@ selectors:
   saved_search.FAVORITES_SEARCHES_TAB:
     value: a[data-qa='favorites-tab-searches']
     criticality: write
-    declared_at: src/hhru_bot/selector_groups/saved_search.py:24
+    declared_at: src/hhru_bot/selector_groups/saved_search.py:37
     decision: live_dom
     sources: {}
     live_matches:
@@ -5631,7 +5631,7 @@ selectors:
   saved_search.SEARCH_SAVE_BUTTON:
     value: button[data-qa='vacancy-saved-search-create']
     criticality: write
-    declared_at: src/hhru_bot/selector_groups/saved_search.py:19
+    declared_at: src/hhru_bot/selector_groups/saved_search.py:26
     decision: live_dom
     sources: {}
     live_matches:
@@ -5642,12 +5642,75 @@ selectors:
     origin: browser_dom
     verification: browser_observed
     evidence:
-      source: live census 2026-09-08, authenticated session, /search/vacancy?text=python&area=1
-      note: 'Button "Сохранить поиск" next to "Найти" in the search bar (#1052). tag=button, innerText=Сохранить поиск, visible.
-        The save popup itself (name input, notification channel, final submit) renders only after the click and is NOT confirmed:
-        no popup selectors exist yet.'
+      source: live census 2026-09-08 + one approved exploratory click, authenticated main account, /search/vacancy?text=python&area=1
+        (probe scripts/explore_saved_search_1052.py, html dump data/logs/saved_search_popup_1052_*)
+      note: 'Button "Сохранить поиск" next to "Найти" (#1052). The click does NOT mutate hh.ru: it opens a Magritte tooltip
+        "Куда присылать новые вакансии по этому поиску?" with channel buttons; /applicant/autosearch stayed empty after the
+        click. There is NO name input in the UI — hh.ru names the autosearch itself. Escape does not close the tooltip. Clicking
+        a channel button is the unexplored mutating boundary.'
     last_verified_at: '2026-09-08'
-    verified_flow: census_read_only_on_search_vacancy
+    verified_flow: census_and_single_exploratory_click_on_search_vacancy
+    verified_by: browser
+  saved_search.SEARCH_SAVE_CHANNEL_EMAIL:
+    value: button[data-qa='vacancy-saved-search-email']
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/saved_search.py:31
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - vacancy-saved-search-email
+    active: true
+    bindings: {}
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: live exploratory click 2026-09-08 (probe scripts/explore_saved_search_1052.py)
+      note: 'Button "На почту" inside the save-search tooltip. NOT clicked: choosing a notification channel is the presumed
+        mutating step that actually creates the autosearch; the next screen after it is unexplored.'
+    last_verified_at: '2026-09-08'
+    verified_flow: census_after_single_exploratory_click_on_search_vacancy
+    verified_by: browser
+  saved_search.SEARCH_SAVE_CHANNEL_MESSENGERS:
+    value: button[data-qa='vacancy-saved-search-messengers']
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/saved_search.py:34
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - vacancy-saved-search-messengers
+    active: true
+    bindings: {}
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: live exploratory click 2026-09-08 (probe scripts/explore_saved_search_1052.py)
+      note: 'Button "В мессенджер" inside the save-search tooltip. NOT clicked: the messenger-picker screen after it is unexplored;
+        treated as the mutating boundary.'
+    last_verified_at: '2026-09-08'
+    verified_flow: census_after_single_exploratory_click_on_search_vacancy
+    verified_by: browser
+  saved_search.SEARCH_SAVE_DROPDOWN:
+    value: div[data-qa='drop-base'][role='tooltip']
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/saved_search.py:29
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - drop-base
+    active: true
+    bindings: {}
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: live exploratory click 2026-09-08 (probe scripts/explore_saved_search_1052.py)
+      note: 'Tooltip container rendered only after clicking SEARCH_SAVE_BUTTON: div data-qa=drop-base role=tooltip, visible
+        text "Куда присылать новые вакансии по этому поиску? На почту В мессенджер". Absent from the resting DOM. role=tooltip
+        disambiguates from the drop-base panel of the apply-form resume picker.'
+    last_verified_at: '2026-09-08'
+    verified_flow: census_after_single_exploratory_click_on_search_vacancy
     verified_by: browser
   search_page.COMPANY_RATING_REVIEWS_COUNT:
     value: '[data-qa=''company-review-rating-reviews-count'']'
