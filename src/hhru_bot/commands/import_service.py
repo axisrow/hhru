@@ -298,6 +298,7 @@ def run_import(progress, history, params: ImportRunParams) -> bool:  # noqa: ANN
     from ..catalog_preflight import preflight_area
     from ..config import bare_resume
     from ..create_resume import apply_draft_readback, create_resume_on_hh
+    from .copy_resume import format_config_snippet
     from .supervision import DurableMutationAttempt
 
     problems: list[str] = []
@@ -352,8 +353,6 @@ def run_import(progress, history, params: ImportRunParams) -> bool:  # noqa: ANN
                 discrepancies.append(f"роль: {note}")
             new_id = result.new_resume_id
             resume = bare_resume(new_id)
-            from .copy_resume import format_config_snippet
-
             print(format_config_snippet(new_id))
             result = apply_draft_readback(page, result)
             print(f"[INFO] readback: {result.reason}")
