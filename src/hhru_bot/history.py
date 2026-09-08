@@ -472,12 +472,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_replies_topic_marker_success
 
 CREATE INDEX IF NOT EXISTS idx_replies_created_at ON replies(created_at);
 
+-- #robot-reply: резолв очереди робот-анкет — колонкой (resolved_at), не
+-- DELETE: таблица append-only, факт обнаружения — часть аудита. NULL = в
+-- очереди; комментарий ДО CREATE — комментарии в теле мешают DROP COLUMN.
 CREATE TABLE IF NOT EXISTS robot_questionnaires (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     topic TEXT NOT NULL UNIQUE,
     vacancy_id TEXT,
     reason TEXT NOT NULL,
-    detected_at TEXT NOT NULL
+    detected_at TEXT NOT NULL,
+    resolved_at TEXT,
+    answer TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_robot_questionnaires_detected_at
     ON robot_questionnaires(detected_at);
@@ -842,6 +847,9 @@ class History:
             _ensure_column(conn, "actions", "reason_code", "TEXT")
             _ensure_column(conn, "responses", "last_invitation_at", "TEXT")
             _ensure_column(conn, "command_runs", "owner_pid", "INTEGER")
+            # #robot-reply: резолв строки робот-анкеты (existing БД без колонок).
+            _ensure_column(conn, "robot_questionnaires", "resolved_at", "TEXT")
+            _ensure_column(conn, "robot_questionnaires", "answer", "TEXT")
             # #654: competitor collection predates durable ownership/checkpoints.
             # Existing rows stay NULL and are handled with the same legacy grace
             # window as command_runs before they can be reclaimed.
@@ -4839,21 +4847,55 @@ class History:
         with self._connect() as conn:
             return conn.execute(sql, params).rowcount
 
+    def robot_questionnaire_row(self, topic: str) -> dict | None:
+        """Строка очереди робот-анкет по topic (None — в очереди нет)."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT topic, vacancy_id, reason, detected_at, resolved_at, answer "
+                "FROM robot_questionnaires WHERE topic = ?",
+                (topic,),
+            ).fetchone()
+        return dict(row) if row else None
+
     def is_robot_questionnaire(self, topic: str) -> bool:
+        """Только НЕрезолвнутые строки: после ``robot-reply`` чат перестаёт
+        вечно скипаться в reply-employers (resolved_at IS NULL — в очереди)."""
         with self._connect() as conn:
             return (
                 conn.execute(
-                    "SELECT 1 FROM robot_questionnaires WHERE topic = ?", (topic,)
+                    "SELECT 1 FROM robot_questionnaires WHERE topic = ? AND resolved_at IS NULL",
+                    (topic,),
                 ).fetchone()
                 is not None
             )
+
+    def resolve_robot_questionnaire(self, topic: str, *, answer: str) -> None:
+        """Пометить робот-анкету отвеченной (колонкой, не DELETE — таблица
+        append-only, факт обнаружения хранит аудит).
+
+        Вызывается только после подтверждённой отправки ответа (status sent);
+        гонка/повтор (rowcount != 1) — fail-closed ValueError, а не тихий
+        повторный UPDATE.
+        """
+        now = datetime.now().isoformat()
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "UPDATE robot_questionnaires SET resolved_at = ?, answer = ? "
+                "WHERE topic = ? AND resolved_at IS NULL",
+                (now, answer, topic),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError(
+                    f"robot_questionnaires: нет незарезолвнутой строки topic={topic!r}"
+                )
 
     def list_robot_questionnaires(self, limit: int = 50) -> list[dict]:
         with self._connect() as conn:
             return [
                 dict(row)
                 for row in conn.execute(
-                    "SELECT topic, vacancy_id, reason, detected_at FROM robot_questionnaires "
+                    "SELECT topic, vacancy_id, reason, detected_at, resolved_at, answer "
+                    "FROM robot_questionnaires "
                     "ORDER BY detected_at DESC, id DESC LIMIT ?",
                     (limit,),
                 ).fetchall()

@@ -19,5 +19,19 @@ def run(args) -> None:
     if not rows:
         print("[INFO] Очередь анкет-роботов пуста.")
         return
+    pending = 0
     for row in rows:
-        print(f"{row['topic']} — вакансия {row['vacancy_id'] or '?'} — {row['reason']}")
+        if row.get("resolved_at"):
+            answer = row.get("answer") or "?"
+            print(
+                f"{row['topic']} — вакансия {row['vacancy_id'] or '?'} — "
+                f"{row['reason']} — отвечено: {answer}"
+            )
+        else:
+            pending += 1
+            print(f"{row['topic']} — вакансия {row['vacancy_id'] or '?'} — {row['reason']}")
+    if pending:
+        print(
+            f"[INFO] Неотвеченных: {pending}. Ответить кнопкой быстрых ответов "
+            '(Да/Нет): hhru robot-reply --topic <topic> --answer "Нет" --dry-run'
+        )

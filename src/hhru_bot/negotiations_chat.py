@@ -15,6 +15,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
 from .browser import goto_hh
@@ -27,6 +28,8 @@ from .selector_groups.negotiations import (
     CHAT_MESSAGE_OTHER_MARKER,
     CHAT_MESSAGE_SEND,
     CHAT_MESSAGE_TEXT,
+    QUICK_REPLY_BUTTON,
+    QUICK_REPLY_BUTTONS_WRAPPER,
 )
 
 logger = logging.getLogger("hhru_bot.negotiations_chat")
@@ -364,6 +367,53 @@ def send_reply_current(page: Page, text: str) -> None:
         raise NoReplyForm("не удалось однозначно найти форму ответа в чате")
     input_loc.fill(text)
     send_loc.click()
+
+
+class NoQuickReply(RuntimeError):
+    """Кнопка быстрых ответов не резолвится однозначно — чистый pre-click
+    отказ (robot-reply): клика не было, повтор безопасен как status='failed'.
+
+    Возникает при 0 кнопок (вопрос уже отвечен / гидратация не уложилась в
+    бюджет / дрейф вёрстки) и при >1 (два вопроса с одинаковыми кнопками —
+    адресация невозможна без догадки).
+    """
+
+    def __init__(self, label: str, available: list[str]):
+        self.available = available
+        suffix = f"; доступные кнопки: {', '.join(available)}" if available else ""
+        super().__init__(f"кнопка быстрых ответов «{label}» не найдена{suffix}")
+
+
+def find_quick_replies(page: Page, *, timeout_ms: int = 6000) -> list[str]:
+    """Тексты кнопок быстрых ответов на уже открытом чате (robot-reply).
+
+    Кнопки гидратируются с задержкой (~6с после загрузки, census 2026-09-08),
+    поэтому первый сигнал ждём явно ``wait_for(state="visible")`` — «commit
+    не значит отрисовано». Таймаут — это [] (валидный результат «уже отвечено
+    / кнопок нет»), а не исключение: решение об отказе принимает вызывающий.
+    """
+    try:
+        page.locator(QUICK_REPLY_BUTTON).first.wait_for(state="visible", timeout=timeout_ms)
+    except PlaywrightError:
+        return []
+    buttons = page.locator(QUICK_REPLY_BUTTON)
+    return [buttons.nth(i).inner_text().strip() for i in range(buttons.count())]
+
+
+def click_quick_reply(page: Page, label: str) -> None:
+    """Кликнуть кнопку быстрых ответов с ТОЧНЫМ текстом ``label``.
+
+    Fail-closed ДО клика: 0 или >1 совпадений — :class:`NoQuickReply`, на
+    hh.ru следа нет. Повторный ``wait_for(visible)`` перед кликом — кнопка
+    могла перегидратироваться между резолвом и кликом.
+    """
+    available = find_quick_replies(page)
+    button = page.locator(QUICK_REPLY_BUTTONS_WRAPPER).get_by_role("button", name=label, exact=True)
+    count = button.count()
+    if count != 1:
+        raise NoQuickReply(label, available=available)
+    button.first.wait_for(state="visible", timeout=3000)
+    button.first.click()
 
 
 _POLL_INTERVAL_MS = 80

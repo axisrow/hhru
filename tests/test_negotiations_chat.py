@@ -2,19 +2,27 @@ import logging
 from typing import cast
 
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
 from hhru_bot.negotiations_chat import (
     CHAT_AUTHOR_JS,
     ChatMessage,
+    NoQuickReply,
     author_from_ancestors,
+    click_quick_reply,
     extract_external_test_link,
+    find_quick_replies,
     is_robot_questionnaire,
     matches_marker,
     needs_follow_up,
     needs_reply,
     read_chat,
     wait_reply_confirmation,
+)
+from hhru_bot.selector_groups.negotiations import (
+    QUICK_REPLY_BUTTON,
+    QUICK_REPLY_BUTTONS_WRAPPER,
 )
 
 pytestmark = pytest.mark.integration
@@ -362,3 +370,112 @@ def test_system_participant_message_has_no_author():
 def test_legacy_exact_markers_still_classify():
     assert author_from_ancestors(["message_my"]) == "me"
     assert author_from_ancestors(["message_other"]) == "employer"
+
+
+# --- robot-reply: кнопки быстрых ответов робота-анкеты ----------------------
+# Живой census 2026-09-08: <button> magritte-button_mode-secondary--<hash> в
+# div.buttons-wrapper--<hash> под вопросом бота; data-qa нет; гидратация ~6с.
+
+
+class _FakeQuickButtonHandle:
+    def __init__(self, text: str, page: "_FakeQuickReplyPage"):
+        self._text = text
+        self._page = page
+
+    def inner_text(self) -> str:
+        return self._text
+
+    def wait_for(self, *, state=None, timeout=None):
+        # гидратация: кнопка видима только если была в исходном наборе
+        if self._text not in self._page.buttons:
+            raise PlaywrightError("timeout")
+
+    def click(self):
+        self._page.clicked.append(self._text)
+
+
+class _FakeQuickButtonList:
+    def __init__(self, page: "_FakeQuickReplyPage"):
+        self._page = page
+        self.first = _FakeQuickButtonHandle(
+            self._page.buttons[0] if self._page.buttons else "", self._page
+        )
+
+    def count(self) -> int:
+        return len(self._page.buttons)
+
+    def nth(self, index: int) -> _FakeQuickButtonHandle:
+        return _FakeQuickButtonHandle(self._page.buttons[index], self._page)
+
+
+class _FakeQuickRoleLocator:
+    """Двойник wrapper.get_by_role('button', name=label, exact=True)."""
+
+    def __init__(self, page: "_FakeQuickReplyPage", label: str):
+        self._page = page
+        self._label = label
+
+    def count(self) -> int:
+        return sum(1 for text in self._page.buttons if text == self._label)
+
+    @property
+    def first(self) -> _FakeQuickButtonHandle:
+        return _FakeQuickButtonHandle(self._label, self._page)
+
+
+class _FakeQuickWrapperLocator:
+    def __init__(self, page: "_FakeQuickReplyPage"):
+        self._page = page
+
+    def get_by_role(self, _role, *, name=None, exact=None):
+        assert exact is True
+        return _FakeQuickRoleLocator(self._page, name)
+
+
+class _FakeQuickReplyPage:
+    """Page-двойник для find_quick_replies/click_quick_reply: только локаторы
+    QUICK_REPLY_* (контроль: прочие селекторы сюда не приходят)."""
+
+    def __init__(self, buttons: list[str]):
+        self.buttons = buttons
+        self.clicked: list[str] = []
+
+    def locator(self, selector: str):
+        assert selector in (QUICK_REPLY_BUTTON, QUICK_REPLY_BUTTONS_WRAPPER)
+        if selector == QUICK_REPLY_BUTTON:
+            return _FakeQuickButtonList(self)
+        return _FakeQuickWrapperLocator(self)
+
+
+def test_find_quick_replies_returns_button_texts():
+    page = _FakeQuickReplyPage(["Да", "Нет"])
+    assert find_quick_replies(cast(Page, page), timeout_ms=10) == ["Да", "Нет"]
+
+
+def test_find_quick_replies_timeout_returns_empty_list():
+    """Кнопок нет (уже отвечено / гидратация не уложилась) — [], не исключение:
+    решение об отказе принимает вызывающий."""
+    page = _FakeQuickReplyPage([])
+    assert find_quick_replies(cast(Page, page), timeout_ms=10) == []
+
+
+def test_click_quick_reply_clicks_the_only_exact_match():
+    page = _FakeQuickReplyPage(["Да", "Нет"])
+    click_quick_reply(cast(Page, page), "Нет")
+    assert page.clicked == ["Нет"]
+
+
+def test_click_quick_reply_zero_matches_fails_closed_before_click():
+    page = _FakeQuickReplyPage(["Да", "Нет"])
+    with pytest.raises(NoQuickReply) as exc:
+        click_quick_reply(cast(Page, page), "Не знаю")
+    assert page.clicked == []
+    assert "Да, Нет" in str(exc.value)
+
+
+def test_click_quick_reply_ambiguous_duplicate_buttons_refuse():
+    """Два вопроса бота с одинаковыми кнопками не различимы — отказ, не догадка."""
+    page = _FakeQuickReplyPage(["Да", "Нет", "Нет"])
+    with pytest.raises(NoQuickReply):
+        click_quick_reply(cast(Page, page), "Нет")
+    assert page.clicked == []

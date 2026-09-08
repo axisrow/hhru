@@ -87,6 +87,16 @@ CHAT_MESSAGE_OTHER_MARKER = "message_other"
 CHAT_MESSAGE_INCOMING_MARKER = "chat-bubble_incoming"
 CHAT_MESSAGE_BOT_MARKER = "chat-bubble_bot"
 
+# Кнопки быстрых ответов робота-анкеты («Да»/«Нет»). data-qa у них нет —
+# адресация по класс-префиксам CSS-модулей (образец: resume_photo.py,
+# magritte-media-viewer___). Живой census 2026-09-08 (census --wait-ms 6000,
+# чат Банка ПСБ): <button> magritte-button_mode-secondary--<hash> внутри
+# div.buttons-wrapper--<hash> под вопросом бота; рендерятся с задержкой
+# гидратации ~6с ПОСЛЕ загрузки страницы — резолвер обязан ждать видимости,
+# а не читать count() сразу после goto.
+QUICK_REPLY_BUTTONS_WRAPPER = "div[class*='buttons-wrapper--']"
+QUICK_REPLY_BUTTON = "button[class*='magritte-button_mode-secondary']"
+
 # Composer controls on chatik.hh.ru.  Keep these here with the read selectors so
 # a markup change cannot leave the write path with a private, stale selector.
 CHAT_MESSAGE_INPUT = _selector("negotiations.CHAT_MESSAGE_INPUT")
