@@ -30,14 +30,18 @@ pytestmark = pytest.mark.unit
 
 
 class Locator:
-    def __init__(self, page, selector, count=1, attrs=None):
+    """Мок Playwright-локатора с ДИНАМИЧЕСКИМ count (как у настоящего locator:
+
+    результат читается на момент вызова, а не создания — важно для флоу,
+    где клик по одному селектору открывает другой экран).
+    """
+
+    def __init__(self, page, selector):
         self.page = page
         self.selector = selector
-        self._count = count
-        self._attrs = attrs or {}
 
     def count(self):
-        return self._count
+        return self.page.counts.get(self.selector, 0)
 
     @property
     def first(self):
@@ -47,14 +51,15 @@ class Locator:
         return self
 
     def locator(self, selector):
-        return Locator(self.page, selector, count=1, attrs=self.page.attrs.get(selector))
+        return Locator(self.page, selector)
 
     def wait_for(self, *, state, timeout):  # noqa: ARG002
-        if self._count == 0:
+        if self.count() == 0:
             raise PlaywrightTimeoutError(f"not visible: {self.selector}")
 
     def get_attribute(self, name):
-        return self._attrs.get(name)
+        attrs = self.page.attrs.get(self.selector)
+        return attrs.get(name) if attrs else None
 
     def click(self):
         self.page.clicks.append(self.selector)
@@ -70,9 +75,7 @@ class Page:
         self.login_form = False
 
     def locator(self, selector):
-        return Locator(
-            self, selector, count=self.counts.get(selector, 0), attrs=self.attrs.get(selector)
-        )
+        return Locator(self, selector)
 
     def on_click(self, selector):
         """Клик открывает следующий экран флоу сохранения (живой путь 2026-09-08)."""
@@ -260,6 +263,35 @@ def test_force_timeout_after_channel_click_is_uncertain(monkeypatch):
     assert result.acted is True
     assert result.uncertain is True
     assert SEARCH_SAVE_CHANNEL_EMAIL in page.clicks
+
+
+def test_force_tooltip_failure_before_channel_click_is_plain_failed(monkeypatch):
+    """Таймаут открытия tooltip ДО клика канала — обычный failed, не uncertain.
+
+    Контракт #176: uncertain только после мутирующего клика; здесь клик
+    канала заведомо не произошёл (два try-скоупа вокруг before_click).
+    """
+
+    class _NoTooltipPage(Page):
+        def on_click(self, selector):
+            pass  # клик по кнопке не открывает tooltip
+
+    _patch_navigation(monkeypatch)
+    page = _NoTooltipPage(counts={SEARCH_SAVE_BUTTON: 1})
+    calls = []
+    result = ss.save_search_on_hh(
+        cast(PlaywrightPage, page),
+        _resume(),
+        None,
+        dry_run=False,
+        before_click=lambda: calls.append("before_click"),
+    )
+    assert result.success is False
+    assert result.acted is False
+    assert result.uncertain is False
+    assert SEARCH_SAVE_CHANNEL_EMAIL not in page.clicks
+    assert calls == []
+    assert "клик канала не выполнен" in result.reason
 
 
 # --- list_saved_searches ---

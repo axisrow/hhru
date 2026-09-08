@@ -358,12 +358,15 @@ def save_search_on_hh(
     # без дополнительного экрана, и кнопка переходит в «Сохранён». Мутирующий
     # клик — именно клик по каналу, поэтому before_click (seam
     # DurableMutationAttempt) стоит вплотную к нему, не к безвредному открытию.
+    # try-скоупы разделены по контракту #176: ДО before_click любой отказ —
+    # обычный failed (клика канала не было, hh.ru не мутирован), ПОСЛЕ —
+    # uncertain (клик мог уйти).
+    channels = page.locator(SEARCH_SAVE_CHANNEL_EMAIL)
     try:
         page.locator(SEARCH_SAVE_BUTTON).first.click()
         page.locator(SEARCH_SAVE_DROPDOWN).first.wait_for(
             state="visible", timeout=SEARCH_BAR_RENDER_TIMEOUT_MS
         )
-        channels = page.locator(SEARCH_SAVE_CHANNEL_EMAIL)
         if channels.count() != 1:
             return SaveSearchResult(
                 query_key,
@@ -372,14 +375,23 @@ def save_search_on_hh(
                 reason=f"кнопка канала «На почту» неоднозначна или не найдена "
                 f"(найдено {channels.count()})",
             )
-        if before_click is not None:
-            before_click()
+    except (PlaywrightTimeoutError, PlaywrightError) as exc:
+        return SaveSearchResult(
+            query_key,
+            resolved_name,
+            success=False,
+            reason=f"tooltip выбора канала не открылся, клик канала не выполнен: {exc}",
+        )
+
+    if before_click is not None:
+        before_click()
+    try:
         channels.first.click()
         page.locator(SEARCH_SAVE_CREATED).first.wait_for(
             state="visible", timeout=SEARCH_BAR_RENDER_TIMEOUT_MS
         )
     except (PlaywrightTimeoutError, PlaywrightError) as exc:
-        # После before_click клик мог уйти — исход uncertain, fail-closed (#176).
+        # Клик канала мог уйти — исход uncertain, fail-closed (#176).
         return SaveSearchResult(
             query_key,
             resolved_name,

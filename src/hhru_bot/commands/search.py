@@ -413,6 +413,10 @@ def run(args: argparse.Namespace) -> bool:
         # Режимы --save/--list-saved завершают команду: обычный поиск
         # в тех же прогонах не выполняется.
         return saved_mode_failed
+    if getattr(args, "saved", None) and (args.text or args.resume):
+        print("[FAIL] --saved не сочетается с --text/--resume: параметрика прогона")
+        print("       берётся из автопоиска, явные фильтры игнорировались бы молча")
+        return True
     saved_filters, saved_failed = _load_saved_search_filters(args, config)
     if saved_failed:
         return True
