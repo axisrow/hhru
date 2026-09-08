@@ -790,7 +790,10 @@ def census_table(rows: list[dict]) -> str:
     импортов: report импортирует browser)."""
     from .report import _ascii_table
 
-    header = ["data-qa", "tag", "role", "label", "text", "visible"]
+    # #1044: classes в текстовой таблице — классы контрола видны «глазам
+    # агента» без --json. ancestors остаются только машинным каналом (--json):
+    # вертикаль классов до 400 символов не помещается в ASCII-таблицу.
+    header = ["data-qa", "tag", "role", "label", "text", "classes", "visible"]
     rows_out = [
         [
             str(r.get("qa", "")),
@@ -798,6 +801,7 @@ def census_table(rows: list[dict]) -> str:
             str(r.get("role", "")),
             str(r.get("label", "")),
             str(r.get("text", "")),
+            str(r.get("classes", "")),
             "да" if r.get("visible") else "нет",
         ]
         for r in rows

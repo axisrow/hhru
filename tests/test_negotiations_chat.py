@@ -305,7 +305,8 @@ def test_min_count_default_preserves_plain_reply_behaviour():
 
 
 # --- #1044: дрейф DOM-маркеров автора на CSS-модули -------------------------
-# Живой census 2026-09-08 (census --classes/--ancestors, чаты аккаунта):
+# Живой census 2026-09-08 (колонки classes/ancestors из `census --json`,
+# чаты аккаунта):
 # собственное сообщение:
 #   chat-bubble--TFjICp8IMFIhojGy chat-bubble_with-right-tail--J0NYWVDENy0KLcgZ
 #   chat-bubble_outgoing--C1wSnUG6DlswSx6I | chat-bubble-container--xlH6p5aV4o4u_38b
