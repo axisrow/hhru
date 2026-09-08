@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from hhru_bot.apply.antibot import AntiBotChallengeDetected, AntiBotDetection
-from hhru_bot.commands import _common
+from hhru_bot.commands import _common, apply_service
 from hhru_bot.config import AppConfig, ResumeConfig, SearchFilters, ThrottleConfig
 from hhru_bot.config_sections.scoring import ScoringConfig
 from hhru_bot.history import History
@@ -53,8 +53,8 @@ def test_apply_crash_after_planning_leaves_durable_uncertain_audit(tmp_path, mon
         url="https://hh.ru/vacancy/123",
     )
 
-    monkeypatch.setattr(_common, "resolve_numeric_resume_ids", lambda _page: None)
-    monkeypatch.setattr(_common, "search_vacancies", lambda *a, **k: [card])
+    monkeypatch.setattr(apply_service, "resolve_numeric_resume_ids", lambda _page: None)
+    monkeypatch.setattr(apply_service, "search_vacancies", lambda *a, **k: [card])
 
     class ProcessLikeCrash(BaseException):
         pass
@@ -63,7 +63,7 @@ def test_apply_crash_after_planning_leaves_durable_uncertain_audit(tmp_path, mon
         kwargs["before_submit"]()
         raise ProcessLikeCrash("worker disappeared after browser-side work")
 
-    monkeypatch.setattr(_common, "apply_to_vacancy", crash_before_result)
+    monkeypatch.setattr(apply_service, "apply_to_vacancy", crash_before_result)
 
     with pytest.raises(ProcessLikeCrash):
         _common.run_apply_for_resume(object(), config, resume, history, throttle, args)
@@ -106,8 +106,8 @@ def test_apply_finalizes_the_pre_submit_marker_in_place(tmp_path, monkeypatch):
         url="https://hh.ru/vacancy/123",
     )
 
-    monkeypatch.setattr(_common, "resolve_numeric_resume_ids", lambda _page: None)
-    monkeypatch.setattr(_common, "search_vacancies", lambda *a, **k: [card])
+    monkeypatch.setattr(apply_service, "resolve_numeric_resume_ids", lambda _page: None)
+    monkeypatch.setattr(apply_service, "search_vacancies", lambda *a, **k: [card])
 
     def succeeds_after_reservation(*args, **kwargs):  # noqa: ANN002, ANN003
         kwargs["before_submit"]()
@@ -121,7 +121,7 @@ def test_apply_finalizes_the_pre_submit_marker_in_place(tmp_path, monkeypatch):
             skip_reason=None,
         )
 
-    monkeypatch.setattr(_common, "apply_to_vacancy", succeeds_after_reservation)
+    monkeypatch.setattr(apply_service, "apply_to_vacancy", succeeds_after_reservation)
 
     _common.run_apply_for_resume(object(), config, resume, history, throttle, args)
 
@@ -148,15 +148,15 @@ def test_post_submit_challenge_finalizes_uncertain_marker_before_stopping(tmp_pa
     args = argparse.Namespace(dry_run=False, headless=True, max_pages=1, limit=1)
     card = VacancyCard("123", "Python developer", "Acme", "https://hh.ru/vacancy/123")
 
-    monkeypatch.setattr(_common, "resolve_numeric_resume_ids", lambda _page: None)
-    monkeypatch.setattr(_common, "search_vacancies", lambda *a, **k: [card])
+    monkeypatch.setattr(apply_service, "resolve_numeric_resume_ids", lambda _page: None)
+    monkeypatch.setattr(apply_service, "search_vacancies", lambda *a, **k: [card])
     detection = AntiBotDetection("url_path", "URL содержит /captcha")
 
     def challenge_after_reservation(*args, **kwargs):  # noqa: ANN002, ANN003
         kwargs["before_submit"]()
         raise AntiBotChallengeDetected(detection)
 
-    monkeypatch.setattr(_common, "apply_to_vacancy", challenge_after_reservation)
+    monkeypatch.setattr(apply_service, "apply_to_vacancy", challenge_after_reservation)
 
     with pytest.raises(AntiBotChallengeDetected):
         _common.run_apply_for_resume(object(), config, resume, history, throttle, args)
@@ -211,7 +211,7 @@ def test_approved_apply_attributes_to_the_query_recorded_at_enqueue_time(tmp_pat
         permit=permit,
     )
 
-    monkeypatch.setattr(_common, "resolve_numeric_resume_ids", lambda _page: None)
+    monkeypatch.setattr(apply_service, "resolve_numeric_resume_ids", lambda _page: None)
 
     def succeeds_after_reservation(*args, **kwargs):  # noqa: ANN002, ANN003
         kwargs["before_submit"]()
@@ -225,7 +225,7 @@ def test_approved_apply_attributes_to_the_query_recorded_at_enqueue_time(tmp_pat
             skip_reason=None,
         )
 
-    monkeypatch.setattr(_common, "apply_to_vacancy", succeeds_after_reservation)
+    monkeypatch.setattr(apply_service, "apply_to_vacancy", succeeds_after_reservation)
 
     _common.run_apply_for_resume(object(), config, resume, history, throttle, args)
 
@@ -296,7 +296,7 @@ def test_approved_apply_from_pre_migration_queue_row_falls_back_to_vacancies_see
         permit=permit,
     )
 
-    monkeypatch.setattr(_common, "resolve_numeric_resume_ids", lambda _page: None)
+    monkeypatch.setattr(apply_service, "resolve_numeric_resume_ids", lambda _page: None)
 
     def succeeds_after_reservation(*args, **kwargs):  # noqa: ANN002, ANN003
         kwargs["before_submit"]()
@@ -310,7 +310,7 @@ def test_approved_apply_from_pre_migration_queue_row_falls_back_to_vacancies_see
             skip_reason=None,
         )
 
-    monkeypatch.setattr(_common, "apply_to_vacancy", succeeds_after_reservation)
+    monkeypatch.setattr(apply_service, "apply_to_vacancy", succeeds_after_reservation)
 
     _common.run_apply_for_resume(object(), config, resume, history, throttle, args)
 
@@ -360,7 +360,7 @@ def test_approved_apply_blocks_current_employer(tmp_path, monkeypatch):
         permit=permit,
     )
 
-    monkeypatch.setattr(_common, "resolve_numeric_resume_ids", lambda _page: None)
+    monkeypatch.setattr(apply_service, "resolve_numeric_resume_ids", lambda _page: None)
     applied: list[bool] = []
 
     def fail_if_applied(*args, **kwargs):  # noqa: ANN002, ANN003
@@ -375,7 +375,7 @@ def test_approved_apply_blocks_current_employer(tmp_path, monkeypatch):
             skip_reason=None,
         )
 
-    monkeypatch.setattr(_common, "apply_to_vacancy", fail_if_applied)
+    monkeypatch.setattr(apply_service, "apply_to_vacancy", fail_if_applied)
 
     _common.run_apply_for_resume(object(), config, resume, history, throttle, args)
 
@@ -431,7 +431,7 @@ def test_approved_apply_bypasses_letter_threshold(tmp_path, monkeypatch):
         permit=permit,
     )
 
-    monkeypatch.setattr(_common, "resolve_numeric_resume_ids", lambda _page: None)
+    monkeypatch.setattr(apply_service, "resolve_numeric_resume_ids", lambda _page: None)
     captured: dict = {}
 
     def apply(*args, **kwargs):  # noqa: ANN001, ARG001
@@ -447,7 +447,7 @@ def test_approved_apply_bypasses_letter_threshold(tmp_path, monkeypatch):
             skip_reason=None,
         )
 
-    monkeypatch.setattr(_common, "apply_to_vacancy", apply)
+    monkeypatch.setattr(apply_service, "apply_to_vacancy", apply)
 
     _common.run_apply_for_resume(object(), config, resume, history, throttle, args)
 
@@ -484,8 +484,8 @@ def test_apply_preserves_numeric_letter_threshold(tmp_path, monkeypatch):
         company="Acme",
         url="https://hh.ru/vacancy/123",
     )
-    monkeypatch.setattr(_common, "resolve_numeric_resume_ids", lambda _page: None)
-    monkeypatch.setattr(_common, "search_vacancies", lambda *a, **k: [card])
+    monkeypatch.setattr(apply_service, "resolve_numeric_resume_ids", lambda _page: None)
+    monkeypatch.setattr(apply_service, "search_vacancies", lambda *a, **k: [card])
     captured: dict = {}
 
     def apply(*args, **kwargs):  # noqa: ANN001, ARG001
@@ -501,7 +501,7 @@ def test_apply_preserves_numeric_letter_threshold(tmp_path, monkeypatch):
             skip_reason=None,
         )
 
-    monkeypatch.setattr(_common, "apply_to_vacancy", apply)
+    monkeypatch.setattr(apply_service, "apply_to_vacancy", apply)
 
     _common.run_apply_for_resume(object(), config, resume, history, throttle, args)
 

@@ -819,7 +819,7 @@ def test_run_apply_for_resume_wires_verifier(tmp_path, monkeypatch):
     from hhru_bot.throttle import Throttle
 
     monkeypatch.setattr(
-        "hhru_bot.commands._common.search_vacancies",
+        "hhru_bot.commands.apply_service.search_vacancies",
         lambda page, search, max_pages=5: [  # noqa: ARG005
             VacancyCard(
                 vacancy_id="42", title="Dev", company="Acme", url="https://hh.ru/vacancy/42"
@@ -832,13 +832,15 @@ def test_run_apply_for_resume_wires_verifier(tmp_path, monkeypatch):
         seen.append((vacancy_id, resume_id, sorted(account_resume_ids or ())))
         return NegotiationsVerifyResult("found", "topic=1")
 
-    monkeypatch.setattr("hhru_bot.commands._common.verify_response_in_negotiations", _fake_verify)
+    monkeypatch.setattr(
+        "hhru_bot.commands.apply_service.verify_response_in_negotiations", _fake_verify
+    )
     # #212: маппинг «хэш → числовой id» — как от /applicant/resumes (два резюме
     # аккаунта; конфиг — первое). Без подмены резолвер ходил бы в сеть.
     # #216: статус конфиг-резюме должен быть подтверждён (не not_finished,
     # не отсутствовать) — иначе run_apply_for_resume фейлится до поиска.
     monkeypatch.setattr(
-        "hhru_bot.commands._common.resolve_numeric_resume_ids",
+        "hhru_bot.commands.apply_service.resolve_numeric_resume_ids",
         lambda page: ResumeIdMapping(
             {"AAA111": "284561395", "BBB222": "96223331"},
             statuses={"AAA111": "modified", "BBB222": "modified"},
@@ -888,9 +890,9 @@ def test_run_apply_for_resume_fails_before_search_for_unfinished_resume(tmp_path
     def _unexpected_search(*args, **kwargs):  # noqa: ANN002, ANN003
         raise AssertionError("unfinished resume must fail before vacancy search")
 
-    monkeypatch.setattr("hhru_bot.commands._common.search_vacancies", _unexpected_search)
+    monkeypatch.setattr("hhru_bot.commands.apply_service.search_vacancies", _unexpected_search)
     monkeypatch.setattr(
-        "hhru_bot.commands._common.resolve_numeric_resume_ids",
+        "hhru_bot.commands.apply_service.resolve_numeric_resume_ids",
         lambda page: ResumeIdMapping({"AAA111": "284561395"}, statuses={"AAA111": "not_finished"}),
     )
     resume = ResumeConfig(
@@ -932,9 +934,9 @@ def test_run_apply_for_resume_fails_before_search_when_status_unknown(tmp_path, 
     def _unexpected_search(*args, **kwargs):  # noqa: ANN002, ANN003
         raise AssertionError("resume with unknown status must fail before vacancy search")
 
-    monkeypatch.setattr("hhru_bot.commands._common.search_vacancies", _unexpected_search)
+    monkeypatch.setattr("hhru_bot.commands.apply_service.search_vacancies", _unexpected_search)
     monkeypatch.setattr(
-        "hhru_bot.commands._common.resolve_numeric_resume_ids",
+        "hhru_bot.commands.apply_service.resolve_numeric_resume_ids",
         lambda page: ResumeIdMapping({"AAA111": "284561395"}, statuses={}),
     )
     resume = ResumeConfig(
@@ -974,7 +976,7 @@ def test_run_apply_for_resume_verifier_falls_back_to_hash(tmp_path, monkeypatch)
     from hhru_bot.throttle import Throttle
 
     monkeypatch.setattr(
-        "hhru_bot.commands._common.search_vacancies",
+        "hhru_bot.commands.apply_service.search_vacancies",
         lambda page, search, max_pages=5: [  # noqa: ARG005
             VacancyCard(
                 vacancy_id="42", title="Dev", company="Acme", url="https://hh.ru/vacancy/42"
@@ -987,8 +989,12 @@ def test_run_apply_for_resume_verifier_falls_back_to_hash(tmp_path, monkeypatch)
         seen.append((vacancy_id, resume_id, account_resume_ids))
         return NegotiationsVerifyResult("found", "topic=1")
 
-    monkeypatch.setattr("hhru_bot.commands._common.verify_response_in_negotiations", _fake_verify)
-    monkeypatch.setattr("hhru_bot.commands._common.resolve_numeric_resume_ids", lambda page: None)
+    monkeypatch.setattr(
+        "hhru_bot.commands.apply_service.verify_response_in_negotiations", _fake_verify
+    )
+    monkeypatch.setattr(
+        "hhru_bot.commands.apply_service.resolve_numeric_resume_ids", lambda page: None
+    )
 
     resume = ResumeConfig(
         id="python",
@@ -1026,7 +1032,7 @@ def test_run_apply_for_resume_fail_closed_when_config_resume_not_in_mapping(tmp_
     from hhru_bot.throttle import Throttle
 
     monkeypatch.setattr(
-        "hhru_bot.commands._common.search_vacancies",
+        "hhru_bot.commands.apply_service.search_vacancies",
         lambda page, search, max_pages=5: [  # noqa: ARG005
             VacancyCard(
                 vacancy_id="42", title="Dev", company="Acme", url="https://hh.ru/vacancy/42"
@@ -1039,10 +1045,12 @@ def test_run_apply_for_resume_fail_closed_when_config_resume_not_in_mapping(tmp_
         seen.append((vacancy_id, resume_id, account_resume_ids))
         return NegotiationsVerifyResult("found", "topic=1")
 
-    monkeypatch.setattr("hhru_bot.commands._common.verify_response_in_negotiations", _fake_verify)
+    monkeypatch.setattr(
+        "hhru_bot.commands.apply_service.verify_response_in_negotiations", _fake_verify
+    )
     # Маппинг есть, но конфиг-резюме AAA111 в нём отсутствует.
     monkeypatch.setattr(
-        "hhru_bot.commands._common.resolve_numeric_resume_ids",
+        "hhru_bot.commands.apply_service.resolve_numeric_resume_ids",
         lambda page: {"BBB222": "96223331"},
     )
 
