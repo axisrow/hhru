@@ -35,12 +35,16 @@ def test_marked_topic_is_pending_until_resolved(tmp_path):
     assert rows[0]["answer"] == "Нет"
 
 
-def test_double_resolve_is_fail_closed_valueerror(tmp_path):
+def test_double_resolve_overwrites_answer_for_multistep_questionnaires(tmp_path):
+    """Живые анкеты многошаговые: робот задаёт следующий вопрос после нашего
+    ответа — повторный resolve легален и перезаписывает ответ свежим."""
     history = History(tmp_path / "h.db")
     _mark(history)
+    history.resolve_robot_questionnaire("5558196272", answer="Да")
     history.resolve_robot_questionnaire("5558196272", answer="Нет")
-    with pytest.raises(ValueError):
-        history.resolve_robot_questionnaire("5558196272", answer="Да")
+    row = history.robot_questionnaire_row("5558196272")
+    assert row["answer"] == "Нет"
+    assert history.is_robot_questionnaire("5558196272") is False
 
 
 def test_resolve_of_unknown_topic_is_fail_closed(tmp_path):

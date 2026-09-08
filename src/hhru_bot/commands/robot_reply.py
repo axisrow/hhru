@@ -86,12 +86,9 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
     if row is None and not args.any_topic:
         print(f"[FAIL] topic {topic} не в очереди robot-queue (см. hhru robot-queue)")
         return True
-    if row is not None and row.get("resolved_at"):
-        print(
-            f"[FAIL] topic {topic} уже отвечен: {row.get('answer') or '?'} "
-            f"({row['resolved_at']}) — повторный клик отклонён"
-        )
-        return True
+    already_resolved = bool(row is not None and row.get("resolved_at"))
+    resolved_answer = str((row or {}).get("answer") or "?")
+    resolved_at = str((row or {}).get("resolved_at") or "")
     vacancy_id = str((row or {}).get("vacancy_id") or "")
 
     with launch_context(
@@ -113,11 +110,25 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
         chat = read_chat(page, topic, refs)
         decision = needs_reply(chat)
         if not decision.should_reply:
-            print(
-                f"[FAIL] кнопка не нажимается: последнее сообщение чата не требует "
-                f"ответа ({decision.reason})"
-            )
+            if already_resolved:
+                # Дедуп повторного клика: резолв стоит И нового вопроса нет —
+                # последнее сообщение чата наше (робот молчит). Новый вопрос
+                # робота делает should_reply истинным и повтор разрешён.
+                print(
+                    f"[FAIL] topic {topic} уже отвечен: {resolved_answer} "
+                    f"({resolved_at}) — нового вопроса робота нет"
+                )
+            else:
+                print(
+                    f"[FAIL] кнопка не нажимается: последнее сообщение чата не требует "
+                    f"ответа ({decision.reason})"
+                )
             return True
+        if already_resolved:
+            print(
+                f"[INFO] Робот задал новый вопрос после ответа "
+                f"«{resolved_answer}» — отвечаем повторно"
+            )
         assert chat is not None
         question = chat.text
         buttons = find_quick_replies(page, timeout_ms=args.wait_ms)

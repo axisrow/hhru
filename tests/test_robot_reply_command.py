@@ -61,7 +61,15 @@ class _Context:
         return object()
 
 
-def _patch_common(monkeypatch, tmp_path, *, clicks=None, quick=None, confirmation=True):
+def _patch_common(
+    monkeypatch,
+    tmp_path,
+    *,
+    clicks=None,
+    quick=None,
+    confirmation=True,
+    reader=None,
+):
     """Реальная History на tmp_path (ledger-утверждения честные); браузерная
     периферия заменена стабами."""
     history_path = tmp_path / "h.db"
@@ -80,7 +88,7 @@ def _patch_common(monkeypatch, tmp_path, *, clicks=None, quick=None, confirmatio
     )
     monkeypatch.setattr(
         "hhru_bot.negotiations_chat.read_chat",
-        lambda *a, **k: ChatMessage("employer", "m-robot", "Есть ли у вас опыт?"),
+        reader or (lambda *a, **k: ChatMessage("employer", "m-robot", "Есть ли у вас опыт?")),
     )
     monkeypatch.setattr(
         "hhru_bot.negotiations_chat.find_quick_replies",
@@ -138,19 +146,46 @@ def test_topic_outside_queue_refused_without_any_topic(monkeypatch, tmp_path, ca
     assert "не в очереди robot-queue" in capsys.readouterr().out
 
 
-def test_already_resolved_topic_refused(monkeypatch, tmp_path, capsys):
-    history = _patch_common(monkeypatch, tmp_path, clicks=[])
+def test_already_resolved_without_new_question_refused(monkeypatch, tmp_path, capsys):
+    """Резолв стоит И робот молчит (последнее сообщение наше) — повтор
+    отклонён; иначе повторный клик дублировал бы ответ."""
+    history = _patch_common(
+        monkeypatch,
+        tmp_path,
+        clicks=[],
+        reader=lambda *a, **k: ChatMessage("me", "m-own", "Нет"),
+    )
     history.resolve_robot_questionnaire("5558196272", answer="Да")
 
-    assert (
-        command.run(
-            _args(
-                tmp_path,
-            )
-        )
-        is True
+    assert command.run(_args(tmp_path)) is True
+    out = capsys.readouterr().out
+    assert "уже отвечен" in out
+    assert "нового вопроса робота нет" in out
+
+
+def test_already_resolved_with_new_robot_question_reanswers(monkeypatch, tmp_path, capsys):
+    """Живой кейс 2026-09-08: анкеты многошаговые — робот задаёт следующий
+    вопрос сразу после ответа. Повтор по тому же topic разрешён, резолв
+    перезаписывается свежим ответом."""
+    clicks: list[str] = []
+    history = _patch_common(
+        monkeypatch,
+        tmp_path,
+        clicks=clicks,
+        confirmation=True,
+        reader=lambda *a, **k: ChatMessage("employer", "m-q2", "Вы находитесь в Москве?"),
     )
-    assert "уже отвечен" in capsys.readouterr().out
+    history.resolve_robot_questionnaire("5558196272", answer="Нет")
+
+    assert command.run(_args(tmp_path)) is False
+
+    out = capsys.readouterr().out
+    assert "Робот задал новый вопрос" in out
+    assert "[OK] 5558196272" in out
+    assert clicks == ["Нет"]
+    row = history.robot_questionnaire_row("5558196272")
+    assert row["answer"] == "Нет"
+    assert history.is_robot_questionnaire("5558196272") is False
 
 
 def test_answer_missing_from_buttons_refused_before_ledger(monkeypatch, tmp_path, capsys):
