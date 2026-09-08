@@ -101,6 +101,85 @@ def test_paginated_topic_refs_collects_all_pages(monkeypatch):
     ]
 
 
+def _state_html(topic_ids):
+    state = {
+        "applicantNegotiations": {
+            "topicList": [
+                {"id": tid, "chatId": tid + 100, "vacancyId": tid + 200} for tid in topic_ids
+            ]
+        }
+    }
+    return '<template id="HH-Lux-InitialState">' + json.dumps(state) + "</template>"
+
+
+def test_paginated_topic_refs_walks_pagerless_lazy_tail(monkeypatch):
+    """Дрейф 2026-09-09: hh.ru убрал пейджер из UI (хвост списка — lazy-скролл),
+    серверный ?page=N жив. Отсутствие пейджера больше не «страница одна»:
+    обход продолжает GET-ить следующую страницу, пока та приносит НОВЫЕ
+    топики; страница-повтор/пустышка — конец. Живой факт: «Все 30» при 20
+    карточках SSR, ?page=1 отдал оставшиеся 10, ?page=2 — повтор."""
+
+    pages = {
+        0: [1, 2, 3],
+        1: [4, 5],
+        2: [4, 5],  # сервер за последней страницей повторяет хвост
+    }
+
+    class Page:
+        def __init__(self):
+            self.page_num = 0
+
+        def content(self):
+            return _state_html(pages[self.page_num])
+
+    page = Page()
+    urls = []
+
+    def goto(_page, url):
+        urls.append(url)
+        page.page_num = len(urls) - 1
+
+    monkeypatch.setattr("hhru_bot.browser.goto_hh", goto)
+    monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr("hhru_bot.browser.has_login_form", lambda _page: False)
+
+    refs = paginated_topic_refs(page, max_pages=5)
+
+    assert [ref.topic_id for ref in refs] == ["1", "2", "3", "4", "5"]
+    assert urls[-1] == "https://hh.ru/applicant/negotiations?page=2"
+
+
+def test_paginated_topic_refs_survives_server_ignoring_page_param(monkeypatch):
+    """Сервер, игнорирующий ?page (отдаёт первую страницу на любой номер), —
+    ноль новых топиков на page=1 → стоп, без дублей и без вечного цикла."""
+
+    class Page:
+        def __init__(self):
+            self.page_num = 0
+
+        def content(self):
+            return _state_html([1, 2])
+
+    page = Page()
+    urls = []
+
+    def goto(_page, url):
+        urls.append(url)
+        page.page_num = len(urls) - 1
+
+    monkeypatch.setattr("hhru_bot.browser.goto_hh", goto)
+    monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr("hhru_bot.browser.has_login_form", lambda _page: False)
+
+    refs = paginated_topic_refs(page, max_pages=5)
+
+    assert [ref.topic_id for ref in refs] == ["1", "2"]
+    assert urls == [
+        "https://hh.ru/applicant/negotiations",
+        "https://hh.ru/applicant/negotiations?page=1",
+    ]
+
+
 # --- Codex review (#201): expired session must not surface as a raw ValueError
 
 
