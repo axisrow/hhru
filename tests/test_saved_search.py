@@ -1,5 +1,5 @@
 """Тесты автопоисков hh.ru (#1052): план сохранения, детерминированное имя,
-список автопоисков и fail-closed границы неподтверждённого попапа.
+список автопоисков, разбор URL выдачи и боевой путь (email-канал).
 
 Браузера нет — чистые функции + мок Page по паттерну test_report_vacancy_browser.
 """
@@ -16,18 +16,25 @@ import hhru_bot.saved_search as ss
 from hhru_bot.config import ResumeConfig, SearchFilters
 from hhru_bot.selector_groups.saved_search import (
     AUTOSEARCH_EMPTY,
+    AUTOSEARCH_ITEM,
+    AUTOSEARCH_NAME_CHECKBOX,
+    AUTOSEARCH_URL_LINK,
     FAVORITES_SEARCHES_TAB,
     SEARCH_SAVE_BUTTON,
+    SEARCH_SAVE_CHANNEL_EMAIL,
+    SEARCH_SAVE_CREATED,
+    SEARCH_SAVE_DROPDOWN,
 )
 
 pytestmark = pytest.mark.unit
 
 
 class Locator:
-    def __init__(self, page, selector, count=1):
+    def __init__(self, page, selector, count=1, attrs=None):
         self.page = page
         self.selector = selector
         self._count = count
+        self._attrs = attrs or {}
 
     def count(self):
         return self._count
@@ -36,23 +43,50 @@ class Locator:
     def first(self):
         return self
 
+    def nth(self, i):  # noqa: ARG002 - одна строка списка
+        return self
+
+    def locator(self, selector):
+        return Locator(self.page, selector, count=1, attrs=self.page.attrs.get(selector))
+
     def wait_for(self, *, state, timeout):  # noqa: ARG002
         if self._count == 0:
             raise PlaywrightTimeoutError(f"not visible: {self.selector}")
 
+    def get_attribute(self, name):
+        return self._attrs.get(name)
+
     def click(self):
         self.page.clicks.append(self.selector)
+        self.page.on_click(self.selector)
 
 
 class Page:
-    def __init__(self, counts=None):
+    def __init__(self, counts=None, attrs=None):
         self.url = "https://hh.ru/search/vacancy?text=python"
-        self.counts = counts or {}
+        self.counts = counts if counts is not None else {SEARCH_SAVE_BUTTON: 1}
+        self.attrs = attrs or {}
         self.clicks: list[str] = []
         self.login_form = False
 
     def locator(self, selector):
-        return Locator(self, selector, count=self.counts.get(selector, 1))
+        return Locator(
+            self, selector, count=self.counts.get(selector, 0), attrs=self.attrs.get(selector)
+        )
+
+    def on_click(self, selector):
+        """Клик открывает следующий экран флоу сохранения (живой путь 2026-09-08)."""
+        if selector == SEARCH_SAVE_BUTTON:
+            self.counts[SEARCH_SAVE_DROPDOWN] = 1
+            self.counts[SEARCH_SAVE_CHANNEL_EMAIL] = 1
+        if selector == SEARCH_SAVE_CHANNEL_EMAIL:
+            self.counts[SEARCH_SAVE_CREATED] = 1
+
+
+# Page.locator ссылается на self через хак выше — упростим прямым конструктором.
+def _page(**kwargs) -> Page:
+    p = Page(counts=kwargs.get("counts"), attrs=kwargs.get("attrs"))
+    return p
 
 
 def _resume(**kwargs) -> ResumeConfig:
@@ -102,12 +136,41 @@ def test_query_key_ignores_local_only_fields():
     assert ss.saved_search_query_key(a) == ss.saved_search_query_key(b)
 
 
+# --- parse_saved_search_url ---
+
+
+def test_parse_url_takes_search_params_only():
+    filters = ss.parse_saved_search_url(
+        "https://hh.ru/search/vacancy?text=python&area=1&salary=100000"
+        "&experience=between1And3&schedule=fullDay"
+        "&saved_search_id=111159979&L_is_autosearch=true&hhtmFrom=favorites"
+        "&no_magic=true&page=2"
+    )
+    assert filters.text == "python"
+    assert filters.area == 1
+    assert filters.salary_from == 100000
+    assert filters.experience == "between1And3"
+    assert filters.schedule == "fullDay"
+
+
+def test_parse_url_without_params_is_bare_text():
+    filters = ss.parse_saved_search_url("/search/vacancy?text=qa")
+    assert filters.text == "qa"
+    assert filters.area is None
+    assert filters.salary_from is None
+
+
+def test_parse_url_tolerates_non_numeric_area():
+    filters = ss.parse_saved_search_url("/search/vacancy?text=qa&area=abc")
+    assert filters.area is None
+
+
 # --- save_search_on_hh ---
 
 
 def test_dry_run_returns_plan_without_clicks(monkeypatch):
     _patch_navigation(monkeypatch)
-    page = Page()
+    page = _page()
     result = ss.save_search_on_hh(cast(PlaywrightPage, page), _resume(area=1), None, dry_run=True)
     assert result.success is True
     assert result.acted is False
@@ -120,7 +183,7 @@ def test_dry_run_returns_plan_without_clicks(monkeypatch):
 def test_dry_run_uses_explicit_name(monkeypatch):
     _patch_navigation(monkeypatch)
     result = ss.save_search_on_hh(
-        cast(PlaywrightPage, Page()), _resume(), "Мой автопоиск", dry_run=True
+        cast(PlaywrightPage, _page()), _resume(), "Мой автопоиск", dry_run=True
     )
     assert result.name == "Мой автопоиск"
 
@@ -129,7 +192,7 @@ def test_missing_button_fails_closed(monkeypatch):
     # count=0: wait_for(visible) первым исчерпывает бюджет гидратации и
     # только затем отказ — порядок «wait, потом count» (#858).
     _patch_navigation(monkeypatch)
-    page = Page(counts={SEARCH_SAVE_BUTTON: 0})
+    page = _page(counts={SEARCH_SAVE_BUTTON: 0})
     result = ss.save_search_on_hh(cast(PlaywrightPage, page), _resume(), None, dry_run=True)
     assert result.success is False
     assert "не подтвердилась" in result.reason
@@ -137,7 +200,7 @@ def test_missing_button_fails_closed(monkeypatch):
 
 def test_ambiguous_button_fails_closed(monkeypatch):
     _patch_navigation(monkeypatch)
-    page = Page(counts={SEARCH_SAVE_BUTTON: 2})
+    page = _page(counts={SEARCH_SAVE_BUTTON: 2})
     result = ss.save_search_on_hh(cast(PlaywrightPage, page), _resume(), None, dry_run=True)
     assert result.success is False
     assert "неоднозначна" in result.reason
@@ -146,47 +209,122 @@ def test_ambiguous_button_fails_closed(monkeypatch):
 def test_not_authenticated_raises(monkeypatch):
     _patch_navigation(monkeypatch, login_form=True)
     with pytest.raises(ss.NotAuthenticated):
-        ss.save_search_on_hh(cast(PlaywrightPage, Page()), _resume(), None, dry_run=True)
+        ss.save_search_on_hh(cast(PlaywrightPage, _page()), _resume(), None, dry_run=True)
 
 
-def test_force_refuses_to_click_until_channel_step_confirmed(monkeypatch):
-    """Боевой путь fail-closed: мутирующая граница — выбор канала уведомлений.
-
-    Разведка 2026-09-08: клик по кнопке открытия безвреден, но экран за
-    выбором канала не исследован. Тот же контракт, что у report-vacancy
-    (#745): неподтверждённый мутационный клик не выполняется, исход —
-    обычный failed без uncertain (клика не было, hh.ru не мутирован).
-    """
+def test_already_saved_is_skip_without_clicks(monkeypatch):
+    """Дубль: кнопка в состоянии «Сохранён» — честный skip до всякого клика."""
     _patch_navigation(monkeypatch)
-    page = Page()
+    page = _page(counts={SEARCH_SAVE_BUTTON: 0, SEARCH_SAVE_CREATED: 1})
     result = ss.save_search_on_hh(cast(PlaywrightPage, page), _resume(), None, dry_run=False)
     assert result.success is False
-    assert result.acted is False
+    assert result.skipped is True
     assert result.uncertain is False
     assert page.clicks == []
-    assert "выбор канала уведомлений" in result.reason
+    assert "уже сохранён" in result.reason
+
+
+def test_force_saves_via_email_channel(monkeypatch):
+    """Боевой путь живого прогона 2026-09-08: кнопка → tooltip → «На почту» → «Сохранён»."""
+    _patch_navigation(monkeypatch)
+    page = _page()
+    calls = []
+    result = ss.save_search_on_hh(
+        cast(PlaywrightPage, page),
+        _resume(),
+        None,
+        dry_run=False,
+        before_click=lambda: calls.append("before_click"),
+    )
+    assert result.success is True
+    assert result.acted is True
+    assert page.clicks == [SEARCH_SAVE_BUTTON, SEARCH_SAVE_CHANNEL_EMAIL]
+    # seam DurableMutationAttempt стоит вплотную к мутирующему клику канала.
+    assert calls == ["before_click"]
+
+
+def test_force_timeout_after_channel_click_is_uncertain(monkeypatch):
+    """Таймаут «Сохранён» после клика канала — клик мог уйти (#176/#207)."""
+
+    class _NoCreatedPage(Page):
+        def on_click(self, selector):
+            if selector == SEARCH_SAVE_BUTTON:
+                self.counts[SEARCH_SAVE_DROPDOWN] = 1
+                self.counts[SEARCH_SAVE_CHANNEL_EMAIL] = 1
+            # клик канала НЕ переводит кнопку в «Сохранён»
+
+    _patch_navigation(monkeypatch)
+    page = _NoCreatedPage(counts={SEARCH_SAVE_BUTTON: 1})
+    result = ss.save_search_on_hh(cast(PlaywrightPage, page), _resume(), None, dry_run=False)
+    assert result.success is False
+    assert result.acted is True
+    assert result.uncertain is True
+    assert SEARCH_SAVE_CHANNEL_EMAIL in page.clicks
 
 
 # --- list_saved_searches ---
 
 
+def test_find_duplicate_by_url_params():
+    entries = [
+        ss.SavedSearchEntry(
+            name="python",
+            url="/search/vacancy?text=python&area=1&saved_search_id=111159979&hhtmFrom=favorites",
+        ),
+        ss.SavedSearchEntry(name="другой", url="/search/vacancy?text=qa"),
+    ]
+    # Сервисные параметры (saved_search_id, hhtmFrom) в сравнении не участвуют.
+    dup = ss.find_duplicate_saved_search(entries, SearchFilters(text="python", area=1))
+    assert dup is not None and dup.name == "python"
+    assert ss.find_duplicate_saved_search(entries, SearchFilters(text="python")) is None
+    assert ss.find_duplicate_saved_search(entries, SearchFilters(text="qa")) is not None
+
+
 def test_list_empty_state_confirmed(monkeypatch):
     _patch_navigation(monkeypatch)
-    page = Page(counts={AUTOSEARCH_EMPTY: 1})
+    page = _page(counts={FAVORITES_SEARCHES_TAB: 1, AUTOSEARCH_EMPTY: 1, AUTOSEARCH_ITEM: 0})
     assert ss.list_saved_searches(cast(PlaywrightPage, page)) == []
 
 
-def test_list_nonempty_is_indeterminate(monkeypatch):
-    """Непустой список без подтверждённых селекторов строк — не «пусто» (#464)."""
+def test_list_parses_rows(monkeypatch):
     _patch_navigation(monkeypatch)
-    page = Page(counts={AUTOSEARCH_EMPTY: 0})
+    page = _page(
+        counts={FAVORITES_SEARCHES_TAB: 1, AUTOSEARCH_EMPTY: 0, AUTOSEARCH_ITEM: 1},
+        attrs={
+            AUTOSEARCH_NAME_CHECKBOX: {"aria-label": "python"},
+            AUTOSEARCH_URL_LINK: {
+                "href": "/search/vacancy?text=python&area=1&saved_search_id=111159979"
+            },
+        },
+    )
+    entries = ss.list_saved_searches(cast(PlaywrightPage, page))
+    assert len(entries) == 1
+    assert entries[0].name == "python"
+    assert entries[0].url is not None
+    assert "text=python" in entries[0].url
+
+
+def test_list_row_without_name_is_indeterminate(monkeypatch):
+    _patch_navigation(monkeypatch)
+    page = _page(
+        counts={FAVORITES_SEARCHES_TAB: 1, AUTOSEARCH_EMPTY: 0, AUTOSEARCH_ITEM: 1},
+        attrs={AUTOSEARCH_NAME_CHECKBOX: {}},
+    )
+    with pytest.raises(ss.SavedSearchListIndeterminate):
+        ss.list_saved_searches(cast(PlaywrightPage, page))
+
+
+def test_list_neither_rows_nor_empty_is_indeterminate(monkeypatch):
+    """Ни строк, ни пустого состояния — не «пусто», а непрочитанное (#464)."""
+    _patch_navigation(monkeypatch)
+    page = _page(counts={FAVORITES_SEARCHES_TAB: 1, AUTOSEARCH_EMPTY: 0, AUTOSEARCH_ITEM: 0})
     with pytest.raises(ss.SavedSearchListIndeterminate):
         ss.list_saved_searches(cast(PlaywrightPage, page))
 
 
 def test_list_tab_not_rendered_is_indeterminate(monkeypatch):
     _patch_navigation(monkeypatch)
-    page = Page(counts={FAVORITES_SEARCHES_TAB: 0})
+    page = _page(counts={FAVORITES_SEARCHES_TAB: 0})
     with pytest.raises(ss.SavedSearchListIndeterminate):
         ss.list_saved_searches(cast(PlaywrightPage, page))
 
@@ -194,7 +332,7 @@ def test_list_tab_not_rendered_is_indeterminate(monkeypatch):
 def test_list_not_authenticated_raises(monkeypatch):
     _patch_navigation(monkeypatch, login_form=True)
     with pytest.raises(ss.NotAuthenticated):
-        ss.list_saved_searches(cast(PlaywrightPage, Page()))
+        ss.list_saved_searches(cast(PlaywrightPage, _page()))
 
 
 # --- режимы команды search (#1052) ---
@@ -211,8 +349,6 @@ def _mode_args(**overrides):
 def test_save_with_saved_is_rejected(capsys, monkeypatch):
     from hhru_bot.commands.search import _run_saved_search_modes
 
-    launched = []
-
     class _FakeContext:
         def __enter__(self):
             return self
@@ -221,11 +357,9 @@ def test_save_with_saved_is_rejected(capsys, monkeypatch):
             return False
 
         def new_page(self):
-            launched.append(True)
             raise AssertionError("браузер не должен открываться для ошибок сочетания флагов")
 
     monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **k: _FakeContext())
     failed = _run_saved_search_modes(_mode_args(save=True, saved="x"), object())
     assert failed is True
     assert "[FAIL] --save не сочетается с --saved" in capsys.readouterr().out
-    assert launched == []

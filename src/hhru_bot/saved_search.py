@@ -1,21 +1,24 @@
 """Сохранение настроек поиска в автопоиски hh.ru (#1052).
 
-Разведка живым DOM 2026-09-08 (census + один разрешённый клик по кнопке,
-scripts/explore_saved_search_1052.py): кнопка «Сохранить поиск» на
-/search/vacancy НЕ мутирует hh.ru — она открывает Magritte-tooltip
-«Куда присылать новые вакансии по этому поиску?» с кнопками «На почту» /
-«В мессенджер» (``SEARCH_SAVE_CHANNEL_*``). Поля имени в UI НЕТ: hh.ru
-именует автопоиск сам, поэтому локальное имя плана — метка CLI для плана
-и дедупа, а не вводимое значение. Мутирующая граница — клик по каналу
-уведомлений и следующий за ним не исследованный экран; без боевого
-разрешения он не выполняется, боевой путь честно отказывается ДО клика
-(тот же fail-closed контракт, что у ``report_vacancy`` #745).
+Живые факты (census + разрешённые прогоны 2026-09-08,
+scripts/explore_saved_search_1052.py и explore_saved_search_save_1052.py):
 
-Список автопоисков: /applicant/autosearch («Избранное → Поиски»).
-Подтверждено только пустое состояние списка (``AUTOSEARCH_EMPTY``); строки
-непустого списка живым замером не наблюдались, поэтому их чтение —
-``SavedSearchListIndeterminate``, а не пустой список (паттерн #464: пустой
-результат требует подтверждения состояния страницы).
+- Кнопка «Сохранить поиск» на /search/vacancy открывает Magritte-tooltip
+  «Куда присылать новые вакансии по этому поиску?» с кнопками «На почту» /
+  «В мессенджер». Поля имени в UI НЕТ — hh.ru именует автопоиск сам (имя =
+  text запроса); локальное имя плана — метка CLI, не вводимое значение.
+- Клик «На почту» (боевой прогон) сохраняет автопоиск МГНОВЕННО, без
+  дополнительного экрана; кнопка переходит в состояние «Сохранён»
+  (``SEARCH_SAVE_CREATED``) — позитивный маркер успеха и сигнал дубля.
+- Список автопоисков: /applicant/autosearch («Избранное → Поиски»); строка —
+  ``favorites-saved-search-item``, имя — aria-label чекбокса, URL выдачи —
+  href ссылки-счётчика (``parse_saved_search_url`` разбирает его в
+  ``SearchFilters``).
+
+Мутирующий клик — клик по каналу уведомлений; ``before_click`` (seam
+``DurableMutationAttempt``) стоит вплотную к нему, а не к безвредному
+открытию tooltip'а. Путь через «В мессенджер» боевым прогоном не
+исследовался — реализован только email-канал.
 """
 
 from __future__ import annotations
@@ -34,8 +37,14 @@ from .config import ResumeConfig, SearchFilters
 from .responses import NotAuthenticated
 from .selector_groups.saved_search import (
     AUTOSEARCH_EMPTY,
+    AUTOSEARCH_ITEM,
+    AUTOSEARCH_NAME_CHECKBOX,
+    AUTOSEARCH_URL_LINK,
     FAVORITES_SEARCHES_TAB,
     SEARCH_SAVE_BUTTON,
+    SEARCH_SAVE_CHANNEL_EMAIL,
+    SEARCH_SAVE_CREATED,
+    SEARCH_SAVE_DROPDOWN,
 )
 
 # Страница списка автопоисков hh.ru («Избранное → Поиски»).
@@ -147,9 +156,10 @@ def build_saved_search_url(filters: SearchFilters) -> str:
 def list_saved_searches(page: Page) -> list[SavedSearchEntry]:
     """Прочитать список автопоисков аккаунта (read-only, /applicant/autosearch).
 
-    Пустой список подтверждается ``AUTOSEARCH_EMPTY``. Непустой список
-    пока не наблюдаем живьём: строки не парсятся и не выдаются за пустые —
-    ``SavedSearchListIndeterminate`` с честной причиной.
+    Пустой список подтверждается ``AUTOSEARCH_EMPTY`` (#464). Строка
+    автопоиска (боевой readback 2026-09-08): имя — aria-label чекбокса,
+    URL выдачи — href ссылки-счётчика; оба селектора live-подтверждены.
+    Строка без читаемого имени — ``SavedSearchListIndeterminate``.
     """
     try:
         goto_hh(page, AUTOSEARCH_URL)
@@ -165,25 +175,82 @@ def list_saved_searches(page: Page) -> list[SavedSearchEntry]:
         page.locator(FAVORITES_SEARCHES_TAB).first.wait_for(
             state="visible", timeout=AUTOSEARCH_RENDER_TIMEOUT_MS
         )
-    except (PlaywrightTimeoutError, PlaywrightError) as exc:
-        raise SavedSearchListIndeterminate(
-            f"вкладка «Поиски» не подтвердилась: {exc}", state="indeterminate"
-        ) from exc
-
-    try:
         empty_count = page.locator(AUTOSEARCH_EMPTY).count()
+        items = page.locator(AUTOSEARCH_ITEM)
+        item_count = items.count()
+        entries: list[SavedSearchEntry] = []
+        for i in range(item_count):
+            item = items.nth(i)
+            name = item.locator(AUTOSEARCH_NAME_CHECKBOX).first.get_attribute("aria-label")
+            href = item.locator(AUTOSEARCH_URL_LINK).first.get_attribute("href")
+            if not name or not name.strip():
+                raise SavedSearchListIndeterminate(
+                    f"строка автопоиска #{i + 1} без читаемого имени (aria-label чекбокса пуст)",
+                    state="indeterminate",
+                )
+            entries.append(SavedSearchEntry(name=name.strip(), url=href))
+        if empty_count == 1 and not entries:
+            return []
+        if not entries and empty_count != 1:
+            raise SavedSearchListIndeterminate(
+                "список автопоисков не прочитан: нет ни строк, ни подтверждённого "
+                "пустого состояния (возможен дрейф селекторов, #1052)",
+                state="indeterminate",
+            )
+        return entries
+    except SavedSearchListIndeterminate:
+        raise
     except (PlaywrightTimeoutError, PlaywrightError) as exc:
         raise SavedSearchListIndeterminate(
-            f"состояние списка автопоисков не прочитано: {exc}", state="indeterminate"
+            f"список автопоисков не прочитан: {exc}", state="indeterminate"
         ) from exc
-    if empty_count == 1:
-        return []
 
-    raise SavedSearchListIndeterminate(
-        "список автопоисков непуст, но селекторы его строк не подтверждены живым DOM "
-        "(сняты census только кнопки сохранения и пустого состояния, #1052); "
-        "снимите census непустого списка и дополните selector_groups/saved_search.py",
-        state="indeterminate",
+
+def find_duplicate_saved_search(
+    entries: list[SavedSearchEntry], filters: SearchFilters
+) -> SavedSearchEntry | None:
+    """Найти автопоиск с той же параметрикой поиска (дубль, #1052).
+
+    Кнопка «Сохранён» неперсистентна (живой census 2026-09-08: в новой сессии
+    на точно сохранённой параметрике hh.ru снова показывает «Сохранить
+    поиск»), поэтому надёжный дубль-детект — сравнение параметрики из URL
+    строк списка автопоисков с планом сохранения.
+    """
+    wanted = saved_search_params(filters)
+    for entry in entries:
+        if entry.url and saved_search_params(parse_saved_search_url(entry.url)) == wanted:
+            return entry
+    return None
+
+
+def parse_saved_search_url(url: str) -> SearchFilters:
+    """Разобрать ссылку выдачи автопоиска в ``SearchFilters``.
+
+    Берутся только параметры, которые строит ``build_search_url`` (text,
+    area, salary, experience, schedule); сервисные (saved_search_id и пр.)
+    игнорируются. Незнакомых параметров настройки поиска CLI в URL не
+    бывает — локальные фильтры (стоп-списки и т.п.) в автопоиск не входят.
+    """
+    from urllib.parse import parse_qs, urlparse
+
+    query = parse_qs(urlparse(url).query)
+    text = (query.get("text") or [""])[0]
+
+    def _int(key: str) -> int | None:
+        raw = (query.get(key) or [None])[0]
+        if raw is None:
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            return None
+
+    return SearchFilters(
+        text=text,
+        area=_int("area"),
+        salary_from=_int("salary"),
+        experience=(query.get("experience") or [None])[0],
+        schedule=(query.get("schedule") or [None])[0],
     )
 
 
@@ -200,14 +267,11 @@ def save_search_on_hh(
     ``dry_run=True``: открыть выдачу, подтвердить кнопку сохранения и
     вернуть план (имя, URL, параметры) — без единого клика.
 
-    Боевой путь: НЕ КЛИКАЕТ. Разведка 2026-09-08 показала, что клик по
-    кнопке открытия безвреден, но мутирующая граница — выбор канала
-    уведомлений («На почту»/«В мессенджер») и следующий за ним
-    не исследованный экран: за ней локальные таймауты ничего не доказывают
-    (#207), а подтвердить результат нечем. Fail-closed отказ ``acted=False``
-    — то же правило, что у report_vacancy (#745). ``before_click``
-    зарезервирован для будущего боевого пути (seam DurableMutationAttempt),
-    сейчас не вызывается никогда.
+    Боевой путь (живой прогон 2026-09-08): клик по кнопке открывает tooltip
+    канала уведомлений; клик «На почту» — мутирующий, ``before_click``
+    вызывается вплотную к нему. Успех — позитивный маркер «Сохранён»;
+    таймаут после клика канала — ``uncertain`` (клик мог уйти, #176/#207).
+    Если кнопка уже в состоянии «Сохранён» — ``skipped`` (дубль).
     """
     filters = resume.search
     resolved_name = name or deterministic_saved_search_name(filters)
@@ -232,14 +296,38 @@ def save_search_on_hh(
     if has_login_form(page):
         raise NotAuthenticated("страница поиска содержит форму входа — сессия отвергнута")
 
+    # Строка поиска несёт кнопку «Сохранить поиск», которая СРАЗУ после
+    # успешного сохранения (в той же сессии) переходит в состояние «Сохранён»
+    # (SEARCH_SAVE_CREATED) — боевой прогон 2026-09-08. Состояние
+    # неперсистентно (новая сессия снова показывает «Сохранить поиск» даже на
+    # сохранённой параметрике), поэтому надёжный дубль-детект — в команде, по
+    # списку автопоисков; здесь CREATED — только маркер немедленного успеха.
+    # Гидратационный race (#858): строгие проверки count() — после wait_for.
     try:
-        # Гидратационный race (#858, «commit не значит отрисовано»): строгая
-        # проверка count() до wait_for видела бы count=0 на негидратированном
-        # DOM и ошибочно отказывала до истечения бюджета. Сначала ждём видимости
-        # первого вхождения, только потом читаем count — тот же порядок, что у
-        # FAVORITES_SEARCHES_TAB в list_saved_searches.
         buttons = page.locator(SEARCH_SAVE_BUTTON)
-        buttons.first.wait_for(state="visible", timeout=SEARCH_BAR_RENDER_TIMEOUT_MS)
+        try:
+            buttons.first.wait_for(state="visible", timeout=SEARCH_BAR_RENDER_TIMEOUT_MS)
+        except (PlaywrightTimeoutError, PlaywrightError) as exc:
+            # Кнопки нет: либо дубль (кнопка в состоянии «Сохранён»), либо
+            # невырисованная страница/дрейф селектора — различаем по CREATED.
+            try:
+                created_count = page.locator(SEARCH_SAVE_CREATED).count()
+            except (PlaywrightTimeoutError, PlaywrightError):
+                created_count = 0
+            if created_count == 1:
+                return SaveSearchResult(
+                    query_key,
+                    resolved_name,
+                    success=False,
+                    skipped=True,
+                    reason="этот поиск уже сохранён в автопоиски (кнопка в состоянии «Сохранён»)",
+                )
+            return SaveSearchResult(
+                query_key,
+                resolved_name,
+                success=False,
+                reason=f"кнопка «Сохранить поиск» не подтвердилась: {exc}",
+            )
         count = buttons.count()
         if count != 1:
             return SaveSearchResult(
@@ -265,15 +353,46 @@ def save_search_on_hh(
             reason=f"[DRY-RUN] план автопоиска: имя='{plan.name}', параметры: {param_line}",
         )
 
+    # Боевой путь (живой прогон 2026-09-08): клик по кнопке открывает tooltip
+    # выбора канала уведомлений; клик «На почту» сохраняет автопоиск мгновенно,
+    # без дополнительного экрана, и кнопка переходит в «Сохранён». Мутирующий
+    # клик — именно клик по каналу, поэтому before_click (seam
+    # DurableMutationAttempt) стоит вплотную к нему, не к безвредному открытию.
+    try:
+        page.locator(SEARCH_SAVE_BUTTON).first.click()
+        page.locator(SEARCH_SAVE_DROPDOWN).first.wait_for(
+            state="visible", timeout=SEARCH_BAR_RENDER_TIMEOUT_MS
+        )
+        channels = page.locator(SEARCH_SAVE_CHANNEL_EMAIL)
+        if channels.count() != 1:
+            return SaveSearchResult(
+                query_key,
+                resolved_name,
+                success=False,
+                reason=f"кнопка канала «На почту» неоднозначна или не найдена "
+                f"(найдено {channels.count()})",
+            )
+        if before_click is not None:
+            before_click()
+        channels.first.click()
+        page.locator(SEARCH_SAVE_CREATED).first.wait_for(
+            state="visible", timeout=SEARCH_BAR_RENDER_TIMEOUT_MS
+        )
+    except (PlaywrightTimeoutError, PlaywrightError) as exc:
+        # После before_click клик мог уйти — исход uncertain, fail-closed (#176).
+        return SaveSearchResult(
+            query_key,
+            resolved_name,
+            success=False,
+            acted=True,
+            uncertain=True,
+            reason=f"клик канала выполнен, но состояние «Сохранён» не подтвердилось: {exc}",
+        )
+
     return SaveSearchResult(
         query_key,
         resolved_name,
-        success=False,
-        acted=False,
-        reason=(
-            "мутирующая граница автопоиска — выбор канала уведомлений "
-            "(«На почту»/«В мессенджер») и следующий за ним экран; они не исследованы "
-            "боевым прогоном (#1052), поэтому клик не выполняется. UI имени не "
-            "запрашивает: hh.ru именует автопоиск сам (локальное имя плана — метка CLI)"
-        ),
+        success=True,
+        acted=True,
+        reason="автопоиск сохранён (кнопка в состоянии «Сохранён»); имя назначает hh.ru",
     )

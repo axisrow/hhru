@@ -61,17 +61,20 @@ def _print_saved_searches(entries: list) -> None:
 
 
 def _run_saved_search_modes(args: argparse.Namespace, config) -> bool | None:
-    """Обработка --list-saved/--saved/--save: отдельные режимы команды search.
+    """Завершающие режимы команды search: --list-saved и --save.
 
-    Возвращает None, если ни один из этих флагов не задан (обычный поиск),
-    иначе bool-признак отказа.
+    Возвращает None, если ни один из них не задан (обычный поиск или --saved,
+    параметры которого подставляются в прогон отдельно), иначе bool-признак
+    отказа.
     """
     from ..browser import launch_context
     from ..responses import NotAuthenticated
     from ..saved_search import (
         SavedSearchListIndeterminate,
+        find_duplicate_saved_search,
         list_saved_searches,
         save_search_on_hh,
+        saved_search_query_key,
     )
 
     list_saved = getattr(args, "list_saved", False)
@@ -80,7 +83,9 @@ def _run_saved_search_modes(args: argparse.Namespace, config) -> bool | None:
     force = getattr(args, "force", False)
     name = getattr(args, "name", None)
 
-    if not (list_saved or saved or save):
+    if not (list_saved or save):
+        # Чистый --save-режим не задан; --saved сам по себе — не завершающий
+        # режим (параметрика подставляется в обычный прогон в run()).
         return None
 
     if list_saved and (saved or save):
@@ -107,7 +112,7 @@ def _run_saved_search_modes(args: argparse.Namespace, config) -> bool | None:
     ) as context:
         page = context.new_page()
         entries = []
-        if list_saved or saved:
+        if list_saved:
             try:
                 entries = list_saved_searches(page)
             except SavedSearchListIndeterminate as exc:
@@ -121,46 +126,135 @@ def _run_saved_search_modes(args: argparse.Namespace, config) -> bool | None:
             print("[OK] Список автопоисков прочитан; read-only, изменений на hh.ru нет")
             return False
 
-        if saved:
-            matches = [e for e in entries if e.name == saved]
-            if not matches:
-                known = ", ".join(e.name for e in entries) or "<список пуст>"
-                print(f"[FAIL] Автопоиск '{saved}' не найден; список: {known}")
-                return True
-            entry = matches[0]
-            if entry.url is None:
-                print(
-                    f"[FAIL] Автопоиск '{saved}' найден, но селекторы строки списка "
-                    "не подтверждены живым DOM (#1052): параметры прогона снять нечем. "
-                    "Снимите census непустого списка и дополните selector_groups/saved_search.py"
-                )
-                return True
-            # Задел на снятую строку списка: даже с URL применение параметров
-            # автопоиска к прогону пока не реализовано — честный отказ, а не
-            # тихий пропуск поиска.
-            print(
-                f"[FAIL] Автопоиск '{saved}' найден ({entry.url}), но применение "
-                "параметров автопоиска к прогону не реализовано (#1052)"
-            )
-            return True
-
-        # --save. Uncertain-гейт появится вместе с боевым путём (сейчас
-        # before_click не вызывается и actions-строки save_search не пишутся).
-        resume = resumes[0]
-        dry_run = not force
+        # --save. Дубль-детект — по списку автопоисков: кнопка «Сохранён»
+        # неперсистентна (живой census 2026-09-08), а параметрика строки
+        # списка сравнивается с планом напрямую.
         try:
-            result = save_search_on_hh(page, resume, name, dry_run)
+            existing = list_saved_searches(page)
+        except SavedSearchListIndeterminate as exc:
+            print(f"[FAIL] {exc}")
+            return True
         except NotAuthenticated as exc:
             print(f"[FAIL] Сессия недействительна: {exc}")
             return True
-        if result.success:
+        resume = resumes[0]
+        duplicate = find_duplicate_saved_search(existing, resume.search)
+        if duplicate is not None and force:
+            print(
+                f"[FAIL] Автопоиск с этой параметрикой уже сохранён "
+                f"(имя hh.ru: '{duplicate.name}'); повторное сохранение не выполнено"
+            )
+            return True
+
+        # Uncertain-гейт (#176/#476): unresolved-uncertain для этого
+        # query_key блокирует повторное боевое сохранение до ручной сверки
+        # списка автопоисков на hh.ru.
+        dry_run = not force
+        from ._common import ApplyProgress, DurableMutationAttempt
+
+        query_key = saved_search_query_key(resume.search)
+        run_history = History(args.history)
+        attempt = (
+            None
+            if dry_run
+            else DurableMutationAttempt(run_history, ApplyProgress(), query_key, "save_search")
+        )
+        if not dry_run and run_history.has_unresolved_uncertain(query_key, "save_search"):
+            print(
+                "[FAIL] предыдущее сохранение этого поиска не подтверждено (uncertain). "
+                "Проверьте список автопоисков на hh.ru вручную перед повтором."
+            )
+            return True
+        try:
+            result = save_search_on_hh(
+                page,
+                resume,
+                name,
+                dry_run,
+                before_click=attempt.before_click if attempt is not None else None,
+            )
+        except NotAuthenticated as exc:
+            print(f"[FAIL] Сессия недействительна: {exc}")
+            return True
+        except BaseException as exc:
+            if attempt is not None:
+                attempt.interrupt(exc)
+            raise
+        if attempt is not None:
+            attempt.finish(result)
+        if result.skipped:
+            print(f"[skip] {resume.id} — {result.reason}")
+        elif result.success:
             print(f"[OK] {result.reason}" if dry_run else f"[OK] {resume.id} — {result.reason}")
             if dry_run:
+                if duplicate is not None:
+                    print(
+                        f"[INFO] Внимание: автопоиск с этой параметрикой уже сохранён "
+                        f"(имя hh.ru: '{duplicate.name}')"
+                    )
                 print("[INFO] Ничего не нажато; боевое сохранение — --force")
         else:
-            print(f"[FAIL] {resume.id} — {result.reason}")
+            prefix = "[FAIL] (uncertain)" if result.uncertain else "[FAIL]"
+            print(f"{prefix} {resume.id} — {result.reason}")
             failed = True
     return failed
+
+
+def _load_saved_search_filters(
+    args: argparse.Namespace, config
+) -> tuple[SearchFilters | None, bool]:
+    """``--saved NAME``: параметрика прогона из автопоиска hh.ru.
+
+    Возвращает (SearchFilters | None, failed). Фильтры собираются из URL
+    выдачи автопоиска (parse_saved_search_url): идентичная параметрике
+    автопоиска выдача получается обычным поиском с этими фильтрами.
+    """
+    saved = getattr(args, "saved", None)
+    if not saved:
+        return None, False
+
+    from ..browser import launch_context
+    from ..responses import NotAuthenticated
+    from ..saved_search import (
+        SavedSearchListIndeterminate,
+        list_saved_searches,
+        parse_saved_search_url,
+    )
+
+    with launch_context(
+        config.storage_state_file, headless=args.headless, user_agent=config.user_agent
+    ) as context:
+        try:
+            entries = list_saved_searches(context.new_page())
+        except SavedSearchListIndeterminate as exc:
+            print(f"[FAIL] {exc}")
+            return None, True
+        except NotAuthenticated as exc:
+            print(f"[FAIL] Сессия недействительна: {exc}")
+            return None, True
+
+    matches = [e for e in entries if e.name == saved]
+    if not matches:
+        known = ", ".join(e.name for e in entries) or "<список пуст>"
+        print(f"[FAIL] Автопоиск '{saved}' не найден; список: {known}")
+        return None, True
+    entry = matches[0]
+    if not entry.url:
+        print(f"[FAIL] Автопоиск '{saved}' найден, но URL выдачи в строке не прочитан (#1052)")
+        return None, True
+    filters = parse_saved_search_url(entry.url)
+    extras = []
+    if filters.area is not None:
+        extras.append(f"area={filters.area}")
+    if filters.salary_from is not None:
+        extras.append(f"salary={filters.salary_from}")
+    if filters.experience:
+        extras.append(f"experience={filters.experience}")
+    if filters.schedule:
+        extras.append(f"schedule={filters.schedule}")
+    suffix = f" ({', '.join(extras)})" if extras else ""
+    print(f"[INFO] Автопоиск '{saved}': параметры прогона text='{filters.text}'{suffix}")
+    return filters, False
 
 
 def _resumes_for_search(config, args: argparse.Namespace) -> list[ResumeConfig]:
@@ -316,10 +410,24 @@ def run(args: argparse.Namespace) -> bool:
     history = History(args.history)
     saved_mode_failed = _run_saved_search_modes(args, config)
     if saved_mode_failed is not None:
-        # Режимы --save/--saved/--list-saved завершают команду: обычный поиск
+        # Режимы --save/--list-saved завершают команду: обычный поиск
         # в тех же прогонах не выполняется.
         return saved_mode_failed
-    resumes = _resumes_for_search(config, args)
+    saved_filters, saved_failed = _load_saved_search_filters(args, config)
+    if saved_failed:
+        return True
+    if saved_filters is not None:
+        # --saved NAME: параметрика прогона — из автопоиска hh.ru, а не из
+        # конфига/--text. Синтетическое резюме локальное (как у adhoc --text).
+        resumes = [
+            ResumeConfig(
+                id=f"saved:{getattr(args, 'saved', '')}",
+                resume_url=f"https://hh.ru/resume/saved-{getattr(args, 'saved', '')}",
+                search=saved_filters,
+            )
+        ]
+    else:
+        resumes = _resumes_for_search(config, args)
 
     failed = False
     with launch_context(

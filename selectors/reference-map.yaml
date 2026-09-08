@@ -5590,7 +5590,7 @@ selectors:
   saved_search.AUTOSEARCH_EMPTY:
     value: '[data-qa=''empty-favorites-saved-search-block'']'
     criticality: write
-    declared_at: src/hhru_bot/selector_groups/saved_search.py:42
+    declared_at: src/hhru_bot/selector_groups/saved_search.py:45
     decision: live_dom
     sources: {}
     live_matches:
@@ -5602,11 +5602,72 @@ selectors:
     verification: browser_observed
     evidence:
       source: live census 2026-09-08, authenticated session, /applicant/autosearch
-      note: 'Empty state of the saved-searches list ("Ничего нет. В поиске выберите фильтры и нажмите на значок поиска с сердечком...").
-        The only confirmed part of the list markup: rows of a NON-empty list were never observed live (account had 0 saved
-        searches) and no row selectors are claimed.'
+      note: Empty state of the saved-searches list ("Ничего нет. В поиске выберите фильтры и нажмите на значок поиска с сердечком...").
+        Observed live both empty (before the approved battle save) and absent (after it).
     last_verified_at: '2026-09-08'
     verified_flow: census_read_only_on_applicant_autosearch
+    verified_by: browser
+  saved_search.AUTOSEARCH_ITEM:
+    value: '[data-qa=''favorites-saved-search-item'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/saved_search.py:48
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - favorites-saved-search-item
+    active: true
+    bindings: {}
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: live readback 2026-09-08 after the approved battle save, /applicant/autosearch (probe scripts/explore_saved_search_save_1052.py,
+        html dump data/logs/saved_search_autosearch_readback_1052_*)
+      note: Card of one saved search in the list. Text like "8 сентября python Москва 999+ вакансий" (creation date, name,
+        area, counter). Contains the name checkbox and the serp link.
+    last_verified_at: '2026-09-08'
+    verified_flow: readback_after_approved_battle_save
+    verified_by: browser
+  saved_search.AUTOSEARCH_NAME_CHECKBOX:
+    value: '[data-qa=''favorites-saved-search-checkbox'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/saved_search.py:51
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - favorites-saved-search-checkbox
+    active: true
+    bindings: {}
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: live readback 2026-09-08 after the approved battle save, /applicant/autosearch
+      note: Checkbox of a saved-search row; aria-label carries the autosearch name assigned by hh.ru (equals the query text
+        — the save UI never asks for a name). The visible <span class="saved-search-name--…"> is a CSS-module class, not a
+        stable contract; read the aria-label instead.
+    last_verified_at: '2026-09-08'
+    verified_flow: readback_after_approved_battle_save
+    verified_by: browser
+  saved_search.AUTOSEARCH_URL_LINK:
+    value: a[data-qa='favorites-saved-search-counter-total']
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/saved_search.py:54
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - favorites-saved-search-counter-total
+    active: true
+    bindings: {}
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: live readback 2026-09-08 after the approved battle save, /applicant/autosearch
+      note: '"N вакансий" link of a saved-search row; href is the autosearch serp with its parameters, e.g. /search/vacancy?text=python&area=1&saved_search_id=…&L_is_autosearch=true&hhtmFrom=favorites.
+        Service params (saved_search_id, hhtmFrom, L_is_autosearch, no_magic) are ignored when parsing the URL into SearchFilters.'
+    last_verified_at: '2026-09-08'
+    verified_flow: readback_after_approved_battle_save
     verified_by: browser
   saved_search.FAVORITES_SEARCHES_TAB:
     value: a[data-qa='favorites-tab-searches']
@@ -5690,6 +5751,29 @@ selectors:
         treated as the mutating boundary.'
     last_verified_at: '2026-09-08'
     verified_flow: census_after_single_exploratory_click_on_search_vacancy
+    verified_by: browser
+  saved_search.SEARCH_SAVE_CREATED:
+    value: button[data-qa='vacancy-saved-search-created']
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/saved_search.py:39
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - vacancy-saved-search-created
+    active: true
+    bindings: {}
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: approved battle save 2026-09-08 (probe scripts/explore_saved_search_save_1052.py)
+      note: Button state "Сохранён" — the search bar button IMMEDIATELY after a successful save in
+        the same session (replaces vacancy-saved-search-create). The click on the email channel
+        saved the autosearch instantly with no further screen. Positive success marker. NOT a
+        persistent duplicate signal - a later census on the exact saved query (new session) shows
+        the create button again; reliable duplicate detection must read the autosearch list.
+    last_verified_at: '2026-09-08'
+    verified_flow: approved_battle_save_on_search_vacancy
     verified_by: browser
   saved_search.SEARCH_SAVE_DROPDOWN:
     value: div[data-qa='drop-base'][role='tooltip']
