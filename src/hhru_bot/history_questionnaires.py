@@ -811,18 +811,23 @@ class QuestionnairesMixin:
 
     def resolve_robot_questionnaire(self, topic: str, *, answer: str) -> None:
         """Пометить робот-анкету отвеченной (колонкой, не DELETE — таблица
-        append-only, факт обнаружения хранит аудит)."""
+        append-only, факт обнаружения хранит аудит).
+
+        Повторный вызов легален: живые анкеты многошаговые — робот задаёт
+        следующий вопрос после нашего ответа, и resolve перезаписывается
+        свежим ответом (робот-кейс 2026-09-08: вопрос №2 через минуту после
+        ответа №1). Дедуп повторного КЛИКА держит не эта таблица, а
+        replies/has_replied по inbound-маркеру нового вопроса. Fail-closed
+        остаётся для неизвестного topic (rowcount != 1 → ValueError).
+        """
         now = datetime.now().isoformat()
         with self._connect() as conn:
             cursor = conn.execute(
-                "UPDATE robot_questionnaires SET resolved_at = ?, answer = ? "
-                "WHERE topic = ? AND resolved_at IS NULL",
+                "UPDATE robot_questionnaires SET resolved_at = ?, answer = ? WHERE topic = ?",
                 (now, answer, topic),
             )
             if cursor.rowcount != 1:
-                raise ValueError(
-                    f"robot_questionnaires: нет незарезолвнутой строки topic={topic!r}"
-                )
+                raise ValueError(f"robot_questionnaires: нет строки topic={topic!r}")
 
     def list_robot_questionnaires(self, limit: int = 50) -> list[dict]:
         with self._connect() as conn:
