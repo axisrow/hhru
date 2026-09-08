@@ -226,6 +226,27 @@ def test_load_config_missing_required_field(tmp_path):
         load_config(path)
 
 
+def test_load_config_rejects_unknown_schedule_value(tmp_path):
+    """schedule — валидируемый параметр поиска hh.ru, а не свободная строка:
+    passthrough молча делал бы битый URL (опечатка/русское значение тихо
+    обнуляла фильтр удалёнки — живой кейс 2026-09-08)."""
+    path = _write_config(
+        tmp_path,
+        """
+        account:
+          storage_state_file: data/storage_state/hh_session.json
+        resumes:
+          - id: r1
+            resume_url: "https://hh.ru/resume/AAA111"
+            search:
+              text: "тестировщик"
+              schedule: "удалённо"
+        """,
+    )
+    with pytest.raises(ConfigError, match="schedule"):
+        load_config(path)
+
+
 def test_load_config_duplicate_resume_id(tmp_path):
     path = _write_config(
         tmp_path,

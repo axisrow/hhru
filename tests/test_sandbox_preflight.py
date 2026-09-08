@@ -43,6 +43,7 @@ def test_browser_command_registry_is_complete() -> None:
         "rename-resume",
         "reply-employers",
         "report-vacancy",
+        "robot-reply",
         "responses",
         "resume-position",
         "resume-sections",

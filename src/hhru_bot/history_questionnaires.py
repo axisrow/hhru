@@ -786,21 +786,55 @@ class QuestionnairesMixin:
         with self._connect() as conn:
             return conn.execute(sql, params).rowcount
 
+    def robot_questionnaire_row(self, topic: str) -> dict | None:
+        """Строка очереди робот-анкет по topic (None — в очереди нет)."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT topic, vacancy_id, reason, detected_at, resolved_at, answer "
+                "FROM robot_questionnaires WHERE topic = ?",
+                (topic,),
+            ).fetchone()
+        return dict(row) if row else None
+
     def is_robot_questionnaire(self, topic: str) -> bool:
+        """Только НЕрезолвнутые строки: после ``robot-reply`` чат перестаёт
+        вечно скипаться в reply-employers (resolved_at IS NULL — в очереди)."""
         with self._connect() as conn:
             return (
                 conn.execute(
-                    "SELECT 1 FROM robot_questionnaires WHERE topic = ?", (topic,)
+                    "SELECT 1 FROM robot_questionnaires WHERE topic = ? AND resolved_at IS NULL",
+                    (topic,),
                 ).fetchone()
                 is not None
             )
+
+    def resolve_robot_questionnaire(self, topic: str, *, answer: str) -> None:
+        """Пометить робот-анкету отвеченной (колонкой, не DELETE — таблица
+        append-only, факт обнаружения хранит аудит).
+
+        Повторный вызов легален: живые анкеты многошаговые — робот задаёт
+        следующий вопрос после нашего ответа, и resolve перезаписывается
+        свежим ответом (робот-кейс 2026-09-08: вопрос №2 через минуту после
+        ответа №1). Дедуп повторного КЛИКА держит не эта таблица, а
+        replies/has_replied по inbound-маркеру нового вопроса. Fail-closed
+        остаётся для неизвестного topic (rowcount != 1 → ValueError).
+        """
+        now = datetime.now().isoformat()
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "UPDATE robot_questionnaires SET resolved_at = ?, answer = ? WHERE topic = ?",
+                (now, answer, topic),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError(f"robot_questionnaires: нет строки topic={topic!r}")
 
     def list_robot_questionnaires(self, limit: int = 50) -> list[dict]:
         with self._connect() as conn:
             return [
                 dict(row)
                 for row in conn.execute(
-                    "SELECT topic, vacancy_id, reason, detected_at FROM robot_questionnaires "
+                    "SELECT topic, vacancy_id, reason, detected_at, resolved_at, answer "
+                    "FROM robot_questionnaires "
                     "ORDER BY detected_at DESC, id DESC LIMIT ?",
                     (limit,),
                 ).fetchall()
