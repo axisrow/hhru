@@ -281,9 +281,7 @@ def test_submit_publishing_screen_timeout_with_unpublished_readback_stays_uncert
         _markup(next_screen="experience"),
         final_url=f"https://hh.ru/profile/resume/experience?resume={RESUME_ID}",
     )
-    monkeypatch.setattr(
-        rw, "read_resume_state", lambda p, rid: ResumeState(status="not_finished")
-    )
+    monkeypatch.setattr(rw, "read_resume_state", lambda p, rid: ResumeState(status="not_finished"))
     result = rw.submit_wizard_screen(page, _resume(), "experience")
     assert not result.success and result.acted and result.uncertain
     assert dumps == ["wizard_next_failure"]
@@ -314,9 +312,7 @@ def test_submit_intermediate_screen_timeout_does_not_readback(monkeypatch):
         final_url=f"https://hh.ru/profile/resume/educations?resume={RESUME_ID}",
     )
     calls = []
-    monkeypatch.setattr(
-        rw, "read_resume_state", lambda p, rid: calls.append(rid) or ResumeState()
-    )
+    monkeypatch.setattr(rw, "read_resume_state", lambda p, rid: calls.append(rid) or ResumeState())
     result = rw.submit_wizard_screen(page, _resume(), "educations")
     assert not result.success and result.acted and result.uncertain
     assert calls == []
