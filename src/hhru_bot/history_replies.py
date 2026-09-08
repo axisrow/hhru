@@ -180,16 +180,6 @@ class RepliesMixin:
     # как статус переговоров не отдаёт); остальных статусов (read/invitation/
     # discard/response) наполняет #12 через upsert_response из живых переговоров.
 
-    @staticmethod
-    def _pct(numerator: int, denominator: int) -> float:
-        """Конверсия в процентах с защитой от деления на ноль: 0/0 → 0.0.
-
-        Округление до 1 знака — для читаемого CLI-вывода (воронка — для людей).
-        """
-        if denominator <= 0:
-            return 0.0
-        return round(numerator / denominator * 100, 1)
-
     def employer_interacted(
         self,
         vacancy_id: str | None = None,
@@ -249,12 +239,6 @@ class RepliesMixin:
                 offer_params,
             ).fetchone()
             return row is not None
-
-    # Минимум вакансий с указанной ЗП, чтобы считать медиану сферы устойчивой.
-    # Ниже порога сфера уходит вниз таблицы и помечается low_sample: на прогоне
-    # #67 сфера с n=2 встала НАВЕРХУ как «лидер рынка» — сортировка по одной
-    # медиане без учёта размера выборки вводит в заблуждение.
-    _LOW_SAMPLE_N = 5
 
     def record_reply(
         self,

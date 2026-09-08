@@ -4,7 +4,7 @@
 ``_row_is_live`` читает ``_pid_is_alive`` через фасад ``hhru_bot.history``
 в момент вызова: тесты monkeypatch-атрибут фасада
 (``hhru_bot.history._pid_is_alive``, см. test_bump_command_runs /
-test_reliability_bundle), и позднее связывание сохраняет это контракт.
+test_reliability_bundle), и позднее связывание сохраняет этот контракт.
 """
 
 from __future__ import annotations
