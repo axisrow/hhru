@@ -9,10 +9,9 @@
 pkgutil.iter_modules (cli.py не трогается).
 
 Консистентность robot-queue поддерживается самой командой: --robot заводит
-строку очереди (reason='user_verdict', vacancy_id неизвестен отметке —
-живой sweep дозаполнит её не сможет, INSERT OR IGNORE хранит первую; для
-очереди это только отображаемое поле), --human резолвит висящую строку —
-чат возвращается в обычный план ответов.
+или ре-открывает строку очереди (reason='user_verdict', снятая резолюция
+robot-reply сбрасывается), --human резолвит висящую строку — чат
+возвращается в обычный план ответов.
 """
 
 from __future__ import annotations
@@ -70,8 +69,10 @@ def run(args: argparse.Namespace) -> None:
     history = History(args.history)
     if args.robot:
         history.set_robot_verdict(args.topic, verdict="robot")
-        # Идемпотентно: повторная отметка не плодит строк (topic UNIQUE).
-        history.mark_robot_questionnaire(args.topic, reason="user_verdict")
+        # Идемпотентно: повторная отметка не плодит строк (topic UNIQUE), а
+        # уже резолвнутая строка (например, robot-reply ответил до вердикта)
+        # ре-открывается — очередь снова показывает чат как ручной.
+        history.reopen_robot_questionnaire(args.topic, reason="user_verdict")
         print(f"[OK] {args.topic}: вердикт — робот. Чат в ручной очереди (robot-queue).")
     elif args.human:
         history.set_robot_verdict(args.topic, verdict="human")

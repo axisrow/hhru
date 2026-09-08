@@ -41,6 +41,24 @@ def test_robot_verdict_creates_queue_row_idempotently(tmp_path, capsys):
     assert "вердикт — робот" in capsys.readouterr().out
 
 
+def test_robot_verdict_reopens_resolved_queue_row(tmp_path, capsys):
+    """robot-reply уже ответил (строка резолвнута), пользователь решил «всё-таки
+    робот» — строка ре-открывается с reason вердикта, очередь не врёт
+    «отвечено» при фактическом гейте по вердикту."""
+    history = History(tmp_path / "h.db")
+    history.mark_robot_questionnaire(
+        "100000001", vacancy_id="200000002", reason="robot_questionnaire"
+    )
+    history.resolve_robot_questionnaire("100000001", answer="Да")
+
+    command.run(_args(tmp_path, robot=True))
+
+    row = history.robot_questionnaire_row("100000001")
+    assert row["reason"] == "user_verdict"
+    assert row["resolved_at"] is None
+    assert history.is_robot_questionnaire("100000001") is True
+
+
 def test_human_verdict_resolves_pending_queue_row(tmp_path, capsys):
     """Живой сценарий: эвристика ошибочно положила человека в robot-очередь
     (6 пронумерованных вопросов у живого рекрутера) — вердикт возвращает чат

@@ -190,7 +190,11 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
             # заново клала бы чат в очередь каждый sweep.
             verdict = history.robot_verdict(topic)
             if verdict == "robot":
-                history.mark_robot_questionnaire(
+                # UPSERT, не INSERT OR IGNORE: существующая строка (эвристика
+                # раньше маркировала чат / robot-reply уже ответил) получает
+                # reason вердикта и ре-открывается — очередь не врёт «отвечено»
+                # при фактическом гейте по вердикту пользователя.
+                history.reopen_robot_questionnaire(
                     topic, vacancy_id=str(candidate["vacancy_id"]), reason="user_verdict"
                 )
                 print(f"[skip] {label} — robot (вердикт пользователя)")

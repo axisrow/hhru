@@ -28,6 +28,26 @@ class QuestionnairesMixin:
                 (topic, vacancy_id, reason, datetime.now().isoformat()),
             )
 
+    def reopen_robot_questionnaire(
+        self, topic: str, *, vacancy_id: str | None = None, reason: str
+    ) -> None:
+        """Вердикт пользователя «robot»: вернуть/завести строку очереди.
+
+        UPSERT, в отличие от ``mark_robot_questionnaire`` (INSERT OR IGNORE):
+        существующая строка получает reason вердикта, а её резолюция
+        (resolved_at, могла стоять после robot-reply) сбрасывается — очередь
+        снова показывает чат как ручной; гейт reply-employers и так скипает
+        его по вердикту, рассинхрона «очередь отвечает "отвечено"» нет.
+        """
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO robot_questionnaires "
+                "(topic, vacancy_id, reason, detected_at) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(topic) DO UPDATE SET "
+                "reason = excluded.reason, resolved_at = NULL",
+                (topic, vacancy_id, reason, datetime.now().isoformat()),
+            )
+
     def record_questionnaire(
         self,
         resume_id: str,

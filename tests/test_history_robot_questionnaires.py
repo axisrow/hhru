@@ -67,6 +67,42 @@ def test_marked_topic_is_pending_until_resolved(tmp_path):
     assert rows[0]["answer"] == "Нет"
 
 
+def test_reopen_by_user_verdict_rewrites_reason_and_resets_resolution(tmp_path):
+    """Вердикт пользователя 'robot' после ответа robot-reply: строка очереди
+    ре-открывается (resolved_at сбрасывается) и получает reason вердикта —
+    очередь не врёт «отвечено» при фактическом гейте по вердикту."""
+    history = History(tmp_path / "h.db")
+    _mark(history)
+    history.resolve_robot_questionnaire("100000001", answer="Да")
+    assert history.is_robot_questionnaire("100000001") is False
+
+    history.reopen_robot_questionnaire("100000001", reason="user_verdict")
+
+    row = history.robot_questionnaire_row("100000001")
+    assert row["reason"] == "user_verdict"
+    assert row["resolved_at"] is None
+    assert history.is_robot_questionnaire("100000001") is True
+    # Идемпотентно: второй вызов не плодит строк.
+    history.reopen_robot_questionnaire("100000001", reason="user_verdict")
+    with history._connect() as conn:  # noqa: SLF001 - тест читает таблицу напрямую
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM robot_questionnaires WHERE topic = '100000001'"
+            ).fetchone()[0]
+            == 1
+        )
+
+
+def test_reopen_creates_row_for_unknown_topic(tmp_path):
+    """robot-mark --robot по topic без строки очереди заводит её сам."""
+    history = History(tmp_path / "h.db")
+    history.reopen_robot_questionnaire("100000009", reason="user_verdict")
+    row = history.robot_questionnaire_row("100000009")
+    assert row is not None
+    assert row["reason"] == "user_verdict"
+    assert history.is_robot_questionnaire("100000009") is True
+
+
 def test_double_resolve_overwrites_answer_for_multistep_questionnaires(tmp_path):
     """Живые анкеты многошаговые: робот задаёт следующий вопрос после нашего
     ответа — повторный resolve легален и перезаписывает ответ свежим."""
