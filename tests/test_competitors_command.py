@@ -22,6 +22,7 @@ from hhru_bot.commands.competitors import (
     _throttle_estimate,
     run_collect,
 )
+from hhru_bot.competitor_collection import RunSnapshot
 from hhru_bot.competitors import (
     CompetitorResume,
     CompetitorSearchCard,
@@ -718,7 +719,18 @@ def test_estimate_accounts_for_parallel_workers():
 
 def test_observed_eta_uses_completed_detail_rate():
     eta = _observed_eta(
-        {"saved": 10, "failed": 0, "expected_details": 100},
+        RunSnapshot(
+            pages=1,
+            cards=10,
+            cards_completed=10,
+            saved=10,
+            failed=0,
+            last_started_page=0,
+            last_completed_page=0,
+            resume_page=1,
+            observed_page_size=10,
+            expected_details=100,
+        ),
         elapsed=200,
     )
 
@@ -726,11 +738,22 @@ def test_observed_eta_uses_completed_detail_rate():
 
 
 def test_observed_eta_waits_for_three_details_and_stops_at_completion():
-    state = {"saved": 2, "failed": 0, "expected_details": 100}
-    assert _observed_eta(state, elapsed=40) is None
+    def _snapshot(saved: int, failed: int) -> RunSnapshot:
+        return RunSnapshot(
+            pages=1,
+            cards=saved + failed,
+            cards_completed=saved + failed,
+            saved=saved,
+            failed=failed,
+            last_started_page=0,
+            last_completed_page=0,
+            resume_page=None,
+            observed_page_size=10,
+            expected_details=100,
+        )
 
-    state = {"saved": 99, "failed": 1, "expected_details": 100}
-    assert _observed_eta(state, elapsed=2000) is None
+    assert _observed_eta(_snapshot(2, 0), elapsed=40) is None
+    assert _observed_eta(_snapshot(99, 1), elapsed=2000) is None
 
 
 def _report_args(tmp_path: Path, **overrides) -> Namespace:
