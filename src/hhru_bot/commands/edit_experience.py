@@ -343,6 +343,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
                 list_resume_cards,
                 list_wizard_drafts,
             )
+            from ..responses import NotAuthenticated
 
             # #1037: детектор визарда — ДО чтения карточек (как в list-resumes,
             # #1032): на аккаунте «визард вместо списка» (единственный
@@ -352,17 +353,25 @@ def _run(args: argparse.Namespace, progress) -> bool:
             # SSR-разметкой сразу после goto, поэтому мгновенной проверки
             # достаточно; промах детекта (гонка) уходит в обычный путь.
             goto_hh(page, RESUMES_LIST_URL)
-            if _on_wizard_common(page):
-                # resume-titles для панели привязки нужны те же — читаем
-                # черновик визард-ридером (URL + identity-readback).
-                cards = list_wizard_drafts(page)
-            else:
-                try:
-                    cards = list_resume_cards(page, navigate=False)
-                except ResumeListIndeterminate:
-                    # Страховка #1036: детект промахнулся, карточки не
-                    # появились — прежний исключение-фолбэк на визард-ридер.
+            try:
+                if _on_wizard_common(page):
+                    # resume-titles для панели привязки нужны те же — читаем
+                    # черновик визард-ридером (URL + identity-readback).
                     cards = list_wizard_drafts(page)
+                else:
+                    try:
+                        cards = list_resume_cards(page, navigate=False)
+                    except ResumeListIndeterminate:
+                        # Страховка #1036: детект промахнулся, карточки не
+                        # появились — прежний исключение-фолбэк на
+                        # визард-ридер.
+                        cards = list_wizard_drafts(page)
+            except NotAuthenticated as exc:
+                # identity-bound readback визард-ридера требует живой сессии —
+                # она может протухнуть посреди команды; sibling-обработка
+                # list_resumes (#1032): [FAIL] вместо traceback.
+                print(f"[FAIL] {resume.id} — Сессия недействительна: {exc}")
+                return True
             resume_titles = {card.resume_id: card.title for card in cards}
             # begin_attempt() right before the real mutation, after the page/
             # context are already open (#465 review): counting the attempt

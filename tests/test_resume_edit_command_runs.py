@@ -428,6 +428,52 @@ def test_edit_experience_keeps_exception_fallback_when_wizard_detect_misses(
     assert captured["titles"] == {"r1": "Черновик"}
 
 
+def test_edit_experience_expired_session_in_wizard_readback_is_fail_not_traceback(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """identity-bound readback визард-ридера требует живой сессии (#1032):
+    NotAuthenticated из list_wizard_drafts — [FAIL] команды, не traceback
+    (sibling-обработка list_resumes, review-тред PR #1041)."""
+    import hhru_bot.commands.edit_experience as command
+    from hhru_bot.responses import NotAuthenticated
+
+    resume = SimpleNamespace(id="r1", resume_id="r1")
+    config = SimpleNamespace(storage_state_file="session.json", user_agent=None)
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
+    monkeypatch.setattr("hhru_bot.commands._common.resolve_resume", lambda *_a, **_kw: resume)
+
+    @contextmanager
+    def fake_launch_context(*_args, **_kwargs):
+        yield SimpleNamespace(new_page=lambda: object())
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", fake_launch_context)
+    monkeypatch.setattr("hhru_bot.browser.goto_hh", lambda *_a, **_kw: None)
+    monkeypatch.setattr("hhru_bot.common._on_wizard_common", lambda *_a, **_kw: True)
+    monkeypatch.setattr("hhru_bot.experience.read_experience_on_hh", lambda *_a, **_kw: [])
+
+    def _raise_auth(*_a, **_kw):
+        raise NotAuthenticated("сессия истекла")
+
+    monkeypatch.setattr("hhru_bot.copy_resume.list_wizard_drafts", _raise_auth)
+
+    history_path = tmp_path / "history.db"
+    args = argparse.Namespace(
+        config="config.yaml",
+        headless=True,
+        resume="r1",
+        mode="fill",
+        career=None,
+        existing=None,
+        entry=['{"company": "a", "position": "b", "start_month": "1"}'],
+        dry_run=False,
+        force=True,
+        history=str(history_path),
+    )
+
+    assert command.run(args) is True
+    assert "Сессия недействительна" in capsys.readouterr().out
+
+
 def test_edit_languages_launch_failure_before_attempt_does_not_count_as_attempted(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
