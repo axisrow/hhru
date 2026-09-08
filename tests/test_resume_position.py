@@ -923,6 +923,297 @@ def test_set_control_closes_dropdown_via_outside_click_for_each_value():
     assert control.clicks == 2
 
 
+def test_set_control_commits_multiselect_via_apply_button():
+    """Multi-select-панель (формат работы/занятость): клик по опции ТОЛЬКО
+    отмечает чекбокс, выбор коммитируется кнопкой «Выбрать»
+    (magritte-select-apply); outside-клик вместо неё ОТМЕНЯЕТ выбор (живой
+    дамп 2026-09-09, workformat_panel.html). Снимаются прочие отмеченные —
+    семантика одного значения на поле (#526); снапшот data-qa отмеченных
+    берётся ДО кликов: перерисовка после переключения чекбокса меняет
+    доступное имя строки, повторный резолв по имени истекает таймаутом."""
+
+    class _Row:
+        def __init__(self, panel, qa):
+            self.panel = panel
+            self.qa = qa
+
+        def count(self):
+            return 1
+
+        def get_attribute(self, name):  # noqa: ARG002
+            return self.qa
+
+        def click(self):
+            self.panel.row_clicks.append(self.qa)
+            row = self.panel.rows[self.qa]
+            row["checked"] = not row["checked"]
+
+    class _RowList:
+        def __init__(self, panel, qas):
+            self.panel = panel
+            self.qas = qas
+
+        def count(self):
+            return len(self.qas)
+
+        def nth(self, i):
+            return _Row(self.panel, self.qas[i])
+
+        def click(self):
+            _Row(self.panel, self.qas[0]).click()
+
+    class _ApplyButton:
+        def __init__(self, panel):
+            self.panel = panel
+
+        def count(self):
+            return 1
+
+        def click(self):
+            self.panel.apply_clicks += 1
+            self.panel.open = False
+
+    class FakePanel:
+        def __init__(self):
+            # Дамп workformat_panel.html: «Офис» уже отмечен, ставим «Удалённо».
+            self.rows = {
+                "resume-work-format-office": {"label": "Офис", "checked": True},
+                "resume-work-format-remote": {"label": "Удалённо", "checked": False},
+                "resume-work-format-hybrid": {"label": "Гибрид", "checked": False},
+            }
+            self.open = False
+            self.row_clicks = []
+            self.apply_clicks = 0
+
+        def wait_for(self, *, state, timeout=None):
+            assert self.open is (state == "visible")
+
+        def get_by_role(self, role, *, name, exact):
+            assert (role, exact) == ("option", True)
+            qa = next(q for q, r in self.rows.items() if r["label"] == name)
+            return _Row(self, qa)
+
+        def locator(self, selector):
+            if selector == resume_position.SELECT_APPLY:
+                return _ApplyButton(self)
+            if selector == resume_position.SELECT_OPTION_CHECKED:
+                checked = [q for q, r in self.rows.items() if r["checked"]]
+                return _RowList(self, checked)
+            if selector.startswith("label[role='option'][data-qa='"):
+                qa = selector.split("data-qa='", 1)[1].rstrip("']")
+                return _RowList(self, [qa])
+            raise AssertionError(f"неожиданный селектор панели: {selector}")
+
+    class FakeControl:
+        def __init__(self, panel):
+            self.panel = panel
+            self.clicks = 0
+            self.first = self
+
+        def count(self):
+            return 1
+
+        def evaluate(self, _script):
+            return "BUTTON"
+
+        def click(self):
+            self.clicks += 1
+            self.panel.open = True
+
+        def inner_text(self):
+            # Триггер показывает закоммиченные «Выбрать» значения.
+            labels = [r["label"] for r in self.panel.rows.values() if r["checked"]]
+            return ", ".join(labels)
+
+    panel = FakePanel()
+    control = FakeControl(panel)
+    page = MagicMock()
+    page.locator.side_effect = lambda selector: (
+        panel if selector == resume_position.RESUME_POSITION_DROPDOWN else control
+    )
+
+    resume_position._set_control(
+        page, resume_position.WORK_FORMAT, "remote", resume_position.WORK_LABELS
+    )
+
+    # Целевая опция отмечена, прежняя («Офис») снята — one value per field.
+    assert panel.row_clicks == [
+        "resume-work-format-remote",
+        "resume-work-format-office",
+    ]
+    assert panel.rows["resume-work-format-remote"]["checked"] is True
+    assert panel.rows["resume-work-format-office"]["checked"] is False
+    # Выбор закоммичен кнопкой, outside-клик не выполнялся — он отменил бы его.
+    assert panel.apply_clicks == 1
+    page.mouse.click.assert_not_called()
+    assert control.clicks == 1
+
+
+def test_set_control_skips_click_for_already_checked_target():
+    """Клик по чекбокс-опции — toggle: уже отмеченную цель не кликаем, иначе
+    «Выбрать» закоммитит пустой выбор на идемпотентном повторе (current=None
+    или readback разошёлся с чекбоксами — review PR #1065)."""
+
+    class _Row:
+        def __init__(self, panel, qa):
+            self.panel = panel
+            self.qa = qa
+
+        def count(self):
+            return 1
+
+        def get_attribute(self, name):  # noqa: ARG002
+            return self.qa
+
+        def click(self):
+            self.panel.row_clicks.append(self.qa)
+
+    class _RowList:
+        def __init__(self, panel, qas):
+            self.panel = panel
+            self.qas = qas
+
+        def count(self):
+            return len(self.qas)
+
+        def nth(self, i):
+            return _Row(self.panel, self.qas[i])
+
+    class _ApplyButton:
+        def __init__(self, panel):
+            self.panel = panel
+
+        def count(self):
+            return 1
+
+        def click(self):
+            self.panel.apply_clicks += 1
+            self.panel.open = False
+
+    class FakePanel:
+        def __init__(self):
+            self.rows = {
+                "resume-work-format-remote": {"label": "Удалённо", "checked": True},
+            }
+            self.open = False
+            self.row_clicks = []
+            self.apply_clicks = 0
+
+        def wait_for(self, *, state, timeout=None):
+            assert self.open is (state == "visible")
+
+        def get_by_role(self, role, *, name, exact):
+            assert (role, exact) == ("option", True)
+            qa = next(q for q, r in self.rows.items() if r["label"] == name)
+            return _Row(self, qa)
+
+        def locator(self, selector):
+            if selector == resume_position.SELECT_APPLY:
+                return _ApplyButton(self)
+            if selector == resume_position.SELECT_OPTION_CHECKED:
+                checked = [q for q, r in self.rows.items() if r["checked"]]
+                return _RowList(self, checked)
+            if selector.startswith("label[role='option'][data-qa='"):
+                qa = selector.split("data-qa='", 1)[1].rstrip("']")
+                return _RowList(self, [qa])
+            raise AssertionError(f"неожиданный селектор панели: {selector}")
+
+    class FakeControl:
+        def __init__(self, panel):
+            self.panel = panel
+            self.clicks = 0
+            self.first = self
+
+        def count(self):
+            return 1
+
+        def evaluate(self, _script):
+            return "BUTTON"
+
+        def click(self):
+            self.clicks += 1
+            self.panel.open = True
+
+        def inner_text(self):
+            labels = [r["label"] for r in self.panel.rows.values() if r["checked"]]
+            return ", ".join(labels)
+
+    panel = FakePanel()
+    control = FakeControl(panel)
+    page = MagicMock()
+    page.locator.side_effect = lambda selector: (
+        panel if selector == resume_position.RESUME_POSITION_DROPDOWN else control
+    )
+
+    resume_position._set_control(
+        page, resume_position.WORK_FORMAT, "remote", resume_position.WORK_LABELS
+    )
+
+    # Цель уже отмечена — ни один чекбокс не переключался, выбор только
+    # закоммичен «Выбрать» и подтверждён триггером.
+    assert panel.row_clicks == []
+    assert panel.apply_clicks == 1
+    assert panel.rows["resume-work-format-remote"]["checked"] is True
+
+
+def test_set_control_fails_when_checked_option_lacks_data_qa(monkeypatch):
+    """Отмеченная опция без data-qa не снимается никогда: молчаливый пропуск
+    оставил бы полю несколько значений (#526), а substring-проверка триггера
+    «Удалённо +1» это пропустила бы — маркированный отказ вместо тихого
+    нарушения (review PR #1065)."""
+    monkeypatch.setattr(resume_position, "_dump_control_failure", MagicMock())
+
+    class _Row:
+        def __init__(self, qa):
+            self.qa = qa
+
+        def count(self):
+            return 1
+
+        def get_attribute(self, name):  # noqa: ARG002
+            return self.qa
+
+    class _RowList:
+        def __init__(self, qas):
+            self.qas = qas
+
+        def count(self):
+            return len(self.qas)
+
+        def nth(self, i):
+            return _Row(self.qas[i])
+
+    class _ApplyButton:
+        def count(self):
+            return 1
+
+    panel = MagicMock()
+    panel.wait_for.return_value = None
+    # «Офис» отмечен, но без data-qa; цель «Удалённо» с data-qa.
+    panel.locator.side_effect = lambda selector: (
+        _ApplyButton()
+        if selector == resume_position.SELECT_APPLY
+        else _RowList([None, "resume-work-format-remote"])
+        if selector == resume_position.SELECT_OPTION_CHECKED
+        else MagicMock()
+    )
+    option = _Row("resume-work-format-remote")
+    panel.get_by_role.return_value = option
+    control = MagicMock()
+    control.count.return_value = 1
+    control.first = control
+    control.evaluate.return_value = "BUTTON"
+    page = MagicMock()
+    page.locator.side_effect = lambda selector: (
+        panel if selector == resume_position.RESUME_POSITION_DROPDOWN else control
+    )
+
+    with pytest.raises(RuntimeError, match="без data-qa"):
+        resume_position._set_control(
+            page, resume_position.WORK_FORMAT, "remote", resume_position.WORK_LABELS
+        )
+
+
 def test_set_control_passes_explicit_timeout_to_panel_waits():
     """#561 review: an unlabeled 30s default hang read as CLI silence."""
     panel = MagicMock()

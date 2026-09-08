@@ -1041,13 +1041,28 @@ def _set_control(page: Page, selector: str, value: str, labels: dict[str, str]) 
             # истекает по таймауту (живой провал 2026-09-09).
             target_qa = option.get_attribute("data-qa") or ""
             checked = panel.locator(SELECT_OPTION_CHECKED)
-            other_qas = [
+            checked_qas = [
                 checked.nth(i).get_attribute("data-qa") or "" for i in range(checked.count())
             ]
-            option.click()
-            for qa in other_qas:
-                if qa and qa != target_qa:
-                    panel.locator(f"label[role='option'][data-qa='{qa}']").click()
+            # Клик по чекбокс-опции — toggle, а не select: уже отмеченную
+            # цель не трогаем, иначе «Выбрать» закоммитит пустой выбор на
+            # идемпотентном повторе (current=None или readback разошёлся с
+            # состоянием чекбоксов — review PR #1065).
+            if target_qa not in checked_qas:
+                option.click()
+            for qa in checked_qas:
+                if qa == target_qa:
+                    continue
+                if not qa:
+                    # Молчаливый пропуск оставил бы полю несколько значений
+                    # (#526), а substring-проверка триггера «Удалённо +1»
+                    # пропустила бы — маркированный отказ с дампом вместо
+                    # тихого нарушения (живой дамп data-qa у опций даёт, но
+                    # дрейф селектора ловится именно здесь).
+                    raise RuntimeError(
+                        "отмеченная опция без data-qa — нечем снять (одно значение на поле, #526)"
+                    )
+                panel.locator(f"label[role='option'][data-qa='{qa}']").click()
             apply_button.click()
         else:
             option.click()
