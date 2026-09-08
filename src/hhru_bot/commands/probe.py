@@ -1177,12 +1177,16 @@ def run_negotiations(args: argparse.Namespace) -> bool:
                 )
             print(_ascii_table(["message", "id", "author_marker", "text"], message_rows))
             print(
-                "Корень сообщений чата — census отрисованных контролов "
+                "Корни сообщений чата — census отрисованных контролов "
                 "(сырой HTML в stdout запрещён, #998):"
             )
             message_roots = page.locator(negotiations.CHAT_MESSAGE_ROOT)
-            if message_roots.count():
-                chat_census = subtree_controls_census(message_roots.first)
+            # #1044-цепочка: census по ВСЕМ корням, не только первому —
+            # кнопки быстрых ответов робота («Да»/«Нет») живут в subtree
+            # конкретного сообщения (вопроса), первый корень — наш отклик.
+            for root_index in range(message_roots.count()):
+                print(f"--- сообщение {root_index + 1} ---")
+                chat_census = subtree_controls_census(message_roots.nth(root_index))
                 print(census_table(chat_census["rows"]))
                 if chat_census["truncated"]:
                     print("[WARN] census корня сообщений обрезан по лимиту 120 строк")
