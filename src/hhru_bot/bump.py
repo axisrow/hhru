@@ -8,14 +8,9 @@ from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from . import selectors as sel
-from .browser import (
-    HH_BASE_URL,
-    RESUME_UNAVAILABLE_REASON,
-    goto_hh,
-    has_login_form,
-    has_resume_error_banner,
-)
+from .browser import HH_BASE_URL, goto_hh, has_login_form
 from .config import ResumeConfig, is_resume_url_placeholder
+from .selector_groups.resume_page import RESUME_CARD_LINK_TEMPLATE
 
 logger = logging.getLogger("hhru_bot.bump")
 
@@ -25,6 +20,12 @@ BUMP_TIMEOUT_MS = 10_000
 # отсутствует (кнопка активна). Ждать полный BUMP_TIMEOUT_MS тут не нужно —
 # аналогично OPTIONAL_FIELD_TIMEOUT_MS в apply/steps.py.
 BUMP_HINT_TIMEOUT_MS = 1_500
+
+# Живой факт 2026-09-08 (census /applicant/resumes): кнопка поднятия мигрировала
+# со СТРАНИЦЫ резюме на СПИСОК резюме и живёт внутри карточки конкретного резюме
+# (div[data-qa='resume'] > a[data-qa='resume-card-link-<id>']). Прежний поток
+# открывал /resume/<id> и не находил кнопку вовсе (healthcheck NOT_FOUND).
+RESUMES_LIST_URL = f"{HH_BASE_URL}/applicant/resumes"
 
 
 @dataclass
@@ -53,32 +54,45 @@ def bump_resume(page: Page, resume: ResumeConfig, dry_run: bool) -> BumpResult:
             "В конфиге указан плейсхолдер resume_url; укажите реальный URL "
             "(получить можно через list-resumes)",
         )
-    url = (
-        resume.resume_url
-        if resume.resume_url.startswith("http")
-        else f"{HH_BASE_URL}{resume.resume_url}"
-    )
-    logger.info("Открываю резюме: %s", url)
-    goto_hh(page, url)
+    # Кнопка поднятия живёт на СПИСКЕ резюме (живой факт 2026-09-08, см.
+    # RESUMES_LIST_URL выше): карточка резюме резолвится по resume-card-link-<id>,
+    # кнопка/hint скоплены внутри неё — на мульти-резюме аккаунта жмём кнопку
+    # именно этого резюме, а не первую попавшуюся.
+    logger.info("Открываю список резюме: %s", RESUMES_LIST_URL)
+    goto_hh(page, RESUMES_LIST_URL)
     if has_login_form(page):
         return BumpResult(
             resume.id,
             False,
             "Сессия недействительна: страница содержит форму входа. Выполните login.",
         )
-    # #972: сбойный экран /resume/{id} — внятный отказ вместо таймаута на
-    # поиске кнопки поднятия. Ранний выход до действия: acted=False (#163),
-    # в actions не пишется, обычный failed/retry.
-    if has_resume_error_banner(page):
-        return BumpResult(resume.id, False, RESUME_UNAVAILABLE_REASON)
+    card_link = page.locator(RESUME_CARD_LINK_TEMPLATE.format(resume_id=resume.resume_id))
+    try:
+        card_link.first.wait_for(state="visible", timeout=BUMP_TIMEOUT_MS)
+    except PlaywrightTimeoutError:
+        # Раньше этот случай ловил banner-чек на странице резюме (#972); на
+        # списке недоступное/удалённое резюме — просто отсутствие карточки.
+        # Ранний выход до действия: acted=False (#163), failed/retry.
+        return BumpResult(
+            resume.id,
+            False,
+            "резюме не найдено в списке /applicant/resumes (удалено или недоступно)",
+        )
+    except PlaywrightError:
+        # cycle-review #139-паттерн: не-timeout аномалия — fail-closed отказ,
+        # а не traceback и не тихий переход к кнопке.
+        return BumpResult(
+            resume.id, False, "ошибка при поиске карточки резюме в списке — поднятие отменено"
+        )
+    card = card_link.locator("xpath=ancestor::div[@data-qa='resume'][1]")
 
     # #139: гонка рендера — раньше hint читался сразу через count() > 0, без
-    # ожидания. Непрогрузившаяся страница резюме давала 0 совпадений (не
+    # ожидания. Непрогрузившаяся страница давала 0 совпадений (не
     # «подсказки нет», а «ещё не отрисовалось»), и код шёл жать кнопку поднятия
     # в обход кулдауна hh.ru. Приводим к тому же приёму, что и кнопка ниже:
     # ждём (короткий таймаут — опциональный элемент), ловим PlaywrightTimeoutError
     # как «hint не появился» = легитимное отсутствие.
-    disabled_hint = page.locator(sel.RESUME_BUMP_DISABLED_HINT)
+    disabled_hint = card.locator(sel.RESUME_BUMP_DISABLED_HINT)
     try:
         disabled_hint.wait_for(state="visible", timeout=BUMP_HINT_TIMEOUT_MS)
     except PlaywrightTimeoutError:
@@ -94,7 +108,7 @@ def bump_resume(page: Page, resume: ResumeConfig, dry_run: bool) -> BumpResult:
     else:
         return BumpResult(resume.id, False, "hh.ru сообщает, что поднимать ещё рано")
 
-    bump_button = page.locator(sel.RESUME_BUMP_BUTTON)
+    bump_button = card.locator(sel.RESUME_BUMP_BUTTON)
     try:
         bump_button.wait_for(timeout=BUMP_TIMEOUT_MS)
     except PlaywrightTimeoutError:

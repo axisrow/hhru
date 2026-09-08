@@ -428,15 +428,16 @@ def _healthcheck_spec(config) -> list[tuple[str, str, list[tuple[str, str, bool]
         ),
     ]
 
-    # Страница резюме — только если в конфиге есть resume_url (URL для goto).
-    # resume_id здесь — id РЕЗЮМЕ (хвост resume_url), это корректный сегмент
-    # /resume/<id>, а НЕ id вакансии.
+    # Кнопка поднятия проверяется на СПИСКЕ резюме — живой факт 2026-09-08:
+    # со страницы резюме она мигрировала на /applicant/resumes (census).
+    # Условие «в конфиге есть resume_url» сохранено: у аккаунта без резюме
+    # кнопки не существует в принципе, проверять нечего.
     resume_url = _first_resume_url(config)
     if resume_url:
         spec.append(
             (
                 "resume",
-                resume_url,
+                "https://hh.ru/applicant/resumes",
                 [
                     ("RESUME_BUMP_BUTTON", resume_page.RESUME_BUMP_BUTTON, True),
                 ],

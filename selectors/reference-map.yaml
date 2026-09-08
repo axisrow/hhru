@@ -3164,13 +3164,13 @@ selectors:
     verified_flow: authenticated_resume_about_editor_read_only (hh.ru/resume/edit/<id>/about)
     verified_by: human
   resume_page.RESUME_BUMP_BUTTON:
-    value: '[data-qa=''resume-update-button'']'
+    value: '[data-qa~=''resume-update-button'']'
     criticality: write
     declared_at: src/hhru_bot/selector_groups/resume_page.py:12
     decision: live_dom
     sources: {}
     live_matches:
-    - resume-update-button
+    - resume-update-button resume-update-button_actions
     active: true
     coverage_status: intentionally_local
     bindings: {}
@@ -3179,13 +3179,15 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:12
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_resume_editor_read_only
-    verified_by: codex
+      note: 'Live-census 2026-09-08 (/applicant/resumes, --wait-ms 6000): кнопка «Поднять в поиске» мигрировала СО страницы
+        резюме НА список резюме и живёт в карточке div[data-qa=''resume'']; data-qa атрибут ДВУХТОКЕННЫЙ — «resume-update-button
+        resume-update-button_actions» — поэтому точное сравнение [=] не совпадает, слово-матч [~=] обязателен. Прежний поток
+        bump (goto /resume/<id>) находил 0 кнопок (healthcheck NOT_FOUND).'
+    last_verified_at: '2026-09-08'
+    verified_flow: authenticated_resumes_list_read_only (census --wait-ms 6000, /applicant/resumes)
+    verified_by: human
   resume_page.RESUME_BUMP_DISABLED_HINT:
-    value: '[data-qa=''resume-update-button-disabled'']'
+    value: '[data-qa~=''resume-update-button-disabled'']'
     criticality: write
     declared_at: src/hhru_bot/selector_groups/resume_page.py:13
     decision: documented_live
@@ -3193,7 +3195,9 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:13
-      note: confirmed by the bump workflow live check; optional read-only hint
+      note: 'confirmed by the bump workflow live check; optional read-only hint. 2026-09-08: переводится на слово-матч [~=]
+        по аналогии с кнопкой — активная кнопка несёт двухтокенный data-qa, disabled-состояние на живом аккаунте в кулдауне
+        не наблюдалось (скоплено внутри карточки резюме).'
     active: true
     coverage_status: intentionally_local
     bindings: {}
@@ -3203,6 +3207,28 @@ selectors:
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
+  resume_page.RESUME_CARD_LINK_TEMPLATE:
+    value: a[data-qa='resume-card-link-{resume_id}']
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:14
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-card-link-<resume_id>
+    active: true
+    bindings: {}
+    status: intentionally local
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:14
+      note: 'Live-census 2026-09-08 (/applicant/resumes): ссылка карточки резюме несёт data-qa="resume-card-link-<hex resume_id>"
+        — якорь, по которому bump резолвит СВОЮ карточку на мульти-резюме аккаунте, и предок div[data-qa=''resume''] скоупит
+        кнопку поднятия/hint внутрь неё.'
+    last_verified_at: '2026-09-08'
+    verified_flow: authenticated_resumes_list_read_only (census --wait-ms 6000, /applicant/resumes)
+    verified_by: human
   resume_page.RESUME_CREATE_BUTTON:
     value: '[data-qa=''mainmenu_createResume'']'
     criticality: write

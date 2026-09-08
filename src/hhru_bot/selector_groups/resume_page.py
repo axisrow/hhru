@@ -11,9 +11,15 @@ from __future__ import annotations
 from ._generated import optional_selector as _optional_selector
 from ._generated import selector as _selector
 
-# Existing bump selectors (confirmed by the bump feature's live check).
+# Селекторы поднятия. Живой факт 2026-09-08 (census /applicant/resumes):
+# кнопка «Поднять в поиске» живёт на СПИСКЕ резюме, внутри карточки
+# div[data-qa='resume'] конкретного резюме; data-кнопки двухтокенный
+# («resume-update-button resume-update-button_actions») — слово-матч [~=],
+# точный [=] не совпадает. Карточка резюме резолвится якорем
+# resume-card-link-<resume_id>, кнопка/hint скоплены в её пределы.
 RESUME_BUMP_BUTTON = _selector("resume_page.RESUME_BUMP_BUTTON")
 RESUME_BUMP_DISABLED_HINT = _selector("resume_page.RESUME_BUMP_DISABLED_HINT")
+RESUME_CARD_LINK_TEMPLATE = _selector("resume_page.RESUME_CARD_LINK_TEMPLATE")
 
 # Кандидаты из исходного флоу (#219); на заблокированной копии #225 ни один не
 # присутствовал в живом DOM. Команда обязана проверять count и не угадывать.

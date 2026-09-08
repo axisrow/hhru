@@ -140,8 +140,9 @@
 | resume_page.RESUME_ABOUT_CARD | `[data-qa='resume-about-card']` | — | — | — | documented_live |
 | resume_page.RESUME_ABOUT_EDITOR | `[data-qa='resume-editor-about']` | — | — | — | live_dom |
 | resume_page.RESUME_ABOUT_NO_EXPERIENCE_REASON | `[data-qa^='resume-editor-about-no-experience-reason-']` | — | — | — | live_dom |
-| resume_page.RESUME_BUMP_BUTTON | `[data-qa='resume-update-button']` | — | — | — | live_dom |
-| resume_page.RESUME_BUMP_DISABLED_HINT | `[data-qa='resume-update-button-disabled']` | — | — | — | documented_live |
+| resume_page.RESUME_BUMP_BUTTON | `[data-qa~='resume-update-button']` | — | — | — | live_dom |
+| resume_page.RESUME_BUMP_DISABLED_HINT | `[data-qa~='resume-update-button-disabled']` | — | — | — | documented_live |
+| resume_page.RESUME_CARD_LINK_TEMPLATE | `a[data-qa='resume-card-link-{resume_id}']` | — | — | — | live_dom |
 | resume_page.RESUME_CREATE_BUTTON | `[data-qa='mainmenu_createResume']` | — | — | — | live_dom |
 | resume_page.RESUME_CREATION_CATEGORY_INPUT | `[data-qa~='tree-selector-input-{}']` | — | — | — | documented_live |
 | resume_page.RESUME_CREATION_CATEGORY_SEARCH | `[data-qa='tree-selector-search-input']` | — | — | — | documented_live |
