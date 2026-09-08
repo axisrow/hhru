@@ -480,3 +480,49 @@ def test_click_quick_reply_ambiguous_duplicate_buttons_refuse():
     with pytest.raises(NoQuickReply):
         click_quick_reply(cast(Page, page), "Нет")
     assert page.clicked == []
+
+
+class _UnrenderableQuickPage(_FakeQuickReplyPage):
+    """Кнопка посчитана count(), но не отрисовалась: pre-click wait_for
+    по таймауту кидает PlaywrightError — клика ещё НЕ было."""
+
+    class _Handle:
+        def inner_text(self) -> str:
+            return "Нет"
+
+        def wait_for(self, *, state=None, timeout=None):
+            raise PlaywrightError("Timeout 3000ms exceeded")
+
+        def click(self):  # pragma: no cover — до клика дело дойти не должно
+            raise AssertionError("click не должен вызываться после таймаута wait_for")
+
+    class _RoleLocator:
+        def __init__(self, page: "_UnrenderableQuickPage", label: str):
+            self._page = page
+            self._label = label
+
+        def count(self) -> int:
+            return 1 if self._label in self._page.buttons else 0
+
+        @property
+        def first(self):
+            return _UnrenderableQuickPage._Handle()
+
+    def get_by_role(self, _role, *, name=None, exact=None):
+        assert exact is True
+        return _UnrenderableQuickPage._RoleLocator(self, name)
+
+    def locator(self, selector: str):
+        assert selector in (QUICK_REPLY_BUTTON, QUICK_REPLY_BUTTONS_WRAPPER)
+        if selector == QUICK_REPLY_BUTTON:
+            return _FakeQuickButtonList(self)
+        return self
+
+
+def test_click_quick_reply_pre_click_wait_timeout_is_no_quick_reply():
+    """Таймаут pre-click wait_for — NoQuickReply (pre-click failed, #163),
+    НЕ исключение клик-границы: клик ещё не выполнялся."""
+    page = _UnrenderableQuickPage(["Да", "Нет"])
+    with pytest.raises(NoQuickReply):
+        click_quick_reply(cast(Page, page), "Нет")
+    assert page.clicked == []

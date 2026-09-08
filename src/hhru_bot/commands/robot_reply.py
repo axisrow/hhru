@@ -223,8 +223,10 @@ def run(args: argparse.Namespace):
     if not args.topic.strip() or not args.answer.strip():
         print("[FAIL] --topic и --answer обязательны и непусты", file=sys.stderr)
         return True
-    if args.wait_ms < 0:
-        print("[FAIL] --wait-ms не может быть отрицательным", file=sys.stderr)
+    if args.wait_ms <= 0:
+        # В Playwright timeout=0 значит «ждать вечно» — find_quick_replies
+        # завис бы вместо честного [] (#858-паттерн).
+        print("[FAIL] --wait-ms должен быть положительным числом", file=sys.stderr)
         return True
     if not args.dry_run and not confirm_write(
         args.force, prompt=f"Нажать кнопку «{args.answer}» в чате робота ({args.topic})?"

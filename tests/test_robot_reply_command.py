@@ -21,7 +21,7 @@ pytestmark = pytest.mark.integration
 
 def _args(tmp_path=None, **overrides):
     values = dict(
-        topic="5558196272",
+        topic="100000001",
         answer="Нет",
         dry_run=False,
         force=True,
@@ -75,7 +75,7 @@ def _patch_common(
     history_path = tmp_path / "h.db"
     history = History(history_path)
     history.mark_robot_questionnaire(
-        "5558196272", vacancy_id="136418134", reason="robot_questionnaire"
+        "100000001", vacancy_id="200000002", reason="robot_questionnaire"
     )
     monkeypatch.setattr(command, "confirm_write", lambda *a, **k: True)
     monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **k: _Context())
@@ -83,7 +83,7 @@ def _patch_common(
     monkeypatch.setattr(
         "hhru_bot.negotiations_probe.paginated_topic_refs",
         lambda *a, **k: [
-            TopicRef(topic_id="5558196272", chat_id="5610565556", vacancy_id="136418134")
+            TopicRef(topic_id="100000001", chat_id="300000003", vacancy_id="200000002")
         ],
     )
     monkeypatch.setattr(
@@ -155,7 +155,7 @@ def test_already_resolved_without_new_question_refused(monkeypatch, tmp_path, ca
         clicks=[],
         reader=lambda *a, **k: ChatMessage("me", "m-own", "Нет"),
     )
-    history.resolve_robot_questionnaire("5558196272", answer="Да")
+    history.resolve_robot_questionnaire("100000001", answer="Да")
 
     assert command.run(_args(tmp_path)) is True
     out = capsys.readouterr().out
@@ -175,17 +175,17 @@ def test_already_resolved_with_new_robot_question_reanswers(monkeypatch, tmp_pat
         confirmation=True,
         reader=lambda *a, **k: ChatMessage("employer", "m-q2", "Вы находитесь в Москве?"),
     )
-    history.resolve_robot_questionnaire("5558196272", answer="Нет")
+    history.resolve_robot_questionnaire("100000001", answer="Нет")
 
     assert command.run(_args(tmp_path)) is False
 
     out = capsys.readouterr().out
     assert "Робот задал новый вопрос" in out
-    assert "[OK] 5558196272" in out
+    assert "[OK] 100000001" in out
     assert clicks == ["Нет"]
-    row = history.robot_questionnaire_row("5558196272")
+    row = history.robot_questionnaire_row("100000001")
     assert row["answer"] == "Нет"
-    assert history.is_robot_questionnaire("5558196272") is False
+    assert history.is_robot_questionnaire("100000001") is False
 
 
 def test_answer_missing_from_buttons_refused_before_ledger(monkeypatch, tmp_path, capsys):
@@ -211,11 +211,11 @@ def test_successful_click_finalizes_resolves_queue_and_waits(monkeypatch, tmp_pa
     )
 
     out = capsys.readouterr().out
-    assert "[OK] 5558196272" in out
+    assert "[OK] 100000001" in out
     assert clicks == ["Нет"]
     assert _actions(history) == [{"status": "success", "reason": None}]
-    assert history.is_robot_questionnaire("5558196272") is False
-    assert history.robot_questionnaire_row("5558196272")["answer"] == "Нет"
+    assert history.is_robot_questionnaire("100000001") is False
+    assert history.robot_questionnaire_row("100000001")["answer"] == "Нет"
 
 
 def test_post_click_exception_is_uncertain_without_resolve(monkeypatch, tmp_path, capsys):
@@ -238,7 +238,7 @@ def test_post_click_exception_is_uncertain_without_resolve(monkeypatch, tmp_path
     assert "исход неопределён" in out
     assert _actions(history)[0]["status"] == "uncertain"
     # uncertain ≠ отвечено: строка остаётся в очереди как семафор внимания
-    assert history.is_robot_questionnaire("5558196272") is True
+    assert history.is_robot_questionnaire("100000001") is True
 
 
 def test_unconfirmed_delivery_is_uncertain_without_resolve(monkeypatch, tmp_path, capsys):
@@ -254,7 +254,7 @@ def test_unconfirmed_delivery_is_uncertain_without_resolve(monkeypatch, tmp_path
     )
     assert "не подтверждена" in capsys.readouterr().out
     assert _actions(history)[0]["status"] == "uncertain"
-    assert history.is_robot_questionnaire("5558196272") is True
+    assert history.is_robot_questionnaire("100000001") is True
 
 
 def test_no_quick_reply_is_pre_click_failed(monkeypatch, tmp_path, capsys):
@@ -275,7 +275,7 @@ def test_no_quick_reply_is_pre_click_failed(monkeypatch, tmp_path, capsys):
 
     assert "кнопка быстрых ответов" in capsys.readouterr().out
     assert _actions(history)[0]["status"] == "failed"
-    assert history.is_robot_questionnaire("5558196272") is True
+    assert history.is_robot_questionnaire("100000001") is True
 
 
 def test_noninteractive_without_force_is_rejected(monkeypatch, tmp_path, capsys):
@@ -284,3 +284,10 @@ def test_noninteractive_without_force_is_rejected(monkeypatch, tmp_path, capsys)
 
     assert command.run(_args(tmp_path, force=False)) is True
     assert "Кнопка не нажата" in capsys.readouterr().out
+
+
+def test_wait_ms_zero_is_rejected_before_any_browser(capsys):
+    """В Playwright timeout=0 — «ждать вечно» (#858-паттерн): 0 запрещён
+    ДО confirm_write/запуска браузера."""
+    assert command.run(_args(wait_ms=0)) is True
+    assert "--wait-ms" in capsys.readouterr().err

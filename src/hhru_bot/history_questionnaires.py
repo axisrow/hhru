@@ -802,8 +802,7 @@ class QuestionnairesMixin:
         with self._connect() as conn:
             return (
                 conn.execute(
-                    "SELECT 1 FROM robot_questionnaires WHERE topic = ? "
-                    "AND resolved_at IS NULL",
+                    "SELECT 1 FROM robot_questionnaires WHERE topic = ? AND resolved_at IS NULL",
                     (topic,),
                 ).fetchone()
                 is not None
