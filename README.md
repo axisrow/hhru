@@ -485,6 +485,7 @@ Write-команды (`apply`/`bump`/`run`/...) сначала `--dry-run`, по
 
 - `--url` — Полный URL страницы hh.ru
 - `--json` — Машиночитаемый JSON-вывод
+- `--wait-ms WAIT_MS` — Подождать N мс после загрузки перед снимком (гидратация React, #858)
 
 ### `clear-negotiations`
 
