@@ -136,17 +136,20 @@ def paginated_topic_refs(page, max_pages: int = 5) -> list[TopicRef]:
     """Read SSR topic mappings from every available negotiations page.
 
     ``topicList`` is paginated with the cards, so reading only page zero makes
-    chats on later pages look unavailable. Navigation is GET-only and uses the
-    same confirmed pager contract as ``fetch_responses``.
+    chats on later pages look unavailable. Navigation is GET-only по
+    серверному контракту ``?page=N``; конец списка доказывается данными
+    (страница без новых топиков), а не UI-пейджером — подробности дрейфа
+    в комментарии внутри цикла.
     """
     if max_pages < 1:
         raise ValueError("max_pages must be >= 1")
 
     # Lazy imports avoid a module cycle while responses.py recovers topics.
     from .browser import goto_hh, require_authenticated_page
-    from .responses import NEGOTIATIONS_URL, _has_next_page
+    from .responses import NEGOTIATIONS_URL
 
     refs: list[TopicRef] = []
+    seen: set[str] = set()
     for page_num in range(max_pages):
         url = NEGOTIATIONS_URL if page_num == 0 else f"{NEGOTIATIONS_URL}?page={page_num}"
         goto_hh(page, url)
@@ -158,15 +161,21 @@ def paginated_topic_refs(page, max_pages: int = 5) -> list[TopicRef]:
         # пустой inbox, но с другой причиной, которую вызывающий код не
         # должен путать с завершённой пагинацией.
         require_authenticated_page(page)
-        refs.extend(topic_refs(page.content()))
-        try:
-            has_next = _has_next_page(page, page_num)
-        except AttributeError:
-            # Lightweight read-only fakes may expose content() but not the
-            # pagination locators; they represent a single page.
-            has_next = False
-        if not has_next:
+        page_refs = topic_refs(page.content())
+        new_refs = [r for r in page_refs if r.topic_id not in seen]
+        # Живой дрейф 2026-09-09: hh.ru убрал пейджер из UI (карточки за
+        # пределами первой двадцатки подгружаются скроллом), но серверный
+        # GET-контракт ?page=N жив — повторный census подтвердил вторую
+        # страницу с 10 темами при «Все 30». «Пейджер не отрисован» больше
+        # не доказывает «страница одна», поэтому конец списка определяется
+        # данными: страница без НОВЫХ топиков (пустая или повтор первой) —
+        # конец. Стоимость — один лишний GET за обход на одностраничных
+        # аккаунтах; дедуп по topic_id страхует и от сервера, игнорирующего
+        # ?page (он вернёт те же темы → ноль новых → стоп).
+        if page_num > 0 and not new_refs:
             break
+        seen.update(r.topic_id for r in new_refs)
+        refs.extend(new_refs)
     return refs
 
 
@@ -203,19 +212,29 @@ def paginated_topic_and_remindable_refs(
         NEGOTIATIONS_URL,
         RENDER_TIMEOUT_MS,
         ResponsesIndeterminate,
-        _has_next_page,
     )
     from .selector_groups import negotiations as ns
 
     topics_out: list[TopicRef] = []
     remindable_out: list[RemindableTopicRef] = []
+    seen: set[str] = set()
     for page_num in range(max_pages):
         url = NEGOTIATIONS_URL if page_num == 0 else f"{NEGOTIATIONS_URL}?page={page_num}"
         goto_hh(page, url)
         require_authenticated_page(page)
         html = page.content()
-        topics_out.extend(topic_refs(html))
-        remindable_out.extend(remindable_topic_refs(html))
+        page_topics = topic_refs(html)
+        new_ids = {r.topic_id for r in page_topics if r.topic_id not in seen}
+        # Тот же дрейф 2026-09-09, что в paginated_topic_refs: пейджер из UI
+        # убран, серверный GET-контракт ?page=N жив — конец списка
+        # определяется нулём новых топиков, а не отсутствием пейджера
+        # (полное обоснование в комментарии там). Дедуп по topic_id не даёт
+        # повторной странице задвоить темы в обоих представлениях.
+        if page_num > 0 and not new_ids:
+            break
+        topics_out.extend(r for r in page_topics if r.topic_id in new_ids)
+        remindable_out.extend(r for r in remindable_topic_refs(html) if r.topic_id in new_ids)
+        seen.update(new_ids)
         topics = parse_initial_state(html)["applicantNegotiations"]["topicList"]
         # An explicitly empty SSR list is a confirmed empty inbox.  Waiting
         # for a card in that case would turn a valid zero-result read into a
@@ -235,8 +254,6 @@ def paginated_topic_and_remindable_refs(
                     f"страницы {page_num} не подтверждена: карточки переписки "
                     f"не появились за {RENDER_TIMEOUT_MS} мс"
                 ) from None
-        if not _has_next_page(page, page_num):
-            break
     return topics_out, remindable_out
 
 
