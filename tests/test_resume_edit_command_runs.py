@@ -306,6 +306,65 @@ def test_edit_experience_uncertain_outcome_is_not_counted_as_failed(
     assert row["failed"] == row["success"] == row["skipped"] == 0
 
 
+def test_edit_experience_falls_back_to_wizard_drafts_when_list_is_wizard(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Аккаунт с единственным незавершённым черновиком: список карточек не
+    рендерится (#1032), а resume-titles для панели привязки читаются ДО
+    мутации (#782) — раньше это валило команду до клика. Фолбэк на
+    list_wizard_drafts даёт те же titles, мутация доезжает."""
+    import hhru_bot.commands.edit_experience as command
+    from hhru_bot.copy_resume import ResumeListIndeterminate
+    from hhru_bot.experience import ExperienceResult
+
+    resume = SimpleNamespace(id="r1", resume_id="r1")
+    config = SimpleNamespace(storage_state_file="session.json", user_agent=None)
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
+    monkeypatch.setattr("hhru_bot.commands._common.resolve_resume", lambda *_a, **_kw: resume)
+
+    @contextmanager
+    def fake_launch_context(*_args, **_kwargs):
+        yield SimpleNamespace(new_page=lambda: object())
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", fake_launch_context)
+    monkeypatch.setattr("hhru_bot.experience.read_experience_on_hh", lambda *_a, **_kw: [])
+
+    def _raise_wizard(*_a, **_kw):
+        raise ResumeListIndeterminate("карточки резюме не появились")
+
+    monkeypatch.setattr("hhru_bot.copy_resume.list_resume_cards", _raise_wizard)
+    monkeypatch.setattr(
+        "hhru_bot.copy_resume.list_wizard_drafts",
+        lambda *_a, **_kw: [SimpleNamespace(resume_id="r1", title="Черновик")],
+    )
+
+    captured = {}
+
+    def fake_edit(_page, _resume_id, _plan, *, resume_titles=None, **_kw):
+        captured["titles"] = resume_titles
+        return [ExperienceResult("строка 1: добавлена", success=True)]
+
+    monkeypatch.setattr("hhru_bot.experience.edit_experience_on_hh", fake_edit)
+
+    history_path = tmp_path / "history.db"
+    args = argparse.Namespace(
+        config="config.yaml",
+        headless=True,
+        resume="r1",
+        mode="fill",
+        career=None,
+        existing=None,
+        entry=['{"company": "a", "position": "b", "start_month": "1"}'],
+        dry_run=False,
+        force=True,
+        history=str(history_path),
+    )
+
+    # run() возвращает «failed»-флаг (cli.py): чистый успех — False
+    assert command.run(args) is False
+    assert captured["titles"] == {"r1": "Черновик"}
+
+
 def test_edit_languages_launch_failure_before_attempt_does_not_count_as_attempted(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

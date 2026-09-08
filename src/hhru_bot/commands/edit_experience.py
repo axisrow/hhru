@@ -335,9 +335,17 @@ def _run(args: argparse.Namespace, progress) -> bool:
             # mode edit of an existing row also lands on the shared panel
             # screen and needs the same reconciliation (see
             # experience.py::edit_experience_on_hh docstring).
-            from ..copy_resume import list_resume_cards
+            from ..copy_resume import ResumeListIndeterminate, list_resume_cards, list_wizard_drafts
 
-            resume_titles = {card.resume_id: card.title for card in list_resume_cards(page)}
+            try:
+                cards = list_resume_cards(page)
+            except ResumeListIndeterminate:
+                # Аккаунт в состоянии «визард вместо списка» (единственный
+                # незавершённый черновик, #1032): карточек нет вовсе, а
+                # resume-titles для панели привязки нужны те же — читаем
+                # черновик визард-ридером (URL + identity-readback).
+                cards = list_wizard_drafts(page)
+            resume_titles = {card.resume_id: card.title for card in cards}
             # begin_attempt() right before the real mutation, after the page/
             # context are already open (#465 review): counting the attempt
             # before launch_context succeeded would misreport a browser-launch
