@@ -77,6 +77,27 @@ def register(subparsers) -> None:
     parser.set_defaults(func=run)
 
 
+def _finalize_delivery(
+    throttle, page, topic: str, pre_click_count: int, ok_message: str
+) -> tuple[str, str | None]:
+    """Общая классификация доставки после действия (клик ИЛИ текст):
+    позитивный сигнал wait_reply_confirmation → success, иначе uncertain
+    (fail-closed, #176). Одна точка на оба режима — классификация не
+    разъедется между кнопочным и текстовым путём."""
+    from ..negotiations_chat import wait_reply_confirmation
+
+    if wait_reply_confirmation(page, min_count=pre_click_count + 1):
+        status: str = "success"
+        reason: str | None = None
+        print(f"[OK] {topic} — {ok_message}")
+    else:
+        status = "uncertain"
+        reason = "отправка не подтверждена: нет сигнала доставки"
+        print(f"[FAIL] {topic} — {reason}")
+    throttle.wait(f"после ответа роботу в чате {topic}")
+    return status, reason
+
+
 def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> bool:
     from ..browser import launch_context
     from ..negotiations_chat import (
@@ -88,7 +109,6 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
         needs_reply,
         read_chat,
         send_reply_current,
-        wait_reply_confirmation,
     )
     from ..negotiations_probe import paginated_topic_refs
     from ..responses import NotAuthenticated, ResponsesIndeterminate
@@ -196,15 +216,13 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                 print(f"[FAIL] {topic} — {reason}")
                 throttle.wait(f"после ответа роботу в чате {topic}")
             else:
-                if wait_reply_confirmation(page, min_count=pre_click_count + 1):
-                    status = "success"
-                    reason = None
-                    print(f"[OK] {topic} — текст доставлен, последнее сообщение наше")
-                else:
-                    status = "uncertain"
-                    reason = "отправка не подтверждена: нет сигнала доставки"
-                    print(f"[FAIL] {topic} — {reason}")
-                throttle.wait(f"после ответа роботу в чате {topic}")
+                status, reason = _finalize_delivery(
+                    throttle,
+                    page,
+                    topic,
+                    pre_click_count,
+                    "текст доставлен, последнее сообщение наше",
+                )
         else:
             try:
                 click_quick_reply(page, args.answer)
@@ -221,15 +239,13 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                 print(f"[FAIL] {topic} — {reason}")
                 throttle.wait(f"после ответа роботу в чате {topic}")
             else:
-                if wait_reply_confirmation(page, min_count=pre_click_count + 1):
-                    status = "success"
-                    reason = None
-                    print(f"[OK] {topic} — кнопка «{args.answer}» нажата, доставка подтверждена")
-                else:
-                    status = "uncertain"
-                    reason = "отправка не подтверждена: нет сигнала доставки"
-                    print(f"[FAIL] {topic} — {reason}")
-                throttle.wait(f"после ответа роботу в чате {topic}")
+                status, reason = _finalize_delivery(
+                    throttle,
+                    page,
+                    topic,
+                    pre_click_count,
+                    f"кнопка «{args.answer}» нажата, доставка подтверждена",
+                )
         history.finalize_reply_action(
             action_id,
             topic,

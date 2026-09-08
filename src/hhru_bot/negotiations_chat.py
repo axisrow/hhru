@@ -449,6 +449,12 @@ def send_reply_current(page: Page, text: str) -> None:
                 raise NoReplyForm(
                     "кнопка отправки не появилась после ввода текста (черновик остался в поле)"
                 ) from None
+    if send_loc.count() != 1:
+        # Строгая проверка как у поля: два матча значили бы молчаливый клик
+        # по первому из них — аналогично fail-closed count() != 1 проекта.
+        raise NoReplyForm(
+            "кнопка отправки не резолвится однозначно после ввода текста (черновик остался в поле)"
+        )
     send_loc.first.click()
 
 
