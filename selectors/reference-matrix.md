@@ -57,6 +57,7 @@
 | negotiations.CHAT_MESSAGE_ROOT | `[data-qa^='chatik-chat-message-']` | — | — | — | live_dom |
 | negotiations.CHAT_MESSAGE_SEND | `button[data-qa='chatik-chat-message-send']` | — | — | [data-qa="chatik-do-send-message"] | documented_live |
 | negotiations.CHAT_MESSAGE_TEXT | `[data-qa^="chatik-chat-message-"][data-qa$="-text"]:not([data-qa="chatik-chat-message-applicant-action-text"])` | — | — | — | live_dom |
+| negotiations.CHAT_MESSAGE_TIME | `[data-qa='chat-buble-display-time']` | — | — | — | live_dom |
 | negotiations.LEGACY_NEGOTIATION_CHAT_LINK | `[data-qa='negotiations-item__messages-link']` | — | — | — | documented_live |
 | negotiations.LEGACY_NEGOTIATION_DATE | `[data-qa='negotiations-item__date']` | — | — | — | documented_live |
 | negotiations.LEGACY_NEGOTIATION_EMPLOYER | `[data-qa='negotiations-item__employer']` | — | — | — | structural_read_fallback |

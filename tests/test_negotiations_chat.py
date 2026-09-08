@@ -6,7 +6,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
 from hhru_bot.negotiations_chat import (
-    CHAT_AUTHOR_JS,
+    CHAT_MESSAGE_META_JS,
     ChatMessage,
     NoQuickReply,
     author_from_ancestors,
@@ -121,6 +121,59 @@ def test_question_sentence_detection_handles_mixed_punctuation():
     )
 
 
+# --- эвристика скорости ответа: смежная пара me→employer быстрее 15 минут ---
+#
+# Живые факты 2026-09-08: Сбер «ГигаРекрутер» ответил в ту же минуту
+# (12:29 → 12:29), Яндекс Крауд — через 14 минут; человек-образный ответ
+# Найди.Про — 2ч14м. Время пузыря — только HH:MM (суточное окно).
+
+
+def _pair(ours_at: str, theirs_at: str) -> list[ChatMessage]:
+    return [
+        ChatMessage("me", "1", "Отклик на вакансию", time_text=ours_at),
+        ChatMessage("employer", "2", "Здравствуйте! Пройдите интервью", time_text=theirs_at),
+    ]
+
+
+def test_same_minute_reply_is_robot():
+    assert is_robot_questionnaire(_pair("12:29", "12:29"))
+
+
+def test_reply_within_threshold_is_robot():
+    assert is_robot_questionnaire(_pair("12:22", "12:36"))  # Яндекс Крауд, 14 мин
+
+
+def test_slow_reply_is_not_robot_by_speed():
+    """2ч14м (Найди.Про, Алиса) — скорость молчит; этого детекта хватает
+    только вердикту пользователя или эвристике вопросов."""
+    assert not is_robot_questionnaire(_pair("12:24", "14:38"))
+
+
+def test_boundary_reply_exactly_at_threshold_is_not_robot():
+    # Ровно 15 минут — порог строгий (<), не нестрогий (<=): живой рекрутер
+    # на границе не должен попадать в robot-очередь.
+    assert not is_robot_questionnaire(_pair("10:00", "10:15"))
+
+
+def test_midnight_crossing_pair_is_skipped_not_robot():
+    # Пузырь несёт только HH:MM: 23:58 → 00:01 формально отрицательная дельта
+    # (переход через полночь), пара молча пропускается (fail-open).
+    assert not is_robot_questionnaire(_pair("23:58", "00:01"))
+
+
+def test_unparseable_time_pair_is_skipped_not_robot():
+    assert not is_robot_questionnaire(_pair("сегодня", "12:30"))
+    assert not is_robot_questionnaire(_pair("12:00", ""))
+
+
+def test_speed_signal_requires_our_message_first():
+    # Ответ работодателя без предшествующего нашего сообщения (например,
+    # входящее в пустом чате) — пары нет, скорость не считается.
+    assert not is_robot_questionnaire(
+        [ChatMessage("employer", "1", "Здравствуйте!", time_text="12:30")]
+    )
+
+
 def test_read_chat_logs_and_fails_closed_for_unmapped_topic(caplog):
     # An unmapped topic returns before ``page`` is touched, so a typed stand-in
     # is enough — no real Playwright Page is needed for this branch.
@@ -214,11 +267,12 @@ class _FakeMessage:
         self._is_own = is_own
 
     def evaluate(self, script, markers):
-        # #1044: резолвер один и тот же (CHAT_AUTHOR_JS + author_markers) —
-        # двойник воспроизводит его вердикт по is_own, не исполняя JS.
-        assert script == CHAT_AUTHOR_JS
+        # #1044: резолвер один и тот же (CHAT_MESSAGE_META_JS +
+        # author_markers) — двойник воспроизводит его вердикт по is_own,
+        # не исполняя JS. Третий элемент (time_text) пуст: время не прочитано.
+        assert script == CHAT_MESSAGE_META_JS
         assert set(markers) == {"my", "other"}
-        return ["me" if self._is_own else "employer", ""]
+        return ["me" if self._is_own else "employer", "", ""]
 
 
 class _FakeMessages:

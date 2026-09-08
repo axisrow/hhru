@@ -1091,7 +1091,7 @@ def run_negotiations(args: argparse.Namespace) -> bool:
     """Dump negotiations/chat DOM using only GET navigation and reads."""
     from ..browser import launch_context
     from ..config import load_config_or_exit
-    from ..negotiations_chat import CHAT_AUTHOR_JS as chat_author_js
+    from ..negotiations_chat import CHAT_MESSAGE_META_JS as chat_meta_js
     from ..negotiations_chat import author_markers as chat_author_markers
     from ..negotiations_probe import chat_url, paginated_topic_refs
     from ..report import _ascii_table
@@ -1164,7 +1164,7 @@ def run_negotiations(args: argparse.Namespace) -> bool:
             message_rows = []
             for i in range(messages.count()):
                 loc = messages.nth(i)
-                author, _label = loc.evaluate(chat_author_js, chat_author_markers())
+                author, _label, bubble_time = loc.evaluate(chat_meta_js, chat_author_markers())
                 message_rows.append(
                     [
                         str(i + 1),
@@ -1172,10 +1172,15 @@ def run_negotiations(args: argparse.Namespace) -> bool:
                         # own/employer/system — тот же резолвер, что у
                         # needs_reply (#1044): префиксы CSS-модульных маркеров.
                         {"me": "own", "employer": "employer"}.get(author, "system"),
-                        loc.inner_text().replace("\n", " ")[:160],
+                        bubble_time or "-",
+                        # Полный текст без обрезки: probe — единственный
+                        # read-only канал чтения сообщений чата; обрезка
+                        # в 160 символов прятала хвост приглашений
+                        # (живой кейс 2026-09-08, Найди.Про).
+                        loc.inner_text().replace("\n", " "),
                     ]
                 )
-            print(_ascii_table(["message", "id", "author_marker", "text"], message_rows))
+            print(_ascii_table(["message", "id", "author_marker", "time", "text"], message_rows))
             print(
                 "Корни сообщений чата — census отрисованных контролов "
                 "(сырой HTML в stdout запрещён, #998):"

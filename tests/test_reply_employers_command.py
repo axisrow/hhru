@@ -813,6 +813,118 @@ def test_routine_already_answered_sweep_does_not_fail_the_run(tmp_path, monkeypa
     assert result is False
 
 
+# --- вердикт пользователя (robot-mark) перекрывает эвристики детекта --------
+
+
+def test_user_verdict_robot_skips_even_when_heuristics_are_silent(tmp_path, monkeypatch, capsys):
+    """Вердикт 'robot' — скип без оглядки на эвристики: сообщение без вопросов,
+    без лейбла бота, без быстрого ответа — а пользователь решил «робот»."""
+    history = History(tmp_path / "history.db")
+    _seed_response(history, vacancy_id="1", topic="tp1")
+    history.set_robot_verdict("tp1", verdict="robot")
+    Ref = TopicRef("tp1", "c1", None, "96223331")
+    # Медленный ответ без вопросов: все три эвристики молчат.
+    chat = ChatMessage(author="employer", inbound_marker="m1")
+
+    def _boom_send(*a, **k):
+        raise AssertionError("вердикт robot не оставляет права на автоответ")
+
+    _patch_common(
+        monkeypatch,
+        history,
+        refs=[Ref],
+        reader=lambda page, topic, refs: chat,
+        send=_boom_send,
+    )
+
+    result = command.run(_args(force=True))
+    out = capsys.readouterr().out
+    assert "[skip]" in out
+    assert "вердикт пользователя" in out
+    assert result is False
+    # Строка очереди заведена с reason=user_verdict — видна в robot-queue.
+    row = history.robot_questionnaire_row("tp1")
+    assert row is not None
+    assert row["reason"] == "user_verdict"
+
+
+def test_user_verdict_human_overrides_robot_shaped_chat(tmp_path, monkeypatch, capsys):
+    """Живой кейс-прообраз: рекрутер-человек с экранингом из 6 вопросов и
+    мгновенным автоответом выглядит для эвистик роботом — вердикт 'human'
+    возвращает чат в обычный план, письмо уходит, очередь не растёт."""
+    history = History(tmp_path / "history.db")
+    _seed_response(history, vacancy_id="1", topic="tp1")
+    history.set_robot_verdict("tp1", verdict="human")
+    Ref = TopicRef("tp1", "c1", None, "96223331")
+    # Робот-образный чат: бот-лейбл + два вопроса + ответ в ту же минуту.
+    conversation = (
+        ChatMessage("me", "m0", "Отклик", time_text="12:24"),
+        ChatMessage("employer", "m1", "Опыт? Когда готовы?", "Робот-рекрутер", time_text="12:24"),
+    )
+    chat = ChatMessage(
+        "employer",
+        "m1",
+        "Опыт? Когда готовы?",
+        "Робот-рекрутер",
+        conversation=conversation,
+        time_text="12:24",
+    )
+    sent = {"called": False}
+
+    def _send(page, text):
+        sent["called"] = True
+
+    _patch_common(
+        monkeypatch,
+        history,
+        refs=[Ref],
+        reader=lambda page, topic, refs: chat,
+        send=_send,
+    )
+
+    result = command.run(_args(force=True))
+    out = capsys.readouterr().out
+    assert "[OK]" in out
+    assert "вердикт: человек" in out
+    assert result is False
+    assert sent["called"] is True
+    # Live-эвристика не заново замаркировала чат роботом.
+    assert history.robot_questionnaire_row("tp1") is None
+
+
+def test_no_verdict_keeps_heuristic_gates(tmp_path, monkeypatch, capsys):
+    """Регрессия: без вердикта поведение прежнее — робот-образный чат
+    уходит в ручную очередь эвристикой, письмо не уходит."""
+    history = History(tmp_path / "history.db")
+    _seed_response(history, vacancy_id="1", topic="tp1")
+    Ref = TopicRef("tp1", "c1", None, "96223331")
+    conversation = (
+        ChatMessage("me", "m0", "Отклик", time_text="12:24"),
+        ChatMessage("employer", "m1", "Опыт? Когда готовы?", time_text="12:24"),
+    )
+    chat = ChatMessage(
+        "employer", "m1", "Опыт? Когда готовы?", conversation=conversation, time_text="12:24"
+    )
+
+    def _boom_send(*a, **k):
+        raise AssertionError("эвристика по-прежнему кладёт робот-чат в очередь")
+
+    _patch_common(
+        monkeypatch,
+        history,
+        refs=[Ref],
+        reader=lambda page, topic, refs: chat,
+        send=_boom_send,
+    )
+
+    result = command.run(_args(force=True))
+    out = capsys.readouterr().out
+    assert "[skip]" in out
+    assert "robot-questionnaire" in out
+    assert result is False
+    assert history.is_robot_questionnaire("tp1") is True
+
+
 # --- #710: --follow-up --after-days N ---------------------------------------
 
 

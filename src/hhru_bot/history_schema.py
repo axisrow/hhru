@@ -477,6 +477,16 @@ CREATE TABLE IF NOT EXISTS robot_questionnaires (
 CREATE INDEX IF NOT EXISTS idx_robot_questionnaires_detected_at
     ON robot_questionnaires(detected_at);
 
+-- Вердикт пользователя «робот или человек» для topic. Приоритетнее ЛЮБОЙ
+-- эвристики детекта (лейбл/вопросы/скорость): автоматический классификатор
+-- доверчив, спроектированный текст его обманывает, истина фиксируется
+-- человеком. Машина вердикт не перезаписывает (только robot-mark --clear).
+CREATE TABLE IF NOT EXISTS robot_verdicts (
+    topic TEXT PRIMARY KEY,
+    verdict TEXT NOT NULL CHECK (verdict IN ('robot', 'human')),
+    annotated_at TEXT NOT NULL
+);
+
 -- Research snapshots are append-only by design; deduplication is out of scope.
 CREATE TABLE IF NOT EXISTS questionnaire_scans (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

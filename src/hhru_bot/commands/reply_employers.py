@@ -183,17 +183,35 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                     continue
                 live_resume_id = live_refs[0].resume_id
             chat = read_chat(page, topic, refs)
-            if chat is not None and is_robot_questionnaire(chat.conversation or (chat,)):
+            # Вердикт пользователя выше эвристик (robot-mark): автоматический
+            # детект доверчив — спроектированный текст обходит и лейбл, и
+            # вопросы, и скорость. 'robot' — скип даже если эвристики молчат;
+            # 'human' — гейты пропускаются целиком, иначе live-эвристика
+            # заново клала бы чат в очередь каждый sweep.
+            verdict = history.robot_verdict(topic)
+            if verdict == "robot":
                 history.mark_robot_questionnaire(
-                    topic, vacancy_id=str(candidate["vacancy_id"]), reason="robot_questionnaire"
+                    topic, vacancy_id=str(candidate["vacancy_id"]), reason="user_verdict"
                 )
-                print(f"[skip] {label} — robot-questionnaire (ручная очередь)")
+                print(f"[skip] {label} — robot (вердикт пользователя)")
                 progress.skipped_count += 1
                 continue
-            if history.is_robot_questionnaire(topic):
-                print(f"[skip] {label} — robot-questionnaire (ручная очередь)")
-                progress.skipped_count += 1
-                continue
+            if verdict != "human":
+                if chat is not None and is_robot_questionnaire(chat.conversation or (chat,)):
+                    history.mark_robot_questionnaire(
+                        topic,
+                        vacancy_id=str(candidate["vacancy_id"]),
+                        reason="robot_questionnaire",
+                    )
+                    print(f"[skip] {label} — robot-questionnaire (ручная очередь)")
+                    progress.skipped_count += 1
+                    continue
+                if history.is_robot_questionnaire(topic):
+                    print(f"[skip] {label} — robot-questionnaire (ручная очередь)")
+                    progress.skipped_count += 1
+                    continue
+            else:
+                print(f"[INFO] {label} — вердикт: человек, эвристики перекрыты")
             decision = decide(chat)
             if not decision.should_reply:
                 # /code-review high: "last_message_from_us" is the routine

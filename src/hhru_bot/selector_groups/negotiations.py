@@ -87,6 +87,11 @@ CHAT_MESSAGE_OTHER_MARKER = "message_other"
 CHAT_MESSAGE_INCOMING_MARKER = "chat-bubble_incoming"
 CHAT_MESSAGE_BOT_MARKER = "chat-bubble_bot"
 
+# Время сообщения из чат-пузыря («12:24», только HH:MM — суточное окно).
+# Подтверждено census живых чатов 2026-09-08 (5610561242 и др.): span живёт
+# в subtree корня сообщения; «buble» — опечатка самого data-qa hh.ru, не наша.
+CHAT_MESSAGE_TIME = _selector("negotiations.CHAT_MESSAGE_TIME")
+
 # Кнопки быстрых ответов робота-анкеты («Да»/«Нет»). data-qa у них нет —
 # адресация по класс-префиксам CSS-модулей (образец: resume_photo.py,
 # magritte-media-viewer___). Живой census 2026-09-08 (census --wait-ms 6000,

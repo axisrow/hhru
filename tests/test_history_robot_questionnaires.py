@@ -21,6 +21,38 @@ def _mark(history: History, topic: str = "100000001") -> None:
     history.mark_robot_questionnaire(topic, vacancy_id="200000002", reason="robot_questionnaire")
 
 
+# --- вердикты пользователя: приоритет над эвристиками детекта ---------------
+
+
+def test_verdict_roundtrip_and_upsert(tmp_path):
+    history = History(tmp_path / "h.db")
+    assert history.robot_verdict("100000001") is None
+
+    history.set_robot_verdict("100000001", verdict="robot")
+    assert history.robot_verdict("100000001") == "robot"
+
+    # Передумал — тот же topic перезаписывается, вторых строк не растёт.
+    history.set_robot_verdict("100000001", verdict="human")
+    assert history.robot_verdict("100000001") == "human"
+    with history._connect() as conn:  # noqa: SLF001 - тест читает таблицу напрямую
+        assert conn.execute("SELECT COUNT(*) FROM robot_verdicts").fetchone()[0] == 1
+
+
+def test_invalid_verdict_is_fail_closed(tmp_path):
+    history = History(tmp_path / "h.db")
+    with pytest.raises(ValueError):
+        history.set_robot_verdict("100000001", verdict="maybe")
+
+
+def test_clear_verdict_is_idempotent(tmp_path):
+    history = History(tmp_path / "h.db")
+    history.set_robot_verdict("100000001", verdict="robot")
+    history.clear_robot_verdict("100000001")
+    assert history.robot_verdict("100000001") is None
+    history.clear_robot_verdict("100000001")
+    assert history.robot_verdict("100000001") is None
+
+
 def test_marked_topic_is_pending_until_resolved(tmp_path):
     history = History(tmp_path / "h.db")
     _mark(history)
