@@ -5587,6 +5587,68 @@ selectors:
     verified_flow: authenticated_resume_edit_visibility_screen
     verified_by: human
     status: intentionally local
+  saved_search.AUTOSEARCH_EMPTY:
+    value: '[data-qa=''empty-favorites-saved-search-block'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/saved_search.py:28
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - empty-favorites-saved-search-block
+    active: true
+    bindings: {}
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: live census 2026-09-08, authenticated session, /applicant/autosearch
+      note: 'Empty state of the saved-searches list ("Ничего нет. В поиске выберите фильтры и нажмите на значок поиска с сердечком...").
+        The only confirmed part of the list markup: rows of a NON-empty list were never observed live (account had 0 saved
+        searches) and no row selectors are claimed.'
+    last_verified_at: '2026-09-08'
+    verified_flow: census_read_only_on_applicant_autosearch
+    verified_by: browser
+  saved_search.FAVORITES_SEARCHES_TAB:
+    value: a[data-qa='favorites-tab-searches']
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/saved_search.py:24
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - favorites-tab-searches
+    active: true
+    bindings: {}
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: live census 2026-09-08, authenticated session, /applicant/autosearch
+      note: Tab "Поиски" inside "Избранное" on /applicant/autosearch (role=tab, visible). The URL itself opens the searches
+        tab directly; the selector marks that the right tab is rendered.
+    last_verified_at: '2026-09-08'
+    verified_flow: census_read_only_on_applicant_autosearch
+    verified_by: browser
+  saved_search.SEARCH_SAVE_BUTTON:
+    value: button[data-qa='vacancy-saved-search-create']
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/saved_search.py:19
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - vacancy-saved-search-create
+    active: true
+    bindings: {}
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: live census 2026-09-08, authenticated session, /search/vacancy?text=python&area=1
+      note: 'Button "Сохранить поиск" next to "Найти" in the search bar (#1052). tag=button, innerText=Сохранить поиск, visible.
+        The save popup itself (name input, notification channel, final submit) renders only after the click and is NOT confirmed:
+        no popup selectors exist yet.'
+    last_verified_at: '2026-09-08'
+    verified_flow: census_read_only_on_search_vacancy
+    verified_by: browser
   search_page.COMPANY_RATING_REVIEWS_COUNT:
     value: '[data-qa=''company-review-rating-reviews-count'']'
     criticality: write

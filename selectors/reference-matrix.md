@@ -252,6 +252,9 @@
 | resume_visibility.RESUME_VISIBILITY_MODE_NO_ONE | `[data-qa='resume-visibility-card-access-type-no_one']` | — | — | — | documented_live |
 | resume_visibility.RESUME_VISIBILITY_MODE_WHITELIST | `[data-qa='resume-visibility-card-access-type-whitelist']` | — | — | — | documented_live |
 | resume_visibility.RESUME_VISIBILITY_SAVE | `[data-qa='resume-partial-edit-save']` | — | — | — | documented_live |
+| saved_search.AUTOSEARCH_EMPTY | `[data-qa='empty-favorites-saved-search-block']` | — | — | — | live_dom |
+| saved_search.FAVORITES_SEARCHES_TAB | `a[data-qa='favorites-tab-searches']` | — | — | — | live_dom |
+| saved_search.SEARCH_SAVE_BUTTON | `button[data-qa='vacancy-saved-search-create']` | — | — | — | live_dom |
 | search_page.COMPANY_RATING_REVIEWS_COUNT | `[data-qa='company-review-rating-reviews-count']` | — | — | — | live_dom |
 | search_page.COMPANY_RATING_VALUE | `[data-qa='company-review-rating-value']` | — | — | — | live_dom |
 | search_page.PAGINATION_BLOCK | `[data-qa='pager-block']` | — | — | — | documented_live |

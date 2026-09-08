@@ -23,7 +23,143 @@ def register(subparsers) -> None:
         "--text",
         help="Разовый текст поиска; можно использовать без --resume",
     )
+    p.add_argument(
+        "--save",
+        action="store_true",
+        help=(
+            "Сохранить параметрику этого поиска как автопоиск hh.ru (#1052). "
+            "WRITE: по умолчанию dry-run (план без клика), боевое — --force"
+        ),
+    )
+    p.add_argument("--name", help="Явное имя автопоиска для --save")
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="Разрешить боевой клик «Сохранить поиск» (только с --save)",
+    )
+    p.add_argument(
+        "--saved",
+        metavar="NAME",
+        help="Взять параметры прогона из сохранённого автопоиска hh.ru по имени",
+    )
+    p.add_argument(
+        "--list-saved",
+        action="store_true",
+        help="Показать список автопоисков аккаунта (read-only)",
+    )
     p.set_defaults(func=run)
+
+
+def _print_saved_searches(entries: list) -> None:
+    from ..report import _ascii_table
+
+    if not entries:
+        print("[INFO] Автопоисков на аккаунте нет (подтверждено пустым состоянием списка)")
+        return
+    rows = [[e.name, e.url or ""] for e in entries]
+    print(_ascii_table(["Имя", "URL выдачи"], rows))
+
+
+def _run_saved_search_modes(args: argparse.Namespace, config, history: History) -> bool | None:
+    """Обработка --list-saved/--saved/--save: отдельные режимы команды search.
+
+    Возвращает None, если ни один из этих флагов не задан (обычный поиск),
+    иначе bool-признак отказа.
+    """
+    from ..browser import launch_context
+    from ..responses import NotAuthenticated
+    from ..saved_search import (
+        SavedSearchListIndeterminate,
+        list_saved_searches,
+        save_search_on_hh,
+        saved_search_query_key,
+    )
+
+    list_saved = getattr(args, "list_saved", False)
+    saved = getattr(args, "saved", None)
+    save = getattr(args, "save", False)
+    force = getattr(args, "force", False)
+    name = getattr(args, "name", None)
+
+    if not (list_saved or saved or save):
+        return None
+
+    if list_saved and (saved or save):
+        print("[FAIL] --list-saved не сочетается с --saved/--save")
+        return True
+    if force and not save:
+        print("[FAIL] --force имеет смысл только вместе с --save")
+        return True
+
+    resumes = _resumes_for_search(config, args)
+    if save and len(resumes) != 1:
+        print(
+            f"[FAIL] --save требует ровно одну параметрику поиска (сейчас {len(resumes)}); "
+            "сузьте выбор через --resume или --text"
+        )
+        return True
+
+    failed = False
+    with launch_context(
+        config.storage_state_file, headless=args.headless, user_agent=config.user_agent
+    ) as context:
+        page = context.new_page()
+        entries = []
+        if list_saved or saved:
+            try:
+                entries = list_saved_searches(page)
+            except SavedSearchListIndeterminate as exc:
+                print(f"[FAIL] {exc}")
+                return True
+            except NotAuthenticated as exc:
+                print(f"[FAIL] Сессия недействительна: {exc}")
+                return True
+        if list_saved:
+            _print_saved_searches(entries)
+            print("[OK] Список автопоисков прочитан; read-only, изменений на hh.ru нет")
+            return False
+
+        if saved:
+            matches = [e for e in entries if e.name == saved]
+            if not matches:
+                known = ", ".join(e.name for e in entries) or "<список пуст>"
+                print(f"[FAIL] Автопоиск '{saved}' не найден; список: {known}")
+                return True
+            entry = matches[0]
+            if entry.url is None:
+                print(
+                    f"[FAIL] Автопоиск '{saved}' найден, но селекторы строки списка "
+                    "не подтверждены живым DOM (#1052): параметры прогона снять нечем. "
+                    "Снимите census непустого списка и дополните selector_groups/saved_search.py"
+                )
+                return True
+            print(f"[INFO] Автопоиск '{saved}' найден; параметры прогона: {entry.url}")
+            return True
+
+        # --save
+        resume = resumes[0]
+        dry_run = not force
+        if not dry_run:
+            query_key = saved_search_query_key(resume.search)
+            if history.has_unresolved_uncertain(query_key, "save_search"):
+                print(
+                    "[FAIL] предыдущее сохранение этого поиска не подтверждено (uncertain). "
+                    "Проверьте список автопоисков на hh.ru вручную перед повтором."
+                )
+                return True
+        try:
+            result = save_search_on_hh(page, resume, name, dry_run)
+        except NotAuthenticated as exc:
+            print(f"[FAIL] Сессия недействительна: {exc}")
+            return True
+        if result.success:
+            print(f"[OK] {result.reason}" if dry_run else f"[OK] {resume.id} — {result.reason}")
+            if dry_run:
+                print("[INFO] Ничего не нажато; боевое сохранение — --force")
+        else:
+            print(f"[FAIL] {resume.id} — {result.reason}")
+            failed = True
+    return failed
 
 
 def _resumes_for_search(config, args: argparse.Namespace) -> list[ResumeConfig]:
@@ -177,6 +313,11 @@ def run(args: argparse.Namespace) -> bool:
 
     config = load_config_or_exit(args.config)
     history = History(args.history)
+    saved_mode_failed = _run_saved_search_modes(args, config, history)
+    if saved_mode_failed is not None:
+        # Режимы --save/--saved/--list-saved завершают команду: обычный поиск
+        # в тех же прогонах не выполняется.
+        return saved_mode_failed
     resumes = _resumes_for_search(config, args)
 
     failed = False
