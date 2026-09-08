@@ -98,9 +98,9 @@ class CollectionRunState:
         with self._lock:
             self._saved += 1
 
-    def set_failed(self, count: int) -> None:
+    def mark_failed(self) -> None:
         with self._lock:
-            self._failed = count
+            self._failed += 1
 
     def complete_page(self, page_num: int, *, has_next: bool, cap_reached: bool) -> None:
         with self._lock:

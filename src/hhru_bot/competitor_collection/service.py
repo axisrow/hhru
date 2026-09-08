@@ -183,7 +183,6 @@ def collect_pages(
                                     max_delay=params.max_delay_seconds,
                                     workers=params.detail_workers,
                                 ),
-                                quiet=quiet,
                             )
                     if target_pages is not None:
                         state.set_expected_details_from_target(
@@ -225,7 +224,6 @@ def collect_pages(
                             worker_pool.grow(target_workers)
                         emit(
                             f"[WORKERS] run_id={run_id} запущено={worker_pool.size}",
-                            quiet=quiet,
                         )
 
                     pending: dict[int, object] = {}
@@ -266,11 +264,10 @@ def collect_pages(
                                 )
                             )
                         if kind == "error":
-                            state.set_failed(state.snapshot().failed + 1)
+                            state.mark_failed()
                             emit(
                                 f"[WARN] run_id={run_id} резюме rank={card.rank} "
                                 f"не сохранено: {result['error_type']}: {result['error']}",
-                                quiet=quiet,
                                 level=logging.WARNING,
                             )
                             continue
@@ -304,7 +301,6 @@ def collect_pages(
                         f"деталей={current.saved + current.failed}, "
                         f"новых/обновлено={new + updated}, ошибок={current.failed}"
                         f"{eta_suffix}",
-                        quiet=quiet,
                     )
                     if not has_next:
                         break

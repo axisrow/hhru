@@ -57,7 +57,8 @@ def test_expected_details_follows_target_then_final_counts():
     state.set_expected_details_from_target(3, pages_this_run=1, requested_page_size=100)
     assert state.snapshot().expected_details == 300
 
-    state.set_failed(2)
+    state.mark_failed()
+    state.mark_failed()
     state.complete_page(0, has_next=True, cap_reached=True)
     # Cap: ожидание схлопывается в фактические исходы, resume_page сохранён.
     snap = state.snapshot()
@@ -65,11 +66,20 @@ def test_expected_details_follows_target_then_final_counts():
     assert snap.resume_page == 1
 
 
-def test_set_failed_overwrites_instead_of_incrementing():
+def test_mark_failed_increments_atomically():
     state = CollectionRunState(resume_page=None, observed_page_size=None)
-    state.set_failed(1)
-    state.set_failed(1)
-    assert state.snapshot().failed == 1
+
+    def worker():
+        for _ in range(200):
+            state.mark_failed()
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert state.snapshot().failed == 800
 
 
 def test_concurrent_updates_are_serialized():
