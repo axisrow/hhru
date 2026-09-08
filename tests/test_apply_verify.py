@@ -354,17 +354,43 @@ def test_found_on_second_page():
     assert f"{NEGOTIATIONS_URL}?page=1" in page.goto_calls
 
 
+def test_found_on_lazy_tail_without_pager():
+    # Дрейф 2026-09-09 (#1067): пейджер из UI удалён, но тема целевой
+    # вакансии может лежать за пределами первой страницы (lazy-хвост).
+    # Раньше «пейджер не отрисован» завершал скан после страницы 0 →
+    # ложный not_found с clean=True — нарушение fail-closed серой зоны #207.
+    # Теперь продолжение доказывают НОВЫЕ vacancy_id страницы 0.
+    page0 = _ssr_html([_topic(7, "999999")])  # без пейджера
+    page1 = _ssr_html([_topic(9, _V2)])
+    page = FakeNegotiationsPage({NEGOTIATIONS_URL: page0, f"{NEGOTIATIONS_URL}?page=1": page1})
+    result = verify_response_in_negotiations(page, _V2)
+    assert result.found
+    assert f"{NEGOTIATIONS_URL}?page=1" in page.goto_calls
+
+
 # --- not_found: подтверждённое отсутствие ------------------------------------
 
 
 def test_not_found_on_clean_ssr_read():
+    # Одностраничный аккаунт после дрейфа 2026-09-09 (пейджер удалён, PR
+    # #1066/#1067): конец списка подтверждается пустой следующей страницей —
+    # серверный ?page=1 за пределами списка отдаёт пустой topicList.
     page = FakeNegotiationsPage(
-        {NEGOTIATIONS_URL: _ssr_html([_topic(7, "999999"), _topic(8, "888888")])}
+        {
+            NEGOTIATIONS_URL: _ssr_html([_topic(7, "999999"), _topic(8, "888888")]),
+            f"{NEGOTIATIONS_URL}?page=1": _ssr_html([]),
+        }
     )
     result = verify_response_in_negotiations(page, _V2)
     assert result.status == "not_found"
     # Polling: обе попытки с интервалом (отклик мог появиться с задержкой).
-    assert page.goto_calls == [NEGOTIATIONS_URL, NEGOTIATIONS_URL]
+    # Попытка 2 не ходит на ?page=1 повторно: seen_vacancy_ids накапливается
+    # между попытками, и страница 0 без новых вакансий уже доказывает конец.
+    assert page.goto_calls == [
+        NEGOTIATIONS_URL,
+        f"{NEGOTIATIONS_URL}?page=1",
+        NEGOTIATIONS_URL,
+    ]
     assert page.wait_for_timeout_calls == [10_000]
 
 
@@ -669,7 +695,11 @@ class _IncomparableSecondAttemptPage(FakeNegotiationsPage):
     ровно тот false-negative, что #212 призван устранить)."""
 
     def __init__(self, page0_clean: str, page0_incomparable: str):
-        super().__init__({NEGOTIATIONS_URL: page0_clean})
+        # ?page=1 — подтверждённо пустой хвост одностраничного аккаунта
+        # (серверный контракт конца списка после дрейфа 2026-09-09, PR #1066).
+        super().__init__(
+            {NEGOTIATIONS_URL: page0_clean, f"{NEGOTIATIONS_URL}?page=1": _ssr_html([])}
+        )
         self._clean = page0_clean
         self._incomparable = page0_incomparable
         self._page0_gotos = 0

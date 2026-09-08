@@ -49,13 +49,7 @@ from playwright.sync_api import Page
 
 from ..browser import goto_hh, has_auth_cookie, has_login_form
 from ..negotiations_probe import parse_initial_state
-from ..responses import (
-    NEGOTIATIONS_URL,
-    RENDER_TIMEOUT_MS,
-    ResponsesIndeterminate,
-    _has_next_page,
-    parse_response_card,
-)
+from ..responses import NEGOTIATIONS_URL, RENDER_TIMEOUT_MS, parse_response_card
 from ..selector_groups import negotiations as ns
 from .antibot import raise_for_antibot
 from .steps import _dump_navigation_diagnostics
@@ -76,15 +70,15 @@ logger = logging.getLogger("hhru_bot.apply.verify")
 #: отваливающиеся под DDoS-Guard загрузки списка (goto_hh внутри тоже ретраит).
 NEGOTIATIONS_VERIFY_ATTEMPTS = 2
 NEGOTIATIONS_VERIFY_POLL_INTERVAL_MS = 10_000
-#: Сканируем страницу 0 и, если пагинатор подтверждает продолжение, страницу 1:
+#: Сканируем страницу 0 и, если она принесла новые карточки, страницу 1:
 #: список отсортирован по свежести, только что отправленный отклик был бы на
-#: странице 0 — глубокий скан не нужен. Достижение потолка при подтверждённой
-#: пагинации — indeterminate, а не not_found (см. _scan_negotiations).
+#: странице 0 — глубокий скан не нужен. Конец списка доказывается нулём новых
+#: vacancy_id (дрейф 2026-09-09: пейджер из UI удалён, PR #1066/#1067), а не
+#: пейджером; достижение потолка при непустом продолжении — indeterminate, а
+#: не not_found (см. _scan_negotiations).
 #: Инвариант «свежий отклик на странице 0» проверен живой пробой 2026-08-16
 #: (#210): все 14 тем аккаунта строго по creationTime по убыванию, свежайшая —
-#: на странице 0. Решение по напряжению 1 #210: документировать инвариант,
-#: НЕ переводя неподтверждённый пагинатор на fail-closed (0 случаев
-#: ResponsesIndeterminate в логах на ту дату — эвристика не стреляет).
+#: на странице 0.
 NEGOTIATIONS_VERIFY_MAX_PAGES = 2
 #: Окно стабилизации DOM-списка в fallback-пути: карточки могут догружаться
 #: (отложенный/виртуализированный рендер), и чтение count до стабилизации
@@ -270,17 +264,20 @@ def _scan_negotiations(
                 # Inspect a page rendered before the navigation timeout before
                 # treating it as an ordinary incomplete scan.
                 raise_for_antibot(page)
-                # Пагинация была подтверждена на странице 0 (мы сюда дошли) —
-                # страница 1 не дочитана: целевая вакансия могла быть на ней.
+                # На страницу 1 нас привели НОВЫЕ топики страницы 0 — список
+                # продолжается, и страница 1 не дочитана: целевая вакансия
+                # могла быть на ней.
                 problem = f"goto страницы {page_num} списка не прошёл ({exc})"
                 confirmed_incomplete = True
                 reads.append(PageRead(PageSource.SSR, (), Partial(problem)))
                 break
             else:
                 raise_for_antibot(page)
+        ids_before = set(seen_vacancy_ids)
         found_detail, page_clean, page_problem, page_attribution_incomparable = _scan_single_page(
             page, wanted, resume_id, account_resume_ids, seen_vacancy_ids
         )
+        new_ids = seen_vacancy_ids - ids_before
         attribution_incomparable = attribution_incomparable or page_attribution_incomparable
         if page_attribution_incomparable:
             reads.append(
@@ -303,13 +300,22 @@ def _scan_negotiations(
         if found_detail is not None:
             return found_detail, True, None, False, False
         clean = clean or page_clean
-        if not _has_next_page_confirmed(page, page_num):
+        # Конец списка доказывается данными (дрейф 2026-09-09, PR #1066/#1067):
+        # hh.ru удалил пейджер из UI, и «пейджер не отрисован» больше не
+        # доказывает «страница одна» — иначе отклик на хвосте списка получал
+        # ложный not_found с clean=True (нарушение fail-closed серой зоны
+        # #207). Страница без НОВЫХ vacancy_id (пустая или повтор предыдущей
+        # — сервер, игнорирующий ?page, возвращает те же карточки) — конец.
+        # Для поиска вакансии diff по vacancy_id достаточен: если целевая
+        # вакансия была на этой странице, её id был бы новым.
+        if not new_ids:
             break
         if page_num == NEGOTIATIONS_VERIFY_MAX_PAGES - 1:
-            # Достигли потолка скана, но пагинатор подтверждает продолжение —
-            # целевая вакансия могла быть на непросканированной странице 2+.
+            # Достигли потолка скана, а последняя страница принесла новые
+            # карточки — продолжение списка не опровергнуто, целевая вакансия
+            # могла быть на непросканированной странице 2+.
             # Fail-closed: indeterminate, а не ложный not_found (#207).
-            problem = "достигнут потолок скана при подтверждённой пагинации"
+            problem = "достигнут потолок скана при непустом продолжении списка"
             confirmed_incomplete = True
             reads.append(PageRead(PageSource.SSR, (), Partial(problem)))
             break
@@ -532,18 +538,4 @@ def _dom_list_stable(page: Page, initial_ids: set[str]) -> bool:
         fresh = _read_dom_ids(page)
         return fresh is not None and fresh == initial_ids
     except PlaywrightError:
-        return False
-
-
-def _has_next_page_confirmed(page: Page, page_num: int) -> bool:
-    try:
-        return _has_next_page(page, page_num)
-    except ResponsesIndeterminate:
-        # Неподтверждённый пагинатор — не причина indeterminate-вердикта:
-        # свежий отклик был бы на странице 0. Инвариант сортировки по
-        # свежести проверен живой пробой 2026-08-16 (#210): 14/14 тем строго
-        # по creationTime по убыванию; 0 случаев ResponsesIndeterminate в
-        # логах на ту дату — оставляем as-is (документированное решение по
-        # напряжению 1 #210, не fail-closed).
-        logger.warning("[VERIFY] пагинация не подтверждена — сканирую только прочитанное")
         return False

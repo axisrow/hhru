@@ -184,3 +184,141 @@ def test_fetch_responses_timeout_on_confirmed_later_page_is_indeterminate(monkey
 def test_fetch_responses_rejects_nonpositive_page_limit():
     with pytest.raises(ValueError, match="positive"):
         responses.fetch_responses(object(), max_pages=0)
+
+
+# --- pagerless (#1067): конец списка без пейджера — по нулю новых топиков ---
+
+
+class _PagerlessPage:
+    """Фейк Page для pagerless-обхода: URL -> (карточки, SSR html)."""
+
+    BASE = "https://hh.ru/applicant/negotiations"
+
+    def __init__(self, pages: dict[str, tuple[list, str]]):
+        self._pages = pages
+        self._cards: list = []
+        self._html = ""
+        self.visited: list[str] = []
+
+    def goto(self, url: str, *, wait_until: str = ""):  # noqa: ARG002
+        self.visited.append(url)
+        self._cards, self._html = self._pages[url]
+
+    @property
+    def context(self):
+        class _Ctx:
+            def cookies(self):
+                return [{"name": "hhtoken", "value": "x"}]
+
+        return _Ctx()
+
+    def locator(self, selector: str):
+        if selector == LOGIN_FORM:
+            return _Locator([])
+        assert selector == ns.NEGOTIATION_ITEM
+        return _PagerlessCardsLocator(self._cards)
+
+    def content(self) -> str:
+        return self._html
+
+
+class _PagerlessCardsLocator:
+    """Карточки уже «отрендерены» фейком; wait_for ничего не ждёт."""
+
+    def __init__(self, cards: list):
+        self.cards = cards
+
+    def count(self):
+        return len(self.cards)
+
+    @property
+    def first(self):
+        return self
+
+    def wait_for(self, *, state: str, timeout: int):  # noqa: ARG002
+        return None
+
+    def nth(self, index: int):
+        return self.cards[index]
+
+
+def _ssr(topics: list[tuple[int, int, str]]) -> str:
+    entries = ",".join(f'{{"id":{t},"chatId":{c},"vacancyId":"{v}"}}' for t, c, v in topics)
+    return (
+        '<template id="HH-Lux-InitialState">'
+        f'{{"applicantNegotiations":{{"topicList":[{entries}]}}}}'
+        "</template>"
+    )
+
+
+def _run_pagerless(monkeypatch, page):
+    monkeypatch.setattr(responses, "goto_hh", lambda p, url: p.goto(url))
+    monkeypatch.setattr(responses, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(
+        responses,
+        "parse_response_card",
+        lambda card: responses.ResponseItem(vacancy_id=card, status=responses.ResponseStatus.READ),
+    )
+    return page
+
+
+def test_pagerless_reads_lazy_tail_beyond_missing_pager(monkeypatch):
+    """Дрейф 2026-09-09 (#1067): пейджера нет, но хвост за первой двадцаткой жив.
+
+    Страница 1 приносит НОВЫЕ топики — обход обязан их собрать: раньше
+    «пейджер не отрисован» читался как «страница одна» и clear-negotiations
+    видел только первые 20 тем.
+    """
+    url0, url1 = _PagerlessPage.BASE, f"{_PagerlessPage.BASE}?page=1"
+    page = _PagerlessPage(
+        {
+            url0: (["1", "2"], _ssr([(1, 11, "1"), (2, 22, "2")])),
+            url1: (["3", "4"], _ssr([(3, 33, "3"), (4, 44, "4")])),
+            f"{_PagerlessPage.BASE}?page=2": ([], _ssr([])),
+        }
+    )
+    _run_pagerless(monkeypatch, page)
+
+    items = responses.fetch_responses(page, max_pages=3, pagerless=True)
+
+    assert sorted(i.vacancy_id for i in items) == ["1", "2", "3", "4"]
+    assert page.visited == [url0, url1, f"{_PagerlessPage.BASE}?page=2"]
+
+
+def test_pagerless_stops_when_server_ignores_page_param(monkeypatch):
+    """Сервер, игнорирующий ?page, возвращает те же темы: ноль новых -> стоп
+    без дублей (карточки не задваиваются)."""
+    url0 = _PagerlessPage.BASE
+    same = (["1"], _ssr([(1, 11, "1")]))
+    page = _PagerlessPage({url0: same, f"{url0}?page=1": same, f"{url0}?page=2": same})
+    _run_pagerless(monkeypatch, page)
+
+    items = responses.fetch_responses(page, max_pages=3, pagerless=True)
+
+    # Карточки повторной страницы попадают в results (дедуп делает upsert в
+    # истории по UNIQUE) — но обход обязан остановиться, не дойдя до page=2.
+    assert [i.vacancy_id for i in items] == ["1", "1"]
+    assert page.visited == [url0, f"{url0}?page=1"]
+
+
+def test_pagerless_cap_with_nonempty_page_is_indeterminate(monkeypatch):
+    """Потолок --max-pages при непустой последней странице: полнота списка не
+    подтверждена — ResponsesIndeterminate (clear-negotiations превращает его
+    в отказ ДО отзыва, инвариант PR #196)."""
+    url0 = _PagerlessPage.BASE
+    page = _PagerlessPage({url0: (["1"], _ssr([(1, 11, "1")]))})
+    _run_pagerless(monkeypatch, page)
+
+    with pytest.raises(responses.ResponsesIndeterminate, match="--max-pages"):
+        responses.fetch_responses(page, max_pages=1, pagerless=True)
+
+
+def test_pagerless_unreadable_ssr_is_indeterminate(monkeypatch):
+    """Ноль новых — единственное доказательство конца; нечитаемый SSR не должен
+    превращаться в «дочитано» (fail-closed)."""
+    url0 = _PagerlessPage.BASE
+    page = _PagerlessPage({url0: (["1"], "<html>no ssr</html>")})
+    _run_pagerless(monkeypatch, page)
+
+    with pytest.raises(responses.ResponsesIndeterminate, match="SSR topicList"):
+        responses.fetch_responses(page, max_pages=2, pagerless=True)

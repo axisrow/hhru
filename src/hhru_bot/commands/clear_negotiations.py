@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from typing import NoReturn
 from urllib.parse import quote
 
 from playwright.sync_api import Error as PlaywrightError
@@ -16,7 +17,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from ..browser import HH_BASE_URL, goto_hh
 from ..negotiations_probe import topic_refs
-from ..responses import _has_next_page, fetch_responses
+from ..responses import ResponsesIndeterminate, fetch_responses
 from ..selector_groups.negotiations import (
     NEGOTIATION_ITEM,
     NEGOTIATION_WITHDRAW,
@@ -54,7 +55,7 @@ def register(subparsers) -> None:
     p.set_defaults(func=run)
 
 
-def _fail(message: str) -> None:
+def _fail(message: str) -> NoReturn:
     print(f"[FAIL] {message}", file=sys.stderr)
     raise SystemExit(1)
 
@@ -324,7 +325,22 @@ def _run_account_wide(args, config, history, throttle, progress: ApplyProgress) 
         config.storage_state_file, headless=args.headless, user_agent=config.user_agent
     ) as context:
         page = context.new_page()
-        cards = fetch_responses(page, max_pages=args.max_pages)
+        # Полнота списка для необратимого отзыва подтверждается нулём новых
+        # топиков (pagerless-режим fetch_responses), а не UI-пейджером:
+        # hh.ru удалил пейджер из /applicant/negotiations (дрейф 2026-09-09,
+        # PR #1066), и прежний guard на _has_next_page молча перестал
+        # срабатывать — clear отозвал бы первые 20 тем и отчитался успехом
+        # при невидимом остатке. ResponsesIndeterminate = список не дочитан
+        # до конца (потолок --max-pages при непустом продолжении, нечитаемый
+        # SSR) — отказ до любого клика, инвариант PR #196 сохранён (#1067).
+        try:
+            cards = fetch_responses(page, max_pages=args.max_pages, pagerless=True)
+        except ResponsesIndeterminate as exc:
+            _fail(
+                f"Список откликов не дочитан до конца: {exc}. Увеличьте "
+                "--max-pages — иначе часть откликов не будет отозвана. "
+                "Ничего не отозвано."
+            )
 
         # An empty first-page result from fetch_responses() is NOT a confirmed
         # empty inbox (Codex review round 2, PR #196): responses.py's own
@@ -343,19 +359,11 @@ def _run_account_wide(args, config, history, throttle, progress: ApplyProgress) 
                 file=sys.stderr,
             )
 
-        # Fail-closed on truncated pagination (Codex review, PR #196): fetch_responses
-        # silently stops after --max-pages pages even if hh.ru has more. Withdrawing
-        # only the truncated prefix and reporting success on a destructive,
-        # irreversible operation would leave an unwithdrawn remainder invisible to
-        # the operator. _has_next_page() is the same confirmed-pagination check
-        # fetch_responses itself uses internally; re-run it against the last loaded
-        # page (page is left there by fetch_responses) before withdrawing anything.
-        if cards and _has_next_page(page, args.max_pages - 1):
-            _fail(
-                f"Достигнут лимит --max-pages={args.max_pages}, но на hh.ru есть ещё "
-                "страницы откликов. Увеличьте --max-pages — иначе часть откликов "
-                "не будет отозвана. Ничего не отозвано."
-            )
+        # Fail-closed на усечённой пагинации (Codex review, PR #196; обновлено
+        # под безпейджерный hh.ru в #1067): полнота списка теперь доказывается
+        # внутри pagerless-обхода fetch_responses (ноль новых топиков = конец),
+        # и его ResponsesIndeterminate обработан выше — отдельная перепроверка
+        # пейджером невозможна: пейджер из UI удалён.
 
         # Cards without a resolved topic (no chat, or ambiguous SSR match — see
         # ResponseItem.topic_ambiguous) are legitimately skipped from withdrawal,
