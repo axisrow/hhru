@@ -1,16 +1,19 @@
-"""Ответ роботу-анкете кнопкой быстрых ответов (Да/Нет) в чате hh.ru.
+"""Ответ роботу-анкете в чате hh.ru: кнопкой быстрых ответов или текстом.
 
 Очередь робот-анкет ведёт reply-employers (skip → robot_questionnaires);
 до этой команды очередь была тупиковой — append-only без резолва. robot-reply
-нажимает кнопку под вопросом бота и резолвит строку очереди колонкой
-resolved_at (не DELETE: факт обнаружения хранит аудит).
+нажимает кнопку под вопросом бота (--answer «Да») или отправляет текстовое
+сообщение (--text) для анкет без кнопок (живой факт 2026-09-08: WebBee
+спрашивает зарплату в свободной форме — кнопок нет, есть только text-input)
+и резолвит строку очереди колонкой resolved_at (не DELETE: факт обнаружения
+хранит аудит).
 
 WRITE-hh-ru: боевой клик требует --force или TTY-подтверждения; dry-run
-проходит весь путь ДО begin_action (goto → чтение чата → поиск кнопок →
-план) и не кликает. Uncertain-механика #176: pre-click begin_action, клик →
+проходит весь путь ДО begin_action (goto → чтение чата → план) и ничего
+не отправляет. Uncertain-механика #176: pre-click begin_action, действие →
 подтверждение wait_reply_confirmation (позитивный сигнал — новое сообщение
-нашего авторства), таймаут/исключение после клика = uncertain, резолв
-очереди только по подтверждённому success.
+нашего авторства), таймаут/исключение после начала действия = uncertain,
+резолв очереди только по подтверждённому success.
 """
 
 from __future__ import annotations
@@ -27,18 +30,27 @@ _DEFAULT_HYDRATION_WAIT_MS = 6000
 def register(subparsers) -> None:
     parser = subparsers.add_parser(
         "robot-reply",
-        help="Ответить роботу-анкете кнопкой быстрых ответов (Да/Нет)",
+        help="Ответить роботу-анкете: кнопкой быстрых ответов (Да/Нет) или текстом",
         description=(
-            "Нажимает кнопку быстрых ответов под вопросом робота в чате "
-            "(очередь: robot-queue). WRITE-hh-ru: боевой клик требует --force "
-            "или подтверждения; dry-run показывает план без клика."
+            "Нажимает кнопку быстрых ответов под вопросом робота в чате либо "
+            "(с --text) отправляет текстовое сообщение — для анкет без кнопок. "
+            "Очередь: robot-queue. WRITE-hh-ru: боевой запуск требует --force "
+            "или подтверждения; dry-run показывает план без отправки."
         ),
     )
     parser.add_argument("--topic", required=True, help="ID topic из robot-queue")
     parser.add_argument(
         "--answer",
         required=True,
-        help="Точный текст кнопки (например «Да» или «Нет»)",
+        help="Точный текст кнопки (например «Да» или «Нет») либо текст сообщения (с --text)",
+    )
+    parser.add_argument(
+        "--text",
+        action="store_true",
+        help=(
+            "Текстовый режим: --answer отправляется сообщением в чат, кнопки "
+            "не ищутся (анкеты со свободной формой ответа)"
+        ),
     )
     parser.add_argument("--dry-run", action="store_true", help="Показать план без клика")
     parser.add_argument("--force", action="store_true", help="Подтвердить боевой клик")
@@ -65,16 +77,38 @@ def register(subparsers) -> None:
     parser.set_defaults(func=run)
 
 
+def _finalize_delivery(
+    throttle, page, topic: str, pre_click_count: int, ok_message: str
+) -> tuple[str, str | None]:
+    """Общая классификация доставки после действия (клик ИЛИ текст):
+    позитивный сигнал wait_reply_confirmation → success, иначе uncertain
+    (fail-closed, #176). Одна точка на оба режима — классификация не
+    разъедется между кнопочным и текстовым путём."""
+    from ..negotiations_chat import wait_reply_confirmation
+
+    if wait_reply_confirmation(page, min_count=pre_click_count + 1):
+        status: str = "success"
+        reason: str | None = None
+        print(f"[OK] {topic} — {ok_message}")
+    else:
+        status = "uncertain"
+        reason = "отправка не подтверждена: нет сигнала доставки"
+        print(f"[FAIL] {topic} — {reason}")
+    throttle.wait(f"после ответа роботу в чате {topic}")
+    return status, reason
+
+
 def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> bool:
     from ..browser import launch_context
     from ..negotiations_chat import (
         NoQuickReply,
+        NoReplyForm,
         click_quick_reply,
         count_visible_messages,
         find_quick_replies,
         needs_reply,
         read_chat,
-        wait_reply_confirmation,
+        send_reply_current,
     )
     from ..negotiations_probe import paginated_topic_refs
     from ..responses import NotAuthenticated, ResponsesIndeterminate
@@ -131,15 +165,23 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
             )
         assert chat is not None
         question = chat.text
-        buttons = find_quick_replies(page, timeout_ms=args.wait_ms)
-        if args.answer not in buttons:
-            available = ", ".join(buttons) if buttons else "нет кнопок (уже отвечено?)"
-            print(f"[FAIL] кнопки «{args.answer}» нет. Доступные кнопки: {available}")
-            return True
         print(f"[INFO] Вопрос робота: {question}")
-        print(f"[INFO] Кнопки: {', '.join(buttons)}")
+        if args.text:
+            # Текстовая анкета (кнопок нет, вопрос ждёт свободной формы):
+            # валидация «кнопка существует» неприменима, текст уходит как есть.
+            print("[INFO] Текстовый режим: ответ уйдёт сообщением, кнопки не ищутся")
+        else:
+            buttons = find_quick_replies(page, timeout_ms=args.wait_ms)
+            if args.answer not in buttons:
+                available = ", ".join(buttons) if buttons else "нет кнопок (уже отвечено?)"
+                print(f"[FAIL] кнопки «{args.answer}» нет. Доступные кнопки: {available}")
+                return True
+            print(f"[INFO] Кнопки: {', '.join(buttons)}")
         if args.dry_run:
-            print(f"[DRY-RUN] Нажал бы кнопку «{args.answer}» — клика не было")
+            if args.text:
+                print(f"[DRY-RUN] Отправил бы текст: «{args.answer}» — отправки не было")
+            else:
+                print(f"[DRY-RUN] Нажал бы кнопку «{args.answer}» — клика не было")
             progress.skipped_count += 1
             return False
 
@@ -151,35 +193,59 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
         progress.begin_attempt()
         inbound_marker = chat.inbound_marker or ""
         pre_click_count = count_visible_messages(page)
-        # Pre-click durable-барьер (#176): строка actions ДО клика, чтобы
+        # Pre-click durable-барьер (#176): строка actions ДО действия, чтобы
         # SIGINT/SIGTERM между кликом и подтверждением не терял попытку.
         action_id = history.begin_action("", vacancy_id, "robot_reply", run_id=progress.run_id)
         status: str
         reason: str | None
-        try:
-            click_quick_reply(page, args.answer)
-        except NoQuickReply as exc:
-            # Кнопка не резолвится однозначно ДО клика — чистый pre-action
-            # early-exit (#163): на hh.ru следа нет, throttle.wait не нужен.
-            status = "failed"
-            reason = str(exc)
-            print(f"[FAIL] {topic} — {reason}")
-        except Exception as exc:  # noqa: BLE001 - классифицируем по клик-границе
-            # Исключение уже ПОСЛЕ начала клика — fail-closed uncertain (#176).
-            status = "uncertain"
-            reason = f"клик выполнен, исход неопределён: {exc}"
-            print(f"[FAIL] {topic} — {reason}")
-            throttle.wait(f"после ответа роботу в чате {topic}")
-        else:
-            if wait_reply_confirmation(page, min_count=pre_click_count + 1):
-                status = "success"
-                reason = None
-                print(f"[OK] {topic} — кнопка «{args.answer}» нажата, доставка подтверждена")
-            else:
-                status = "uncertain"
-                reason = "отправка не подтверждена: нет сигнала доставки"
+        if args.text:
+            try:
+                send_reply_current(page, args.answer)
+            except NoReplyForm as exc:
+                # Форма не найдена ДО какого-либо взаимодействия с DOM — чистый
+                # pre-action early-exit (#163): на hh.ru следа нет, пауза не
+                # от чего не защищает.
+                status = "failed"
+                reason = f"отправка не выполнена: {exc}"
                 print(f"[FAIL] {topic} — {reason}")
-            throttle.wait(f"после ответа роботу в чате {topic}")
+            except Exception as exc:  # noqa: BLE001 - классифицируем по клик-границе
+                # Исключение уже ПОСЛЕ начала отправки — fail-closed uncertain
+                # (#176): сообщение могло уйти.
+                status = "uncertain"
+                reason = f"отправка выполнена, исход неопределён: {exc}"
+                print(f"[FAIL] {topic} — {reason}")
+                throttle.wait(f"после ответа роботу в чате {topic}")
+            else:
+                status, reason = _finalize_delivery(
+                    throttle,
+                    page,
+                    topic,
+                    pre_click_count,
+                    "текст доставлен, последнее сообщение наше",
+                )
+        else:
+            try:
+                click_quick_reply(page, args.answer)
+            except NoQuickReply as exc:
+                # Кнопка не резолвится однозначно ДО клика — чистый pre-action
+                # early-exit (#163): на hh.ru следа нет, throttle.wait не нужен.
+                status = "failed"
+                reason = str(exc)
+                print(f"[FAIL] {topic} — {reason}")
+            except Exception as exc:  # noqa: BLE001 - классифицируем по клик-границе
+                # Исключение уже ПОСЛЕ начала клика — fail-closed uncertain (#176).
+                status = "uncertain"
+                reason = f"клик выполнен, исход неопределён: {exc}"
+                print(f"[FAIL] {topic} — {reason}")
+                throttle.wait(f"после ответа роботу в чате {topic}")
+            else:
+                status, reason = _finalize_delivery(
+                    throttle,
+                    page,
+                    topic,
+                    pre_click_count,
+                    f"кнопка «{args.answer}» нажата, доставка подтверждена",
+                )
         history.finalize_reply_action(
             action_id,
             topic,
@@ -216,7 +282,7 @@ def _reconcile(progress: ApplyProgress, history, run_id: str) -> None:
 
 
 def run(args: argparse.Namespace):
-    """Один клик по кнопке робота под durable command-run ledger."""
+    """Один ответ роботу (клик или текст) под durable command-run ledger."""
     from ..config import load_config_or_exit
     from ..history import History
 
@@ -229,11 +295,16 @@ def run(args: argparse.Namespace):
         print("[FAIL] --wait-ms должен быть положительным числом", file=sys.stderr)
         return True
     if not args.dry_run and not confirm_write(
-        args.force, prompt=f"Нажать кнопку «{args.answer}» в чате робота ({args.topic})?"
+        args.force,
+        prompt=(
+            f"Отправить текст «{args.answer}» роботу в чате ({args.topic})?"
+            if args.text
+            else f"Нажать кнопку «{args.answer}» в чате робота ({args.topic})?"
+        ),
     ):
         print(
             "[FAIL] Боевой режим требует --force или интерактивного подтверждения. "
-            "Кнопка не нажата."
+            "Ничего не отправлено."
         )
         return True
     config = load_config_or_exit(args.config)

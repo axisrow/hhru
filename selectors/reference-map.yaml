@@ -1135,17 +1135,14 @@ selectors:
     verified_flow: authenticated_negotiations_chat_read_only (chatik.hh.ru/chat/5574052518)
     verified_by: human
   negotiations.CHAT_MESSAGE_INPUT:
-    value: textarea[data-qa='chatik-chat-message-input']
+    value: '[data-qa=''chatik-message-input''] textarea[data-qa=''text-input'']'
     criticality: write
-    declared_at: src/hhru_bot/selector_groups/negotiations.py:80
-    decision: documented_live
+    declared_at: src/hhru_bot/selector_groups/negotiations.py:104
+    decision: live_dom
     sources: {}
-    live_matches: []
-    evidence:
-      source: src/hhru_bot/selector_groups/negotiations.py:80
-      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
-      references:
-      - yamakayama
+    live_matches:
+    - chatik-message-input
+    - text-input
     active: true
     bindings:
       yamakayama:
@@ -1153,12 +1150,17 @@ selectors:
         line: 1374
         key: app/parsers/hh_playwright.py::module.HHPlaywright.send_thanks_via_clicks.input_selectors#0::0
         value: '[data-qa="chatik-new-message-text"]'
-    coverage_status: reference_binding
-    origin: reference_single
+    coverage_status: intentionally_local
+    origin: browser_dom
     verification: browser_observed
-    last_verified_at: 2026-08-25
-    verified_flow: selector contract refresh and negotiations flow
-    verified_by: browser
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:104
+      note: 'Live-census 2026-09-08 (чат WebBee, hh.ru/chat/5611069125, --wait-ms 6000): textarea data-qa="text-input" (класс
+        magritte-text-input) вложен в div data-qa="chatik-message-input" (magritte-chat-input). Прежний плоский chatik-chat-message-input
+        на живом DOM не совпадал — send_reply_current падал NoReplyForm до ввода.'
+    last_verified_at: '2026-09-08'
+    verified_flow: authenticated_negotiations_chat_read_only (census --wait-ms 6000, hh.ru/chat/5611069125)
+    verified_by: human
   negotiations.CHAT_MESSAGE_ROOT:
     value: '[data-qa^=''chatik-chat-message-'']'
     active: true
@@ -1184,17 +1186,13 @@ selectors:
     verified_by: human
     status: intentionally local
   negotiations.CHAT_MESSAGE_SEND:
-    value: button[data-qa='chatik-chat-message-send']
+    value: button[data-qa='chatik-do-send-message']
     criticality: write
-    declared_at: src/hhru_bot/selector_groups/negotiations.py:81
-    decision: documented_live
+    declared_at: src/hhru_bot/selector_groups/negotiations.py:105
+    decision: live_dom
     sources: {}
-    live_matches: []
-    evidence:
-      source: src/hhru_bot/selector_groups/negotiations.py:81
-      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
-      references:
-      - yamakayama
+    live_matches:
+    - chatik-do-send-message
     active: true
     bindings:
       yamakayama:
@@ -1202,12 +1200,18 @@ selectors:
         line: 1409
         key: app/parsers/hh_playwright.py::module.HHPlaywright.send_thanks_via_clicks.send_selectors#0::0
         value: '[data-qa="chatik-do-send-message"]'
-    coverage_status: reference_binding
-    origin: reference_single
+    coverage_status: intentionally_local
+    origin: browser_dom
     verification: browser_observed
-    last_verified_at: 2026-08-25
-    verified_flow: selector contract refresh and negotiations flow
-    verified_by: browser
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:105
+      note: 'Live-census 2026-09-08 (чат WebBee, census --fill-text, hh.ru/chat/5611069125): button data-qa="chatik-do-send-message"
+        (aria-label «Enter — отправить сообщение, Shift+Enter — новая строка») РЕНДЕРИТСЯ ТОЛЬКО при непустом поле — до ввода
+        текста кнопки в DOM нет. Значение совпало с референсом yamakayama: устарел наш прежний chatik-chat-message-send, не
+        референс.'
+    last_verified_at: '2026-09-08'
+    verified_flow: authenticated_negotiations_chat_read_only (census --fill-text, hh.ru/chat/5611069125)
+    verified_by: human
   negotiations.CHAT_MESSAGE_TEXT:
     value: '[data-qa^="chatik-chat-message-"][data-qa$="-text"]:not([data-qa="chatik-chat-message-applicant-action-text"])'
     criticality: write

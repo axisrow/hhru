@@ -33,6 +33,15 @@ def register(subparsers: Any) -> None:
         default=0,
         help="Подождать N мс после загрузки перед снимком (гидратация React, #858)",
     )
+    parser.add_argument(
+        "--fill-text",
+        help=(
+            "ЛОКАЛЬНАЯ диагностика композера чата: ввести текст в поле ответа "
+            "и снять census ПОСЛЕ него (кнопка отправки рендерится только при "
+            "непустом вводе). Ничего не отправляется: кликов нет, страница "
+            "закрывается вместе с черновиком"
+        ),
+    )
     parser.set_defaults(func=run)
 
 
@@ -47,6 +56,19 @@ def run(args: argparse.Namespace) -> bool:
         goto_hh(page, args.url)
         if getattr(args, "wait_ms", 0):
             page.wait_for_timeout(args.wait_ms)
+        if getattr(args, "fill_text", None):
+            from ..selector_groups.negotiations import CHAT_MESSAGE_INPUT
+
+            input_loc = page.locator(CHAT_MESSAGE_INPUT)
+            if input_loc.count() != 1:
+                print(
+                    f"[FAIL] --fill-text: поле ответа не найдено однозначно ({CHAT_MESSAGE_INPUT})"
+                )
+                return True
+            input_loc.fill(args.fill_text)
+            # Рендер кнопки отправки реактивен: даём composers-фреймворку
+            # отрисовать её после ввода (паттерн «commit не значит отрисовано»).
+            page.wait_for_timeout(1500)
         rows = rendered_controls_census(page)
 
     visible_only = [r for r in rows if r.get("visible")]
