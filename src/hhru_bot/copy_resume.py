@@ -66,6 +66,7 @@ from .selector_groups.resume_list import (
     RESUME_LIST_CARD_TITLE,
     RESUME_PROFILE_READY,
 )
+from .selector_groups.resume_page import RESUME_CREATION_SELECT_JOB
 
 logger = logging.getLogger("hhru_bot.copy_resume")
 
@@ -413,6 +414,17 @@ def list_resume_cards(
         try:
             cards_locator.first.wait_for(timeout=COPY_TIMEOUT_MS)
         except PlaywrightTimeoutError:
+            # #1039: аккаунт без резюме — hh.ru рендерит на /applicant/resumes
+            # НЕ список, а стартовый экран визарда создания (census 2026-09-08:
+            # resume-profile-screen_professional_role, карточки выбора
+            # профессии). Состояние страницы тогда ПОДТВЕРЖДЕНО — это честное
+            # «резюме нет», а не дрейф селектора. Селектор карточки выбора
+            # профессии подтверждён живым DOM 2026-08-18 (#304) и совпадает с
+            # census пустого аккаунта. Нераспознанная страница — прежний
+            # fail-closed ResumeListIndeterminate.
+            if page.locator(RESUME_CREATION_SELECT_JOB).count() > 0:
+                logger.info("Стартовый экран визарда создания вместо списка — резюме нет")
+                return []
             raise ResumeListIndeterminate(
                 "карточки резюме не появились за отведённое время — состояние "
                 "/applicant/resumes не подтверждено (timeout, анти-бот/"

@@ -22,6 +22,16 @@ from hhru_bot.selector_groups.resume_list import (
     RESUME_LIST_CARD,
     RESUME_LIST_CARD_TITLE,
 )
+from hhru_bot.selector_groups.resume_page import RESUME_CREATION_SELECT_JOB
+
+
+class _StaticCount:
+    def __init__(self, n: int):
+        self._n = n
+
+    def count(self):
+        return self._n
+
 
 pytestmark = pytest.mark.integration
 
@@ -119,14 +129,22 @@ class StubFirstCard:
 
 
 class StubPage:
-    def __init__(self, cards: list[StubCard], delayed_cards: list[StubCard] | None = None):
+    def __init__(
+        self,
+        cards: list[StubCard],
+        delayed_cards: list[StubCard] | None = None,
+        wizard_start: bool = False,
+    ):
         self._cards = list(cards)
         self._delayed_cards = delayed_cards
+        self._wizard_start = wizard_start
         self.gotos: list[str] = []
 
     def locator(self, selector):
         if selector == RESUME_LIST_CARD:
             return StubCardsLocator(self._cards, self._delayed_cards)
+        if selector == RESUME_CREATION_SELECT_JOB:
+            return _StaticCount(1 if self._wizard_start else 0)
         raise AssertionError(f"неожиданный page.locator: {selector}")
 
     def content(self):
@@ -235,6 +253,16 @@ def test_timeout_raises_indeterminate_not_empty_list(monkeypatch):
 
     with pytest.raises(cr.ResumeListIndeterminate):
         cr.list_resume_cards(page)
+
+
+def test_wizard_start_screen_on_timeout_is_honest_empty_account(monkeypatch):
+    """#1039: аккаунт без резюме — hh.ru рендерит стартовый экран визарда
+    создания вместо списка (census 2026-09-08). Состояние ПОДТВЕРЖДЕНО,
+    поэтому честный пустой список, а не ResumeListIndeterminate."""
+    page = StubPage([], wizard_start=True)
+    _patch_goto(monkeypatch, page)
+
+    assert cr.list_resume_cards(page) == []
 
 
 def test_navigate_false_skips_goto(monkeypatch):
