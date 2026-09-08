@@ -1172,7 +1172,11 @@ def run_negotiations(args: argparse.Namespace) -> bool:
                         # own/employer/system — тот же резолвер, что у
                         # needs_reply (#1044): префиксы CSS-модульных маркеров.
                         {"me": "own", "employer": "employer"}.get(author, "system"),
-                        loc.inner_text().replace("\n", " ")[:160],
+                        # Полный текст без обрезки: probe — единственный
+                        # read-only канал чтения сообщений чата; обрезка
+                        # в 160 символов прятала хвост приглашений
+                        # (живой кейс 2026-09-08, Найди.Про).
+                        loc.inner_text().replace("\n", " "),
                     ]
                 )
             print(_ascii_table(["message", "id", "author_marker", "text"], message_rows))
