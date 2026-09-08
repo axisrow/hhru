@@ -1391,3 +1391,19 @@ def apply_position(
             "true" if plan.business_trips else "false",
             {"true": "Могу", "false": "Не могу"},
         )
+
+
+def click_save_and_wait(page: Page) -> None:
+    """Click the editor SAVE button and wait for the form to close.
+
+    Общий механизм сохранения позиции (#1049): pure-editor путь и
+    wizard-minimum фолбэк (#890) ``resume-position``, а также боевой импорт
+    (``import-resume``) заканчивают ``apply_position`` на той же форме
+    ``/resume/edit/{id}/position`` и обязаны подтверждать сохранение одинаково.
+    Any failure here is a grey-zone post-click failure — the caller wraps it
+    in ``_SaveConfirmationUncertain`` once the mutating click has landed.
+    """
+    if page.locator(SAVE).count() != 1:
+        raise RuntimeError("кнопка сохранения формы не подтверждена")
+    page.locator(SAVE).click()
+    page.locator("[data-qa='resume-edit-position-form']").wait_for(state="hidden", timeout=10_000)
