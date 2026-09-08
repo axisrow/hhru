@@ -161,10 +161,11 @@ _ROBOT_AUTHOR_RE = re.compile(
 )
 _SENTENCE_END_RE = re.compile(r"[.!?]+[\"»”’'’)]*(?=\s|$)", re.U)
 _BUBBLE_TIME_RE = re.compile(r"^(\d{1,2}):(\d{2})$")
-# Живые факты 2026-09-08: шаблонные боты отвечают за 0/0/14 минут (Сбер
-# ГигаРекрутер ×2, Яндекс Крауд), человек-образный ответ — 2ч14м (Найди.Про,
-# «Миллер Алиса»). Живой рекрутер, ответивший быстрее порога, теряет ровно
-# одно: попадает в ручную очередь robot-queue до отметки robot-mark --human.
+# Живые факты 2026-09-08: шаблонные боты отвечают за 0/0/14 минут
+# (<работодатель-1> «ГигаРекрутер» ×2, <работодатель-2>), человек-образный
+# ответ — 2ч14м (<работодатель-3>, <рекрутер-1>). Живой рекрутер, ответивший
+# быстрее порога, теряет ровно одно: попадает в ручную очередь robot-queue
+# до отметки robot-mark --human.
 _ROBOT_FAST_REPLY_MINUTES = 15
 
 
@@ -190,6 +191,16 @@ def _fast_reply_is_robot(messages: Sequence[ChatMessage]) -> bool:
     Пузырь несёт только HH:MM (суточное окно): непарсящееся время или
     отрицательная дельта (переход через полночь) — пара молча пропускается
     (fail-open: классификация остаётся за остальными сигналами детектора).
+    Обратная сторона того же окна — суточная коллизия: наше сообщение вчера
+    в 12:24 и ответ работодателя сегодня в 12:24 дают дельту 0 → ложный
+    «робот» для человека. Живой факт 2026-09-08 (probe --negotiations,
+    чат от 25.08): пузырь старого сообщения рисует чистый HH:MM (12:04),
+    дата «25 августа» живёт отдельным узлом в корне сообщения и
+    chat-buble-display-time её не несёт — коллизия реальна, не гипотеза.
+    Последствие мягкое (ручная очередь + выход `robot-mark --human`,
+    reason=fast_reply в robot-queue показывает такие строки явно); если
+    очередь начнёт расти на давно открытых чатах — сузить выборку до
+    последней пары me→employer или читать узел даты в корне.
     """
     threshold = _ROBOT_FAST_REPLY_MINUTES
     for ours, theirs in zip(messages, messages[1:], strict=False):
@@ -203,19 +214,21 @@ def _fast_reply_is_robot(messages: Sequence[ChatMessage]) -> bool:
     return False
 
 
-def is_robot_questionnaire(messages: Sequence[ChatMessage]) -> bool:
-    """Robot detection: bot author label, 2+ bot questions, or a too-fast reply.
+def robot_detect_signal(messages: Sequence[ChatMessage]) -> str | None:
+    """Какой сигнал детекта сработал: 'bot_label' | 'fast_reply' |
+    'robot_questions' | None.
 
-    Все сигналы — догадки эвристики; вердикт пользователя
-    (``robot_verdicts``) в гейтах выше и эту функцию перекрывает.
+    Причина пишется в reason robot-очереди: скорость (fast_reply) — самый
+    ложноположительный сигнал, robot-queue обязан показывать, какие строки —
+    кандидаты на ревью человеком (robot-mark --human).
     """
     if any(
         message.author_label and _ROBOT_AUTHOR_RE.search(message.author_label)
         for message in messages
     ):
-        return True
+        return "bot_label"
     if _fast_reply_is_robot(messages):
-        return True
+        return "fast_reply"
     run = 0
     for message in messages:
         if message.author != "employer":
@@ -225,10 +238,20 @@ def is_robot_questionnaire(messages: Sequence[ChatMessage]) -> bool:
         if question_count:
             run += question_count
             if run >= 2:
-                return True
+                return "robot_questions"
         else:
             run = 0
-    return False
+    return None
+
+
+def is_robot_questionnaire(messages: Sequence[ChatMessage]) -> bool:
+    """Robot detection: bot author label, 2+ bot questions, or a too-fast reply.
+
+    Все сигналы — догадки эвристики; вердикт пользователя
+    (``robot_verdicts``) в гейтах выше и эту функцию перекрывает.
+    Какой именно сигнал сработал — ``robot_detect_signal``.
+    """
+    return robot_detect_signal(messages) is not None
 
 
 def needs_reply(chat: ChatMessage | None) -> ReplyDecision:

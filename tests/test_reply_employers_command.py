@@ -923,6 +923,11 @@ def test_no_verdict_keeps_heuristic_gates(tmp_path, monkeypatch, capsys):
     assert "robot-questionnaire" in out
     assert result is False
     assert history.is_robot_questionnaire("tp1") is True
+    # reason = сработавший сигнал (ревью #1059: скорость — самый
+    # ложноположительный сигнал, очередь обязана показывать его отдельно).
+    row = history.robot_questionnaire_row("tp1")
+    assert row is not None
+    assert row["reason"] == "fast_reply"
 
 
 # --- #710: --follow-up --after-days N ---------------------------------------

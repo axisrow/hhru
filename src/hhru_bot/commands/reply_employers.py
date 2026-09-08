@@ -69,10 +69,10 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
     from ..negotiations_chat import (
         NoReplyForm,
         count_visible_messages,
-        is_robot_questionnaire,
         needs_follow_up,
         needs_reply,
         read_chat,
+        robot_detect_signal,
         send_reply_current,
         wait_reply_confirmation,
     )
@@ -182,12 +182,13 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                     progress.skipped_count += 1
                     continue
                 live_resume_id = live_refs[0].resume_id
-            chat = read_chat(page, topic, refs)
             # Вердикт пользователя выше эвристик (robot-mark): автоматический
             # детект доверчив — спроектированный текст обходит и лейбл, и
-            # вопросы, и скорость. 'robot' — скип даже если эвристики молчат;
-            # 'human' — гейты пропускаются целиком, иначе live-эвристика
-            # заново клала бы чат в очередь каждый sweep.
+            # вопросы, и скорость. 'robot' — скип даже если эвристики молчат
+            # (гейт до read_chat: решение известно до браузерного чтения,
+            # форма раннего выхода #761 для remindable_topics); 'human' — гейты
+            # пропускаются целиком, иначе live-эвристика заново клала бы чат в
+            # очередь каждый sweep.
             verdict = history.robot_verdict(topic)
             if verdict == "robot":
                 history.mark_robot_questionnaire(
@@ -196,14 +197,19 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                 print(f"[skip] {label} — robot (вердикт пользователя)")
                 progress.skipped_count += 1
                 continue
+            chat = read_chat(page, topic, refs)
             if verdict != "human":
-                if chat is not None and is_robot_questionnaire(chat.conversation or (chat,)):
+                signal = (
+                    robot_detect_signal(chat.conversation or (chat,)) if chat is not None else None
+                )
+                if signal is not None:
+                    # reason = какой сигнал сработал: скорость (fast_reply) —
+                    # самый ложноположительный сигнал, robot-queue показывает
+                    # эти строки кандидатами на ревью человеком.
                     history.mark_robot_questionnaire(
-                        topic,
-                        vacancy_id=str(candidate["vacancy_id"]),
-                        reason="robot_questionnaire",
+                        topic, vacancy_id=str(candidate["vacancy_id"]), reason=signal
                     )
-                    print(f"[skip] {label} — robot-questionnaire (ручная очередь)")
+                    print(f"[skip] {label} — robot-questionnaire: {signal} (ручная очередь)")
                     progress.skipped_count += 1
                     continue
                 if history.is_robot_questionnaire(topic):
