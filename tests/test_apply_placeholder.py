@@ -19,7 +19,7 @@ import sqlite3
 import pytest
 
 from hhru_bot.apply.antibot import AntiBotChallengeDetected, AntiBotDetection
-from hhru_bot.commands import _common
+from hhru_bot.commands import _common, apply_service
 from hhru_bot.config import AppConfig, ResumeConfig, SearchFilters, ThrottleConfig
 from hhru_bot.history import History
 from hhru_bot.search import VacancyCard
@@ -85,8 +85,8 @@ def test_placeholder_url_fails_closed_before_any_action(tmp_path, monkeypatch):
 
         return _stub
 
-    monkeypatch.setattr(_common, "search_vacancies", _forbidden("search_vacancies"))
-    monkeypatch.setattr(_common, "apply_to_vacancy", _forbidden("apply_to_vacancy"))
+    monkeypatch.setattr(apply_service, "search_vacancies", _forbidden("search_vacancies"))
+    monkeypatch.setattr(apply_service, "apply_to_vacancy", _forbidden("apply_to_vacancy"))
 
     history_db = tmp_path / "history.db"
     history = History(history_db)
@@ -107,7 +107,7 @@ def test_placeholder_url_fails_closed_before_any_action(tmp_path, monkeypatch):
 def test_real_url_still_reaches_apply(tmp_path, monkeypatch):
     """Обычный URL гард не ломает: цикл доходит до apply_to_vacancy."""
     monkeypatch.setattr(
-        _common,
+        apply_service,
         "search_vacancies",
         lambda page, search, max_pages=1: [  # noqa: ARG001
             VacancyCard(
@@ -123,7 +123,7 @@ def test_real_url_still_reaches_apply(tmp_path, monkeypatch):
         applied_resume_ids.append(resume_id)
         return _StubResult()
 
-    monkeypatch.setattr(_common, "apply_to_vacancy", _fake_apply)
+    monkeypatch.setattr(apply_service, "apply_to_vacancy", _fake_apply)
 
     history_db = tmp_path / "history.db"
     history = History(history_db)
@@ -151,10 +151,10 @@ def test_search_challenge_escapes_per_resume_indeterminate_handling(tmp_path, mo
     def _raise_antibot(_page):
         raise AntiBotChallengeDetected(detection)
 
-    monkeypatch.setattr(_common, "search_vacancies", _indeterminate)
-    monkeypatch.setattr(_common, "raise_for_antibot", _raise_antibot)
+    monkeypatch.setattr(apply_service, "search_vacancies", _indeterminate)
+    monkeypatch.setattr(apply_service, "raise_for_antibot", _raise_antibot)
     monkeypatch.setattr(
-        _common,
+        apply_service,
         "apply_to_vacancy",
         lambda *_args, **_kwargs: pytest.fail("challenge must stop before apply"),
     )

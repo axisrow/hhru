@@ -15,7 +15,7 @@ import argparse
 
 import pytest
 
-from hhru_bot.commands import _common
+from hhru_bot.commands import _common, apply_service
 from hhru_bot.config import AppConfig, ResumeConfig, SearchFilters, ThrottleConfig
 from hhru_bot.config_sections.ai import AiConfig
 from hhru_bot.config_sections.ai_profile import AIProfile
@@ -79,23 +79,23 @@ def _fake_cards() -> list[VacancyCard]:
 
 def _stub_apply_cycle(monkeypatch, captured):
     """Подменяет search (карточки) и apply (без браузера); шпионит rank_candidates."""
-    monkeypatch.setattr(_common, "search_vacancies", lambda *a, **k: _fake_cards())  # noqa: ARG005
+    monkeypatch.setattr(apply_service, "search_vacancies", lambda *a, **k: _fake_cards())  # noqa: ARG005
     # apply_to_vacancy не должен зваться при провайдере None/AI на уровне wiring,
     # но подменяем на всякий случай — ранжирование тестируем через spy.
     monkeypatch.setattr(
-        _common,
+        apply_service,
         "apply_to_vacancy",
         lambda *a, **k: _StubResult(),  # noqa: ARG005
     )
 
-    real_rank = _common.rank_candidates
+    real_rank = apply_service.rank_candidates
 
     def _spy_rank(candidates, filters, resume, scoring_provider=None, **kwargs):  # noqa: ARG001
         captured["scoring_provider"] = scoring_provider
         captured["llm_shortlist"] = kwargs.get("llm_shortlist")
         return real_rank(candidates, filters, resume, scoring_provider=scoring_provider)
 
-    monkeypatch.setattr(_common, "rank_candidates", _spy_rank)
+    monkeypatch.setattr(apply_service, "rank_candidates", _spy_rank)
 
 
 class _StubResult:

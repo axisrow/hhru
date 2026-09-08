@@ -133,7 +133,7 @@ def test_apply_and_bump_dry_runs_do_not_record_actions(tmp_path, monkeypatch):
     неопределённых действий.
     """
     from hhru_bot.bump import BumpResult
-    from hhru_bot.commands import _common
+    from hhru_bot.commands import _common, apply_service
     from hhru_bot.commands import bump as bump_cmd
     from hhru_bot.history import History
     from hhru_bot.search import VacancyCard
@@ -152,7 +152,7 @@ def test_apply_and_bump_dry_runs_do_not_record_actions(tmp_path, monkeypatch):
 
     # --- apply-путь (dry-run) ---
     card = VacancyCard(vacancy_id="42", title="Dev", company="Acme", url="https://hh.ru/vacancy/42")
-    monkeypatch.setattr(_common, "search_vacancies", lambda page, search, max_pages=5: [card])  # noqa: ARG005
+    monkeypatch.setattr(apply_service, "search_vacancies", lambda page, search, max_pages=5: [card])  # noqa: ARG005
     apply_args = argparse.Namespace(dry_run=True, limit=1, max_pages=5, headless=True)
     _common.run_apply_for_resume(_ApplyFakePage(), config, resume, history, throttle, apply_args)
 

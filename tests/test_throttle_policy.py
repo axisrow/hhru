@@ -207,16 +207,18 @@ def _vacancy() -> VacancyCard:
 
 def _run_apply(monkeypatch, tmp_path, *, dry_run: bool, result) -> None:
     """run_apply_for_resume с подменёнными поиском/откликом; throttle.wait — шпион."""
-    from hhru_bot.commands import _common
+    from hhru_bot.commands import _common, apply_service
     from hhru_bot.history import History
 
     resume = _resume()
     history = History(tmp_path / "history.db")
     throttle = Throttle(ThrottleConfig(), history)
 
-    monkeypatch.setattr(_common, "search_vacancies", lambda page, search, max_pages=5: [_vacancy()])  # noqa: ARG005
     monkeypatch.setattr(
-        _common,
+        apply_service, "search_vacancies", lambda page, search, max_pages=5: [_vacancy()]
+    )  # noqa: ARG005
+    monkeypatch.setattr(
+        apply_service,
         "apply_to_vacancy",
         lambda *a, **kw: result,  # noqa: ARG005
     )

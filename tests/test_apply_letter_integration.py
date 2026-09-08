@@ -197,7 +197,7 @@ def test_apply_dry_run_does_not_write_ai_variant_to_history(tmp_path, monkeypatc
 
     monkeypatch.setattr("hhru_bot.ai.llm_client.LLMClient", lambda cfg: _FakeLLM())
     monkeypatch.setattr(
-        "hhru_bot.commands._common.search_vacancies",
+        "hhru_bot.commands.apply_service.search_vacancies",
         lambda page, search, max_pages=5: [  # noqa: ARG005
             VacancyCard(
                 vacancy_id="42", title="Dev", company="Acme", url="https://hh.ru/vacancy/42"
@@ -219,7 +219,7 @@ def test_apply_dry_run_does_not_write_ai_variant_to_history(tmp_path, monkeypatc
 def test_apply_dry_run_does_not_write_template_variant_without_ai(tmp_path, monkeypatch):
     # AI выключен → шаблон только показывается, actions пуст.
     monkeypatch.setattr(
-        "hhru_bot.commands._common.search_vacancies",
+        "hhru_bot.commands.apply_service.search_vacancies",
         lambda page, search, max_pages=5: [  # noqa: ARG005
             VacancyCard(
                 vacancy_id="42", title="Dev", company="Acme", url="https://hh.ru/vacancy/42"
@@ -252,7 +252,7 @@ def test_apply_dry_run_does_not_write_ai_fallback_variant(tmp_path, monkeypatch)
 
     monkeypatch.setattr("hhru_bot.ai.llm_client.LLMClient", lambda cfg: _FailingLLM())
     monkeypatch.setattr(
-        "hhru_bot.commands._common.search_vacancies",
+        "hhru_bot.commands.apply_service.search_vacancies",
         lambda page, search, max_pages=5: [  # noqa: ARG005
             VacancyCard(
                 vacancy_id="42", title="Dev", company="Acme", url="https://hh.ru/vacancy/42"

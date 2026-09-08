@@ -7,7 +7,7 @@ import argparse
 import pytest
 
 from hhru_bot.apply import ApplyResult
-from hhru_bot.commands import _common
+from hhru_bot.commands import _common, apply_service
 from hhru_bot.commands import apply as apply_command
 from hhru_bot.config import AppConfig, ResumeConfig, SearchFilters, ThrottleConfig
 from hhru_bot.history import History
@@ -49,15 +49,15 @@ def _run(monkeypatch, tmp_path, results, limit, *, dry_run=False, cards=None):
     cards = cards or _cards(len(results))
     calls = []
 
-    monkeypatch.setattr(_common, "search_vacancies", lambda *a, **k: cards)
-    monkeypatch.setattr(_common, "resolve_numeric_resume_ids", lambda _page: None)
+    monkeypatch.setattr(apply_service, "search_vacancies", lambda *a, **k: cards)
+    monkeypatch.setattr(apply_service, "resolve_numeric_resume_ids", lambda _page: None)
     monkeypatch.setattr(Throttle, "wait", lambda *a, **k: None)
 
     def apply(*args, **kwargs):  # noqa: ANN002, ANN003
         calls.append(args[1].vacancy_id)
         return results[len(calls) - 1]
 
-    monkeypatch.setattr(_common, "apply_to_vacancy", apply)
+    monkeypatch.setattr(apply_service, "apply_to_vacancy", apply)
     _common.run_apply_for_resume(
         object(), config, resume, history, throttle, _args(limit, dry_run=dry_run)
     )
@@ -189,8 +189,8 @@ def test_limit_is_applied_across_all_resumes_per_run(tmp_path, monkeypatch):
     monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **k: _Context())
     monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
     monkeypatch.setattr("hhru_bot.search.search_vacancies", search)
-    monkeypatch.setattr(_common, "search_vacancies", search)
-    monkeypatch.setattr(_common, "apply_to_vacancy", apply)
+    monkeypatch.setattr(apply_service, "search_vacancies", search)
+    monkeypatch.setattr(apply_service, "apply_to_vacancy", apply)
     monkeypatch.setattr(Throttle, "wait", lambda *a, **k: None)
 
     args = argparse.Namespace(
@@ -287,9 +287,9 @@ def test_indeterminate_search_excludes_resume_from_multi_resume_apply(tmp_path, 
     monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **k: _Context())
     monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
     monkeypatch.setattr("hhru_bot.search.search_vacancies", search)
-    monkeypatch.setattr(_common, "search_vacancies", search)
-    monkeypatch.setattr(_common, "apply_to_vacancy", apply)
-    monkeypatch.setattr(_common, "resolve_numeric_resume_ids", lambda _page: None)
+    monkeypatch.setattr(apply_service, "search_vacancies", search)
+    monkeypatch.setattr(apply_service, "apply_to_vacancy", apply)
+    monkeypatch.setattr(apply_service, "resolve_numeric_resume_ids", lambda _page: None)
     monkeypatch.setattr(Throttle, "wait", lambda *a, **k: None)
 
     args = argparse.Namespace(
@@ -344,9 +344,9 @@ def test_apply_does_not_print_per_vacancy_run_progress_line(tmp_path, monkeypatc
 
     monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **k: _Context())
     monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
-    monkeypatch.setattr(_common, "search_vacancies", lambda *a, **k: cards)
-    monkeypatch.setattr(_common, "resolve_numeric_resume_ids", lambda _page: None)
-    monkeypatch.setattr(_common, "apply_to_vacancy", apply)
+    monkeypatch.setattr(apply_service, "search_vacancies", lambda *a, **k: cards)
+    monkeypatch.setattr(apply_service, "resolve_numeric_resume_ids", lambda _page: None)
+    monkeypatch.setattr(apply_service, "apply_to_vacancy", apply)
     monkeypatch.setattr(Throttle, "wait", lambda *a, **k: None)
 
     args = argparse.Namespace(
@@ -385,9 +385,9 @@ def test_lazy_search_stops_after_first_page_when_target_is_reached(tmp_path, mon
         calls.append(card.vacancy_id)
         return ApplyResult(card, True, "success")
 
-    monkeypatch.setattr(_common, "_load_apply_page", load)
-    monkeypatch.setattr(_common, "resolve_numeric_resume_ids", lambda _page: None)
-    monkeypatch.setattr(_common, "apply_to_vacancy", apply)
+    monkeypatch.setattr(apply_service, "_load_apply_page", load)
+    monkeypatch.setattr(apply_service, "resolve_numeric_resume_ids", lambda _page: None)
+    monkeypatch.setattr(apply_service, "apply_to_vacancy", apply)
     monkeypatch.setattr(Throttle, "wait", lambda *a, **k: None)
 
     args = _args(5)
@@ -407,10 +407,10 @@ def test_lazy_search_opens_next_page_only_after_shortfall(tmp_path, monkeypatch)
         loaded.append(page_num)
         return (first, True) if page_num == 0 else (second, False)
 
-    monkeypatch.setattr(_common, "_load_apply_page", load)
-    monkeypatch.setattr(_common, "resolve_numeric_resume_ids", lambda _page: None)
+    monkeypatch.setattr(apply_service, "_load_apply_page", load)
+    monkeypatch.setattr(apply_service, "resolve_numeric_resume_ids", lambda _page: None)
     monkeypatch.setattr(
-        _common,
+        apply_service,
         "apply_to_vacancy",
         lambda _page, card, *_args, **_kwargs: ApplyResult(card, True, "success"),
     )
@@ -451,10 +451,10 @@ def test_warns_when_page_cap_hit_short_of_target_with_more_pages_available(
         loaded.append(page_num)
         return _cards(1), True
 
-    monkeypatch.setattr(_common, "_load_apply_page", load)
-    monkeypatch.setattr(_common, "resolve_numeric_resume_ids", lambda _page: None)
+    monkeypatch.setattr(apply_service, "_load_apply_page", load)
+    monkeypatch.setattr(apply_service, "resolve_numeric_resume_ids", lambda _page: None)
     monkeypatch.setattr(
-        _common,
+        apply_service,
         "apply_to_vacancy",
         lambda _page, card, *_args, **_kwargs: ApplyResult(card, True, "success"),
     )
@@ -485,9 +485,9 @@ class _PageThatRaisesAttributeErrorFromDom:
 
 
 def test_load_apply_page_fallback_only_for_missing_locator(tmp_path, monkeypatch):
-    monkeypatch.setattr(_common, "search_vacancies", lambda *a, **k: _cards(21))
+    monkeypatch.setattr(apply_service, "search_vacancies", lambda *a, **k: _cards(21))
 
-    cards, has_next = _common._load_apply_page(
+    cards, has_next = apply_service._load_apply_page(
         _PageWithoutLocator(), SearchFilters(text="python"), 0
     )
     assert has_next is True  # 21 >= 20 cards -> fallback heuristic kicks in
@@ -495,10 +495,10 @@ def test_load_apply_page_fallback_only_for_missing_locator(tmp_path, monkeypatch
 
 
 def test_load_apply_page_does_not_mask_real_attribute_error(tmp_path, monkeypatch):
-    monkeypatch.setattr(_common, "search_vacancies", lambda *a, **k: _cards(3))
+    monkeypatch.setattr(apply_service, "search_vacancies", lambda *a, **k: _cards(3))
 
     with pytest.raises(AttributeError):
-        _common._load_apply_page(
+        apply_service._load_apply_page(
             _PageThatRaisesAttributeErrorFromDom(), SearchFilters(text="python"), 0
         )
 
@@ -535,10 +535,10 @@ def test_daily_limit_exhausted_mid_wave_stops_lazy_paging(tmp_path, monkeypatch)
         if calls["n"] > 2:  # entry check (1) + first card's check (2) pass
             raise LimitReached("account", "apply", 1)
 
-    monkeypatch.setattr(_common, "_load_apply_page", load)
-    monkeypatch.setattr(_common, "resolve_numeric_resume_ids", lambda _page: None)
+    monkeypatch.setattr(apply_service, "_load_apply_page", load)
+    monkeypatch.setattr(apply_service, "resolve_numeric_resume_ids", lambda _page: None)
     monkeypatch.setattr(
-        _common,
+        apply_service,
         "apply_to_vacancy",
         lambda _page, card, *_args, **_kwargs: ApplyResult(card, True, "success"),
     )
@@ -568,10 +568,10 @@ def test_approved_uncertain_result_finishes_review_as_applied_not_failed(tmp_pat
     item_id = history.enqueue_review(resume.resume_id, card, 10, {}, "hello")
     permit = history.approve_review(item_id)
 
-    monkeypatch.setattr(_common, "resolve_numeric_resume_ids", lambda _page: None)
+    monkeypatch.setattr(apply_service, "resolve_numeric_resume_ids", lambda _page: None)
     monkeypatch.setattr(Throttle, "wait", lambda *a, **k: None)
     monkeypatch.setattr(
-        _common,
+        apply_service,
         "apply_to_vacancy",
         lambda *a, **k: ApplyResult(card, False, "неопределённо", acted=True, uncertain=True),
     )
