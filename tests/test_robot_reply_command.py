@@ -13,7 +13,7 @@ import pytest
 
 from hhru_bot.commands import robot_reply as command
 from hhru_bot.history import History
-from hhru_bot.negotiations_chat import ChatMessage, NoQuickReply
+from hhru_bot.negotiations_chat import ChatMessage, NoQuickReply, NoReplyForm
 from hhru_bot.negotiations_probe import TopicRef
 
 pytestmark = pytest.mark.integration
@@ -23,6 +23,7 @@ def _args(tmp_path=None, **overrides):
     values = dict(
         topic="100000001",
         answer="Нет",
+        text=False,
         dry_run=False,
         force=True,
         any_topic=False,
@@ -67,6 +68,7 @@ def _patch_common(
     *,
     clicks=None,
     quick=None,
+    texts=None,
     confirmation=True,
     reader=None,
 ):
@@ -102,6 +104,14 @@ def _patch_common(
         "hhru_bot.negotiations_chat.click_quick_reply",
         _click if clicks is not None else _boom_click,
     )
+
+    def _send(_page, message):
+        texts.append(message)
+
+    monkeypatch.setattr(
+        "hhru_bot.negotiations_chat.send_reply_current",
+        _send if texts is not None else _boom_send,
+    )
     monkeypatch.setattr("hhru_bot.negotiations_chat.count_visible_messages", lambda page: 3)
     monkeypatch.setattr(
         "hhru_bot.negotiations_chat.wait_reply_confirmation",
@@ -109,6 +119,10 @@ def _patch_common(
     )
     monkeypatch.setattr("hhru_bot.throttle.Throttle.wait", lambda self, reason="": None)
     return history
+
+
+def _boom_send(_page, _message):
+    raise AssertionError("send_reply_current не должен вызываться")
 
 
 def _boom_click(_page, _label):
@@ -283,7 +297,88 @@ def test_noninteractive_without_force_is_rejected(monkeypatch, tmp_path, capsys)
     monkeypatch.setattr(command, "confirm_write", lambda *a, **k: False)
 
     assert command.run(_args(tmp_path, force=False)) is True
-    assert "Кнопка не нажата" in capsys.readouterr().out
+    assert "Ничего не отправлено" in capsys.readouterr().out
+
+
+# --- --text: анкеты без кнопок (живой кейс WebBee, 2026-09-08) ---------------
+
+
+def test_text_dry_run_prints_plan_without_send_and_ledger(monkeypatch, tmp_path, capsys):
+    """Текстовый dry-run: кнопки не ищутся, сообщение не отправляется,
+    ledger пуст."""
+    texts: list[str] = []
+    history = _patch_common(
+        monkeypatch, tmp_path, texts=texts, reader=None, quick=None, clicks=None
+    )
+
+    assert command.run(_args(tmp_path, text=True, answer="90000", dry_run=True)) is False
+
+    out = capsys.readouterr().out
+    assert "Текстовый режим" in out
+    assert "[DRY-RUN] Отправил бы текст: «90000»" in out
+    assert texts == []
+    assert _actions(history) == []
+
+
+def test_text_success_sends_resolves_queue_with_answer(monkeypatch, tmp_path, capsys):
+    """Текст доставлен → резолв очереди с ТЕКСТОМ ответа (не именем кнопки)."""
+    texts: list[str] = []
+    history = _patch_common(monkeypatch, tmp_path, texts=texts)
+
+    assert command.run(_args(tmp_path, text=True, answer="От 90 000 рублей")) is False
+
+    out = capsys.readouterr().out
+    assert "[OK] 100000001" in out
+    assert "текст доставлен" in out
+    assert texts == ["От 90 000 рублей"]
+    assert _actions(history) == [{"status": "success", "reason": None}]
+    row = history.robot_questionnaire_row("100000001")
+    assert row["answer"] == "От 90 000 рублей"
+    assert history.is_robot_questionnaire("100000001") is False
+
+
+def test_text_no_reply_form_is_pre_click_failed(monkeypatch, tmp_path, capsys):
+    """NoReplyForm — форма не нашлась ДО взаимодействия: failed без throttle,
+    очередь не тронута (повторная попытка разрешена)."""
+    history = _patch_common(monkeypatch, tmp_path, texts=[])
+    monkeypatch.setattr(
+        "hhru_bot.negotiations_chat.send_reply_current",
+        lambda *a, **k: (_ for _ in ()).throw(
+            NoReplyForm("не удалось однозначно найти форму ответа в чате")
+        ),
+    )
+
+    assert command.run(_args(tmp_path, text=True)) is True
+
+    assert "отправка не выполнена" in capsys.readouterr().out
+    assert _actions(history)[0]["status"] == "failed"
+    assert history.is_robot_questionnaire("100000001") is True
+
+
+def test_text_exception_after_send_is_uncertain(monkeypatch, tmp_path, capsys):
+    """Исключение после начала отправки — сообщение могло уйти: fail-closed
+    uncertain (#176), резолва очереди нет."""
+    history = _patch_common(monkeypatch, tmp_path, texts=[])
+    monkeypatch.setattr(
+        "hhru_bot.negotiations_chat.send_reply_current",
+        lambda *a, **k: (_ for _ in ()).throw(TimeoutError("network died mid-send")),
+    )
+
+    assert command.run(_args(tmp_path, text=True)) is True
+
+    assert "исход неопределён" in capsys.readouterr().out
+    assert _actions(history)[0]["status"] == "uncertain"
+    assert history.is_robot_questionnaire("100000001") is True
+
+
+def test_text_unconfirmed_delivery_is_uncertain(monkeypatch, tmp_path, capsys):
+    history = _patch_common(monkeypatch, tmp_path, texts=[], confirmation=False)
+
+    assert command.run(_args(tmp_path, text=True)) is True
+
+    assert "не подтверждена" in capsys.readouterr().out
+    assert _actions(history)[0]["status"] == "uncertain"
+    assert history.is_robot_questionnaire("100000001") is True
 
 
 def test_wait_ms_zero_is_rejected_before_any_browser(capsys):

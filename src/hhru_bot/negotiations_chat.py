@@ -417,13 +417,39 @@ def count_visible_messages(page: Page) -> int:
 
 
 def send_reply_current(page: Page, text: str) -> None:
-    """Submit on the chat page already opened by :func:`read_last_message`."""
+    """Submit on the chat page already opened by :func:`read_last_message`.
+
+    Двухфазная отправка (живой composer 2026-09-08, census чата WebBee):
+    textarea живёт внутри div[data-qa='chatik-message-input'], а кнопка
+    отправки рендерится ТОЛЬКО после непустого ввода — до fill() её в DOM
+    нет вовсе. Поэтому fill идёт до резолва кнопки, а кнопка ждёт видимости
+    явно («commit не значит отрисовано» — паттерн проекта).
+
+    #858 («visible != гидратирован»): fill по ещё НЕ гидратированному
+    композеру теряется молча — React пересобирает textarea, значение
+    исчезает, кнопка не рендерится (живой провал 2026-09-08: тот же
+    селектор работал в census с паузой 6с до ввода и не работал без
+    неё). Поэтому fill ограниченно ПОВТОРЯЕТСЯ, пока кнопка не появится:
+    повтор идемпотентен (перезаписывает поле), бюджет 15с суммарно.
+    NoReplyForm после fill оставляет черновик текста в композере: на
+    hh.ru ничего не отправлено, повторный вызов перезапишет поле.
+    """
     input_loc = page.locator(CHAT_MESSAGE_INPUT)
+    if input_loc.count() != 1:
+        raise NoReplyForm("не удалось однозначно найти поле ответа в чате")
     send_loc = page.locator(CHAT_MESSAGE_SEND)
-    if input_loc.count() != 1 or send_loc.count() != 1:
-        raise NoReplyForm("не удалось однозначно найти форму ответа в чате")
-    input_loc.fill(text)
-    send_loc.click()
+    deadline = time.monotonic() + 15.0
+    while True:
+        input_loc.fill(text)
+        try:
+            send_loc.first.wait_for(state="visible", timeout=2000)
+            break
+        except PlaywrightError:
+            if time.monotonic() >= deadline:
+                raise NoReplyForm(
+                    "кнопка отправки не появилась после ввода текста (черновик остался в поле)"
+                ) from None
+    send_loc.first.click()
 
 
 class NoQuickReply(RuntimeError):

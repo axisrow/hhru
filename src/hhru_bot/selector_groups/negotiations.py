@@ -104,5 +104,8 @@ QUICK_REPLY_BUTTON = "button[class*='magritte-button_mode-secondary']"
 
 # Composer controls on chatik.hh.ru.  Keep these here with the read selectors so
 # a markup change cannot leave the write path with a private, stale selector.
+# #text-robot (census живого чата WebBee 2026-09-08): textarea живёт ВНУТРИ
+# div[data-qa='chatik-message-input'] и сама несёт data-qa='text-input';
+# прежний плоский chatik-chat-message-input на живом DOM не совпадает.
 CHAT_MESSAGE_INPUT = _selector("negotiations.CHAT_MESSAGE_INPUT")
 CHAT_MESSAGE_SEND = _selector("negotiations.CHAT_MESSAGE_SEND")

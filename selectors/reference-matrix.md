@@ -53,9 +53,9 @@
 | competitor_resume.SEARCH_RESULT_TITLE_LINK | `[data-qa='serp-item__title']` | — | — | — | live_dom |
 | create_resume.TREE_ITEM_TEXT | `[data-qa*='tree-selector-item-text-']` | — | — | — | workflow_live |
 | negotiations.CHAT_AUTHOR_HINT | `[data-qa*='author'], [class*='author'], [aria-label], [title]` | — | — | — | documented_live |
-| negotiations.CHAT_MESSAGE_INPUT | `textarea[data-qa='chatik-chat-message-input']` | — | — | [data-qa="chatik-new-message-text"] | documented_live |
+| negotiations.CHAT_MESSAGE_INPUT | `[data-qa='chatik-message-input'] textarea[data-qa='text-input']` | — | — | [data-qa="chatik-new-message-text"] | live_dom |
 | negotiations.CHAT_MESSAGE_ROOT | `[data-qa^='chatik-chat-message-']` | — | — | — | live_dom |
-| negotiations.CHAT_MESSAGE_SEND | `button[data-qa='chatik-chat-message-send']` | — | — | [data-qa="chatik-do-send-message"] | documented_live |
+| negotiations.CHAT_MESSAGE_SEND | `button[data-qa='chatik-do-send-message']` | — | — | [data-qa="chatik-do-send-message"] | live_dom |
 | negotiations.CHAT_MESSAGE_TEXT | `[data-qa^="chatik-chat-message-"][data-qa$="-text"]:not([data-qa="chatik-chat-message-applicant-action-text"])` | — | — | — | live_dom |
 | negotiations.CHAT_MESSAGE_TIME | `[data-qa='chat-buble-display-time']` | — | — | — | live_dom |
 | negotiations.LEGACY_NEGOTIATION_CHAT_LINK | `[data-qa='negotiations-item__messages-link']` | — | — | — | documented_live |
