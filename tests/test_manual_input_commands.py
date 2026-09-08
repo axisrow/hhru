@@ -286,13 +286,15 @@ def test_edit_experience_manual_entry_appends_to_non_empty_resume(tmp_path, caps
     from hhru_bot.experience import ExperienceEntry, ExperienceResult
 
     monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
+    monkeypatch.setattr("hhru_bot.browser.goto_hh", lambda *_a, **_kw: None)
+    monkeypatch.setattr("hhru_bot.common._on_wizard_common", lambda *_a, **_kw: False)
     monkeypatch.setattr(
         "hhru_bot.experience.read_experience_on_hh",
         lambda page, resume_id: [
             ExperienceEntry(company="Старая компания", position="Старая должность")
         ],
     )
-    monkeypatch.setattr("hhru_bot.copy_resume.list_resume_cards", lambda page: [])
+    monkeypatch.setattr("hhru_bot.copy_resume.list_resume_cards", lambda *page, **_kw: [])
     captured = {}
 
     def fake_edit_experience_on_hh(
@@ -335,8 +337,10 @@ def test_edit_experience_manual_entry_creates_first_row_on_empty_resume(
     from hhru_bot.experience import ExperienceResult
 
     monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
+    monkeypatch.setattr("hhru_bot.browser.goto_hh", lambda *_a, **_kw: None)
+    monkeypatch.setattr("hhru_bot.common._on_wizard_common", lambda *_a, **_kw: False)
     monkeypatch.setattr("hhru_bot.experience.read_experience_on_hh", lambda page, resume_id: [])
-    monkeypatch.setattr("hhru_bot.copy_resume.list_resume_cards", lambda page: [])
+    monkeypatch.setattr("hhru_bot.copy_resume.list_resume_cards", lambda *page, **_kw: [])
     captured = {}
 
     def fake_edit_experience_on_hh(
