@@ -20,6 +20,8 @@ from playwright.sync_api import Page
 from .browser import goto_hh
 from .negotiations_probe import chat_url
 from .selector_groups.negotiations import (
+    CHAT_MESSAGE_BOT_MARKER,
+    CHAT_MESSAGE_INCOMING_MARKER,
     CHAT_MESSAGE_INPUT,
     CHAT_MESSAGE_MY_MARKER,
     CHAT_MESSAGE_OTHER_MARKER,
@@ -28,6 +30,64 @@ from .selector_groups.negotiations import (
 )
 
 logger = logging.getLogger("hhru_bot.negotiations_chat")
+
+# #1044: единый браузерный резолвер автора сообщения. Маркеры — префиксы имён
+# классов (CSS-модули добавляют ``--hash``): совпадение это точное имя ИЛИ
+# ``marker + '--<hash>'``. Возвращает сериализуемое [author, label]:
+# author — 'me'|'employer'|null, label — подпись автора с размеченного узла.
+CHAT_AUTHOR_JS = """(el, markers) => {
+  for (let node = el; node; node = node.parentElement) {
+    const classes = String(node.className).split(/\\s+/);
+    const hit = (list) => list.some(
+      (prefix) => classes.includes(prefix)
+        || classes.some((c) => c.startsWith(prefix + '--')));
+    const author = hit(markers.my) ? 'me' : hit(markers.other) ? 'employer' : null;
+    if (author) {
+      const labelNode = node.querySelector(
+        '[data-qa*="author"], [class*="author"], [aria-label], [title]');
+      return [author, labelNode && (labelNode.getAttribute('aria-label')
+        || labelNode.getAttribute('title') || labelNode.textContent || '').trim()];
+    }
+  }
+  return [null, null];
+}"""
+
+
+def author_markers() -> dict[str, list[str]]:
+    """Prefix lists for CHAT_AUTHOR_JS (kept in Python for tests)."""
+    return {
+        "my": [CHAT_MESSAGE_MY_MARKER],
+        "other": [
+            CHAT_MESSAGE_OTHER_MARKER,
+            CHAT_MESSAGE_INCOMING_MARKER,
+            CHAT_MESSAGE_BOT_MARKER,
+        ],
+    }
+
+
+def matches_marker(cls: str, marker: str) -> bool:
+    """CSS-модульное совпадение имени класса с маркером (#1044).
+
+    Живой DOM 2026-09-08: вёрстка чата ушла на CSS-модули, имена классов
+    получили хэш-суффикс (``message_my--PpRVpLiDQMcfwKlp``), поэтому точное
+    сравнение перестало срабатывать. Совпадение — точное имя (старая
+    разметка фикстур) или ``marker + '--<hash>'``; граница ``--`` не даёт
+    «message_mine--…» совпасть с маркером ``message_my``.
+    """
+    return cls == marker or cls.startswith(f"{marker}--")
+
+
+def author_from_ancestors(class_chain: Sequence[str]) -> str | None:
+    """Python-зеркало CHAT_AUTHOR_JS для тестов: цепь классов предков
+    сообщения (снизу вверх) → 'me' | 'employer' | None."""
+    markers = author_markers()
+    for classes in class_chain:
+        names = classes.split()
+        if any(matches_marker(c, m) for c in names for m in markers["my"]):
+            return "me"
+        if any(matches_marker(c, m) for c in names for m in markers["other"]):
+            return "employer"
+    return None
 
 
 class NoReplyForm(RuntimeError):
@@ -176,20 +236,7 @@ def read_last_message(page: Page, chat_id: str) -> ChatMessage | None:
     for index in range(messages.count()):
         item = messages.nth(index)
         item_marker = _message_id(item.get_attribute("data-qa"))
-        item_author, item_label = item.evaluate(
-            """(el, markers) => { for (let node = el; node; node = node.parentElement) {
-                const classes = String(node.className).split(/\\s+/);
-                const author = classes.includes(markers.own) ? 'me'
-                    : classes.includes(markers.other) ? 'employer' : null;
-                if (author) {
-                    const labelNode = node.querySelector(
-                        '[data-qa*="author"], [class*="author"], [aria-label], [title]');
-                    return [author, labelNode && (labelNode.getAttribute('aria-label')
-                        || labelNode.getAttribute('title') || labelNode.textContent || '').trim()];
-                }
-            } return [null, null]; }""",
-            {"own": CHAT_MESSAGE_MY_MARKER, "other": CHAT_MESSAGE_OTHER_MARKER},
-        )
+        item_author, item_label = item.evaluate(CHAT_AUTHOR_JS, author_markers())
         all_messages.append(
             ChatMessage(item_author, item_marker, item.inner_text().strip(), item_label)
         )
@@ -289,16 +336,8 @@ def read_employer_messages(page: Page, chat_id: str) -> list[str]:
     texts: list[str] = []
     for index in range(messages.count() - 1, -1, -1):
         message = messages.nth(index)
-        is_own = message.evaluate(
-            """(el, marker) => {
-                for (let node = el; node; node = node.parentElement) {
-                    if (String(node.className).split(/\\s+/).includes(marker)) return true;
-                }
-                return false;
-            }""",
-            CHAT_MESSAGE_MY_MARKER,
-        )
-        if not is_own:
+        author, _label = message.evaluate(CHAT_AUTHOR_JS, author_markers())
+        if author != "me":
             text = message.inner_text().strip()
             if text:
                 texts.append(text)
@@ -376,16 +415,8 @@ def wait_reply_confirmation(page: Page, timeout_ms: int = 10_000, *, min_count: 
         count = count_visible_messages(page)
         if count >= min_count:
             message = messages.nth(count - 1)
-            author = message.evaluate(
-                """(el, marker) => {
-                    for (let node = el; node; node = node.parentElement) {
-                        if (String(node.className).split(/\\s+/).includes(marker)) return true;
-                    }
-                    return false;
-                }""",
-                CHAT_MESSAGE_MY_MARKER,
-            )
-            if author:
+            author, _label = message.evaluate(CHAT_AUTHOR_JS, author_markers())
+            if author == "me":
                 logger.debug("Отправка в чате подтверждена: последнее сообщение наше")
                 return True
         if time.monotonic() >= deadline:

@@ -27,6 +27,12 @@ def register(subparsers: Any) -> None:
     )
     parser.add_argument("--url", required=True, help="Полный URL страницы hh.ru")
     parser.add_argument("--json", action="store_true", help="Машиночитаемый JSON-вывод")
+    parser.add_argument(
+        "--wait-ms",
+        type=int,
+        default=0,
+        help="Подождать N мс после загрузки перед снимком (гидратация React, #858)",
+    )
     parser.set_defaults(func=run)
 
 
@@ -39,6 +45,8 @@ def run(args: argparse.Namespace) -> bool:
     ) as context:
         page = context.new_page()
         goto_hh(page, args.url)
+        if getattr(args, "wait_ms", 0):
+            page.wait_for_timeout(args.wait_ms)
         rows = rendered_controls_census(page)
 
     visible_only = [r for r in rows if r.get("visible")]

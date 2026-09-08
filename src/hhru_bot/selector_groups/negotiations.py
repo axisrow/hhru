@@ -66,16 +66,26 @@ LEGACY_NEGOTIATION_CHAT_LINK = _selector("negotiations.LEGACY_NEGOTIATION_CHAT_L
 
 # Chat route (chatik.hh.ru/chat/<chatId>), confirmed by probe --negotiations
 # --topic (#107). The text node is message-specific; its ancestor carries
-# message_my/message_other, so callers can distinguish our own messages from
+# the author marker, so callers can distinguish our own messages from
 # employer messages without clicking or posting anything. The applicant-action
-# system message (e.g. "отклик отправлен") is excluded — it carries no
-# message_my/message_other marker, so without this exclusion it would be
-# treated as an employer message by any :not(message_my) check.
+# system message (e.g. "пользователь присоединился к чату") is excluded — it
+# carries no author marker, so without this exclusion it would be treated as
+# an employer message by any :not(own) check.
+#
+# #1044 (живой census 2026-09-08): вёрстка чата переехала на CSS-модули —
+# маркеры теперь имена с хэш-суффиксом (message_my--PpRVpLiDQMcfwKlp,
+# chat-bubble_incoming--CgAKL4FOU0shOYzo, chat-bubble_bot--ATOUBrnmcY8nZkrY),
+# поэтому маркер — ПРЕФИКС имени класса, а не точное имя: совпадение считается
+# как `c === marker || c.startsWith(marker + '--')`. Прежнее точное
+# message_other на живом DOM не встречается (сообщения работодателя отличает
+# входящий/бот-бабл), но префикс оставлен для старой разметки фикстур.
 CHAT_MESSAGE_TEXT = _selector("negotiations.CHAT_MESSAGE_TEXT")
 CHAT_MESSAGE_ROOT = _selector("negotiations.CHAT_MESSAGE_ROOT")
 CHAT_AUTHOR_HINT = _selector("negotiations.CHAT_AUTHOR_HINT")
 CHAT_MESSAGE_MY_MARKER = "message_my"
 CHAT_MESSAGE_OTHER_MARKER = "message_other"
+CHAT_MESSAGE_INCOMING_MARKER = "chat-bubble_incoming"
+CHAT_MESSAGE_BOT_MARKER = "chat-bubble_bot"
 
 # Composer controls on chatik.hh.ru.  Keep these here with the read selectors so
 # a markup change cannot leave the write path with a private, stale selector.

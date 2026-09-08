@@ -5,10 +5,12 @@ import pytest
 from playwright.sync_api import Page
 
 from hhru_bot.negotiations_chat import (
-    CHAT_MESSAGE_MY_MARKER,
+    CHAT_AUTHOR_JS,
     ChatMessage,
+    author_from_ancestors,
     extract_external_test_link,
     is_robot_questionnaire,
+    matches_marker,
     needs_follow_up,
     needs_reply,
     read_chat,
@@ -203,9 +205,12 @@ class _FakeMessage:
     def __init__(self, is_own: bool):
         self._is_own = is_own
 
-    def evaluate(self, _script, marker):
-        assert marker == CHAT_MESSAGE_MY_MARKER
-        return self._is_own
+    def evaluate(self, script, markers):
+        # #1044: резолвер один и тот же (CHAT_AUTHOR_JS + author_markers) —
+        # двойник воспроизводит его вердикт по is_own, не исполняя JS.
+        assert script == CHAT_AUTHOR_JS
+        assert set(markers) == {"my", "other"}
+        return ["me" if self._is_own else "employer", ""]
 
 
 class _FakeMessages:
@@ -297,3 +302,64 @@ def test_min_count_default_preserves_plain_reply_behaviour():
     """min_count=1 (default) is exactly the pre-existing contract."""
     page = _FakeChatPage(authors=[True])
     assert wait_reply_confirmation(cast(Page, page)) is True
+
+
+# --- #1044: дрейф DOM-маркеров автора на CSS-модули -------------------------
+# Живой census 2026-09-08 (колонки classes/ancestors из `census --json`,
+# чаты аккаунта):
+# собственное сообщение:
+#   chat-bubble--TFjICp8IMFIhojGy chat-bubble_with-right-tail--J0NYWVDENy0KLcgZ
+#   chat-bubble_outgoing--C1wSnUG6DlswSx6I | chat-bubble-container--xlH6p5aV4o4u_38b
+#   | message--WgE5qGIVMRAXYnLL message_my--PpRVpLiDQMcfwKlp | ...
+# работодатель-человек: chat-bubble_incoming--CgAKL4FOU0shOYzo
+# работодатель-бот:     chat-bubble_bot--ATOUBrnmcY8nZkrY
+# системное (participant-action): ни одного маркера.
+
+
+def test_marker_matches_css_module_hash_suffix():
+    assert matches_marker("message_my--PpRVpLiDQMcfwKlp", "message_my")
+    assert matches_marker("message_my", "message_my")  # старая разметка
+    assert not matches_marker("message_mine--xxx", "message_my")  # граница --
+    assert not matches_marker("chat-bubble_outgoing--C1wSnUG6DlswSx6I", "message_my")
+
+
+def test_own_message_recognized_through_outgoing_bubble_chain():
+    chain = [
+        "chat-bubble-content--qOhTaYyg5ygPNstt",
+        "chat-bubble--TFjICp8IMFIhojGy chat-bubble_with-right-tail--J0NYWVDENy0KLcgZ "
+        "chat-bubble_outgoing--C1wSnUG6DlswSx6I",
+        "chat-bubble-container--xlH6p5aV4o4u_38b",
+        "message--WgE5qGIVMRAXYnLL message_my--PpRVpLiDQMcfwKlp",
+    ]
+    assert author_from_ancestors(chain) == "me"
+
+
+def test_incoming_human_message_is_employer():
+    chain = [
+        "chat-bubble-content--qOhTaYyg5ygPNstt",
+        "chat-bubble--TFjICp8IMFIhojGy chat-bubble_with-left-tail--__mmuGUjNcDqugJS "
+        "chat-bubble_incoming--CgAKL4FOU0shOYzo",
+    ]
+    assert author_from_ancestors(chain) == "employer"
+
+
+def test_bot_message_is_employer():
+    chain = [
+        "chat-bubble-content--qOhTaYyg5ygPNstt",
+        "chat-bubble--TFjICp8IMFIhojGy chat-bubble_with-left-tail--__mmuGUjNcDqugJS "
+        "chat-bubble_bot--ATOUBrnmcY8nZkrY",
+    ]
+    assert author_from_ancestors(chain) == "employer"
+
+
+def test_system_participant_message_has_no_author():
+    chain = [
+        "content--qbFEo4QXKAQupjDJ",
+        "magritte-scroll-container___QzFOQ_1-0-33 scroll-wrapper--BANmTN9Sz6EwRGzp",
+    ]
+    assert author_from_ancestors(chain) is None
+
+
+def test_legacy_exact_markers_still_classify():
+    assert author_from_ancestors(["message_my"]) == "me"
+    assert author_from_ancestors(["message_other"]) == "employer"

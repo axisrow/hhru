@@ -1091,6 +1091,8 @@ def run_negotiations(args: argparse.Namespace) -> bool:
     """Dump negotiations/chat DOM using only GET navigation and reads."""
     from ..browser import launch_context
     from ..config import load_config_or_exit
+    from ..negotiations_chat import CHAT_AUTHOR_JS as chat_author_js
+    from ..negotiations_chat import author_markers as chat_author_markers
     from ..negotiations_probe import chat_url, paginated_topic_refs
     from ..report import _ascii_table
     from ..responses import NotAuthenticated, ResponsesIndeterminate
@@ -1162,30 +1164,29 @@ def run_negotiations(args: argparse.Namespace) -> bool:
             message_rows = []
             for i in range(messages.count()):
                 loc = messages.nth(i)
-                parent_class = loc.evaluate(
-                    "(el, marker) => { for (let n = el; n; n = n.parentElement) "
-                    "if (String(n.className).split(/\\s+/).includes(marker)) "
-                    "return n.className; return ''; }",
-                    negotiations.CHAT_MESSAGE_MY_MARKER,
-                )
+                author, _label = loc.evaluate(chat_author_js, chat_author_markers())
                 message_rows.append(
                     [
                         str(i + 1),
                         loc.get_attribute("data-qa") or "-",
-                        "own"
-                        if negotiations.CHAT_MESSAGE_MY_MARKER in parent_class.split()
-                        else "other",
+                        # own/employer/system — тот же резолвер, что у
+                        # needs_reply (#1044): префиксы CSS-модульных маркеров.
+                        {"me": "own", "employer": "employer"}.get(author, "system"),
                         loc.inner_text().replace("\n", " ")[:160],
                     ]
                 )
             print(_ascii_table(["message", "id", "author_marker", "text"], message_rows))
             print(
-                "Корень сообщений чата — census отрисованных контролов "
+                "Корни сообщений чата — census отрисованных контролов "
                 "(сырой HTML в stdout запрещён, #998):"
             )
             message_roots = page.locator(negotiations.CHAT_MESSAGE_ROOT)
-            if message_roots.count():
-                chat_census = subtree_controls_census(message_roots.first)
+            # #1044-цепочка: census по ВСЕМ корням, не только первому —
+            # кнопки быстрых ответов робота («Да»/«Нет») живут в subtree
+            # конкретного сообщения (вопроса), первый корень — наш отклик.
+            for root_index in range(message_roots.count()):
+                print(f"--- сообщение {root_index + 1} ---")
+                chat_census = subtree_controls_census(message_roots.nth(root_index))
                 print(census_table(chat_census["rows"]))
                 if chat_census["truncated"]:
                     print("[WARN] census корня сообщений обрезан по лимиту 120 строк")

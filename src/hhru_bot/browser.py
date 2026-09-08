@@ -674,6 +674,18 @@ _CENSUS_JS = r"""() => {
       role: el.getAttribute('role') || '',
       label: (el.getAttribute('aria-label') || '').slice(0, 80),
       text: (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80),
+      classes: (typeof el.className === 'string' ? el.className : '').trim().slice(0, 120),
+      ancestors: (() => {
+        // #1044: селекторы бывают не на самом контроле, а на предках (автор
+        // сообщения чата) — вертикаль классов предков до 6 уровней вверх.
+        const chain = [];
+        for (let node = el.parentElement, hop = 0; node && hop < 6;
+             node = node.parentElement, hop += 1) {
+          const cls = (typeof node.className === 'string' ? node.className : '').trim();
+          if (cls) chain.push(cls.split(/\s+/).slice(0, 6).join(' ').slice(0, 120));
+        }
+        return chain.join(' | ').slice(0, 400);
+      })(),
       visible,
     });
   }
@@ -751,6 +763,7 @@ _SUBTREE_CENSUS_JS = r"""(root) => {
       role: el.getAttribute('role') || '',
       label: (el.getAttribute('aria-label') || '').slice(0, 80),
       text: (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80),
+      classes: (typeof el.className === 'string' ? el.className : '').trim().slice(0, 120),
       visible,
     });
   }
@@ -777,7 +790,10 @@ def census_table(rows: list[dict]) -> str:
     импортов: report импортирует browser)."""
     from .report import _ascii_table
 
-    header = ["data-qa", "tag", "role", "label", "text", "visible"]
+    # #1044: classes в текстовой таблице — классы контрола видны «глазам
+    # агента» без --json. ancestors остаются только машинным каналом (--json):
+    # вертикаль классов до 400 символов не помещается в ASCII-таблицу.
+    header = ["data-qa", "tag", "role", "label", "text", "classes", "visible"]
     rows_out = [
         [
             str(r.get("qa", "")),
@@ -785,6 +801,7 @@ def census_table(rows: list[dict]) -> str:
             str(r.get("role", "")),
             str(r.get("label", "")),
             str(r.get("text", "")),
+            str(r.get("classes", "")),
             "да" if r.get("visible") else "нет",
         ]
         for r in rows
