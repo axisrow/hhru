@@ -162,6 +162,43 @@ def test_additional_block_trigger_shape_fills_by_data_qa(monkeypatch):
     assert page.clicked == [resume_education.CANCEL_BUTTON]
 
 
+def test_additional_with_confirmed_add_link_never_uses_direct_route(monkeypatch):
+    """A confirmed Add link (count==1) means the section's card renders, so
+    the form must open through the trigger-opened shape -- even when the plan
+    has more rows than the resume shows. The editor route must stay reserved
+    for the no-card-at-all case (#857): on a non-empty section it may
+    overwrite an existing entry instead of adding one (#815 class). Regression
+    guard for PR #1053 review round 1: the direct-route gate reads the ADD
+    LINK's count, not the row trigger's (which is 0 by construction here)."""
+
+    class NoRowTriggerButAddLinkPage(LabelPage):
+        def locator(self, selector: str):
+            if selector.startswith("[data-qa='resume-edit-button-additionalEducation-"):
+                return RecordingLocator(self, selector, count=0)
+            return super().locator(selector)
+
+    monkeypatch.setattr(resume_education, "open_hydrated_resume_editor", lambda *a, **k: None)
+    page = NoRowTriggerButAddLinkPage()
+    record = EducationRecord(
+        institution="Курсы",
+        level="",
+        faculty="",
+        organization="Организация",
+        specialty="Специализация",
+        year="2020",
+    )
+
+    result = _edit_block(page, [record], additional=True, dry_run=True, resume_id="RID")
+
+    # Trigger shape reached: dry-run leaves through the profile-layout cancel
+    # button. Had the direct route been taken, goto_hh (a real network call
+    # this fake cannot serve) would have run and the leave would be through
+    # resume-partial-edit-cancel instead.
+    assert result.success, result.reason
+    assert page.clicked == [resume_education.CANCEL_BUTTON]
+    assert resume_education.ADDITIONAL_CANCEL_BUTTON not in page.clicked
+
+
 def test_additional_block_reports_unresolvable_field_without_saving(monkeypatch):
     monkeypatch.setattr(resume_education, "open_hydrated_resume_editor", lambda *a, **k: None)
     page = LabelPage(qa_count=0)

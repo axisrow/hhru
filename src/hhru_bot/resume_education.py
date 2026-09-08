@@ -513,16 +513,16 @@ def _additional_block_config() -> _BlockConfig:
 class _RowOutcome:
     """Outcome of one row's stage (#1048).
 
-    ``clicked`` means the Save click already fired -- every failure after it
-    is a post-click ambiguity class and must read ``uncertain`` regardless of
-    what the local timeout suggested. ``uncertain`` flags failures that are
-    ambiguous on their own (post-save unconfirmed, uncheckable record).
-    Pre-click failures carry neither: they are clean, retryable failures."""
+    ``uncertain`` flags post-click ambiguities: the Save click may already
+    have reached hh.ru, so no local timeout can prove the outcome either way.
+    Failures that leave before save.click() carry ``uncertain=False`` -- they
+    are clean, retryable failures. (The click-happened fact itself is tracked
+    per-row on the ledger, not here, because it must survive an exception
+    crossing the stage boundary.)"""
 
     ok: bool
     reason: str = ""
     uncertain: bool = False
-    clicked: bool = False
 
 
 _ROW_OK = _RowOutcome(ok=True)
@@ -545,7 +545,7 @@ class _BlockLedger:
     row_clicked: bool = False
 
     def fail(self, outcome: _RowOutcome) -> EducationResult:
-        uncertain = outcome.uncertain or outcome.clicked or self.row_clicked or self.saved > 0
+        uncertain = outcome.uncertain or self.row_clicked or self.saved > 0
         return EducationResult(
             self.cfg.kind, False, outcome.reason, uncertain=uncertain, saved=self.saved
         )
@@ -806,9 +806,12 @@ def _process_row(
     button_count = button.count()
     if button_count > 1:
         return ledger.fail(_RowOutcome(False, f"триггер образования {index} не найден однозначно"))
+    # The confirmed Add link is the only safe way to create a missing row.
+    # Never guess an unverified route or API endpoint.
+    add_count = button_count
     if button_count == 0:
-        add = page.locator(cfg.add_selector)
-        if add.count() != 1 and cfg.direct_shape is None:
+        add_count = page.locator(cfg.add_selector).count()
+        if add_count != 1 and cfg.direct_shape is None:
             return ledger.fail(
                 _RowOutcome(
                     False,
@@ -821,10 +824,13 @@ def _process_row(
     # its resume-scoped direct route instead. The resume_id is part of the
     # URL, so the identity check in _open_row_form binds the form to the
     # right resume; nothing is scoped to a clickable trigger that does not
-    # exist.
+    # exist. The gate is the ADD LINK's count, not the row trigger's: with a
+    # confirmed Add link (count==1) the trigger-opened shape is the only
+    # acceptable way in -- the editor route is unsafe on a non-empty section
+    # (#815 class: it may overwrite an existing entry instead of adding one).
     direct = False
     shape = cfg.trigger_shape
-    if cfg.direct_shape is not None and button_count == 0 and button.count() != 1:
+    if cfg.direct_shape is not None and button_count == 0 and add_count != 1:
         direct = True
         shape = cfg.direct_shape
     # #857: the additional form's trigger-opened shape addresses fields by
@@ -909,7 +915,11 @@ def _edit_block(
         )
         if failure is not None:
             return failure
-        ledger.saved += 1
+        # Pre-refactor semantics: saved_count only counted rows whose save
+        # was actually confirmed on hh.ru -- a dry-run row leaves through
+        # Cancel and must not read as "saved" (#1048 review round 1).
+        if not dry_run:
+            ledger.saved += 1
     return ledger.done(dry_run=dry_run)
 
 
