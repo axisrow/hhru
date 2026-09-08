@@ -413,6 +413,464 @@ def _dump_save_failure(page, index: int, kind: str, exc: Exception) -> None:
         )
 
 
+@dataclass(frozen=True)
+class _FormShape:
+    """Controls of one rendered shape of the education editor (#857).
+
+    The SAME semantic editor renders with different save/cancel data-qa and a
+    different hydration marker depending on the entry point; every block's
+    config carries its own shapes, so no conditional selector assignment is
+    left distributed across the flow (#1048)."""
+
+    save: str
+    cancel: str
+    # Editor hydration marker proving THIS shape rendered: the institution
+    # input on primary (the #812 always-present field); the editor's own save
+    # control on additional, whose inputs expose no data-qa at all (live
+    # probe 2026-08-30: present on the rendered form, absent before it).
+    marker: str
+
+
+@dataclass(frozen=True)
+class _BlockConfig:
+    """Everything primary/additional-specific about one education block.
+
+    Built by the per-kind adapters below; the shared flow reads only this
+    configuration and never branches on ``additional``."""
+
+    kind: str
+    trigger: str
+    add_selector: str
+    route: re.Pattern[str]
+    trigger_shape: _FormShape
+    # Resume-scoped direct route used when neither the row trigger nor the
+    # Add link rendered (#857). ``None`` means the block has no confirmed
+    # direct way in and fails closed instead (primary).
+    direct_shape: _FormShape | None
+    direct_path: str
+    # The confirmed Add link is the only safe way to create a missing row.
+    # Never guess an unverified route or API endpoint.
+    field_names: tuple[str, ...]
+    # The trigger-opened route must bind the form to the requested resume via
+    # the ``resumeFrom`` query parameter (#788); the direct route carries the
+    # resume_id in its path instead.
+    binds_resume_query: bool
+    # Marker that ALWAYS renders on the resume page even when this block's
+    # own card legitimately does not (#857) -- completes the pre-loop
+    # hydration marker set. ``None`` for primary: its own markers cover it.
+    fallback_marker: str | None
+
+
+def _primary_block_config() -> _BlockConfig:
+    """Primary adapter: one shape, data-qa fields, profile-layout controls
+    (live probes 2026-08-18/30)."""
+    shape = _FormShape(
+        save=SAVE_BUTTON, cancel=CANCEL_BUTTON, marker=_PRIMARY_FIELDS["institution"]
+    )
+    return _BlockConfig(
+        kind="primary",
+        trigger=PRIMARY_TRIGGER,
+        add_selector=PRIMARY_ADD,
+        route=PRIMARY_ROUTE,
+        trigger_shape=shape,
+        direct_shape=None,
+        direct_path="",
+        field_names=tuple(_PRIMARY_FIELDS),
+        binds_resume_query=True,
+        fallback_marker=None,
+    )
+
+
+def _additional_block_config() -> _BlockConfig:
+    """Additional adapter: TWO shapes of the same editor (#857 live drill).
+
+    Opened through the resume card's row trigger it renders profile-layout
+    save/cancel (the SAME controls as primary) and data-qa fields with EMPTY
+    label bindings; the resume-partial-edit buttons are count=0 there
+    (confirmed live by clicking the trigger and dumping the controls, no save
+    pressed). Opened through the resume-scoped direct route it renders
+    resume-partial-edit save/cancel and label-bound Magritte inputs with no
+    data-qa."""
+    return _BlockConfig(
+        kind="additional",
+        trigger=ADDITIONAL_TRIGGER,
+        add_selector=ADDITIONAL_ADD,
+        route=ADDITIONAL_ROUTE,
+        trigger_shape=_FormShape(save=SAVE_BUTTON, cancel=CANCEL_BUTTON, marker=SAVE_BUTTON),
+        direct_shape=_FormShape(
+            save=ADDITIONAL_SAVE_BUTTON,
+            cancel=ADDITIONAL_CANCEL_BUTTON,
+            marker=ADDITIONAL_SAVE_BUTTON,
+        ),
+        direct_path=ADDITIONAL_DIRECT_PATH,
+        field_names=tuple(_ADDITIONAL_LABELS),
+        binds_resume_query=False,
+        fallback_marker=PRIMARY_EDUCATION_CARD,
+    )
+
+
+@dataclass(frozen=True)
+class _RowOutcome:
+    """Outcome of one row's stage (#1048).
+
+    ``clicked`` means the Save click already fired -- every failure after it
+    is a post-click ambiguity class and must read ``uncertain`` regardless of
+    what the local timeout suggested. ``uncertain`` flags failures that are
+    ambiguous on their own (post-save unconfirmed, uncheckable record).
+    Pre-click failures carry neither: they are clean, retryable failures."""
+
+    ok: bool
+    reason: str = ""
+    uncertain: bool = False
+    clicked: bool = False
+
+
+_ROW_OK = _RowOutcome(ok=True)
+
+
+@dataclass
+class _BlockLedger:
+    """Shared accumulator folding per-row outcomes into one EducationResult.
+
+    Saved rows count toward ``uncertain`` on any later failure: after one
+    record reached hh.ru, a subsequent failure leaves the block's final state
+    partially unknown (#352/#331 pattern)."""
+
+    cfg: _BlockConfig
+    total: int
+    saved: int = 0
+    # Save click fired on the CURRENT row; reset before each row. Mirrors the
+    # old save_clicked flag: exceptions after the click are post-click
+    # ambiguities, exceptions before it are not.
+    row_clicked: bool = False
+
+    def fail(self, outcome: _RowOutcome) -> EducationResult:
+        uncertain = outcome.uncertain or outcome.clicked or self.row_clicked or self.saved > 0
+        return EducationResult(
+            self.cfg.kind, False, outcome.reason, uncertain=uncertain, saved=self.saved
+        )
+
+    def done(self, *, dry_run: bool) -> EducationResult:
+        reason = f"обработано записей: {self.total}" + (
+            "; save не нажимался" if dry_run else "; сохранение подтверждено возвратом на резюме"
+        )
+        return EducationResult(self.cfg.kind, True, reason, saved=self.saved)
+
+
+def _open_row_form(
+    page,
+    cfg: _BlockConfig,
+    index: int,
+    *,
+    shape: _FormShape,
+    trigger_selector: str,
+    direct: bool,
+    resume_id: str,
+) -> None:
+    """Stage 1: open the editor for one row; ``shape`` says which controls to
+    expect. Raises RuntimeError/PlaywrightError on open failure (the row
+    driver catches it -- same fail-closed contract as before #1048)."""
+    if direct:
+        goto_hh(page, f"{HH_BASE_URL}{cfg.direct_path.format(resume_id=resume_id)}")
+        page.locator(shape.marker).first.wait_for(state="visible", timeout=FORM_TIMEOUT_MS)
+        current_path = urlsplit(page.url).path
+        path_parts = [part for part in current_path.split("/") if part]
+        expected_parts = [
+            part for part in cfg.direct_path.format(resume_id=resume_id).split("/") if part
+        ]
+        if path_parts != expected_parts:
+            raise RuntimeError(f"форма доп. образования открыта не для того резюме: {page.url}")
+        return
+    open_hydrated_resume_editor(
+        page,
+        trigger_selector=trigger_selector,
+        editor_selector=shape.marker,
+        profile_path=f"/resume/{resume_id}",
+        edit_path=cfg.route,
+        timeout=FORM_TIMEOUT_MS,
+        trigger_error=f"триггер образования {index} не найден однозначно",
+        open_error=f"форма образования {index} не открылась",
+        wrong_route_error=f"форма образования {index} открыта не для того резюме",
+        expected_query={"resumeFrom": resume_id} if cfg.binds_resume_query else None,
+    )
+
+
+def _fill_row(
+    page,
+    cfg: _BlockConfig,
+    record: EducationRecord,
+    *,
+    index: int,
+    trigger_shape: bool,
+) -> _RowOutcome:
+    """Stage 2: fill and verify every non-empty field, then require one full
+    stable pass (#956) before Save is allowed. Pre-click only -- every
+    failure here leaves before save.click(), so it is a clean retryable
+    failure, never uncertain by itself (#825)."""
+    additional = cfg.kind == "additional"
+    filled: list[tuple[str, str]] = []
+    for name in cfg.field_names:
+        value = getattr(record, name)
+        # Empty LLM fields mean "unknown", not "erase the current value".
+        # This protects prefill and also makes a partial from-scratch plan
+        # fail closed rather than destroy data already on hh.ru.
+        if not value:
+            continue
+        try:
+            locator = _field_locator(page, name, additional=additional, trigger_shape=trigger_shape)
+        except PageStateIndeterminate as exc:
+            return _RowOutcome(False, str(exc))
+        if not _fill_and_verify(page, locator, value):
+            # #825: the field accepted fill() but the DOM value did not stick
+            # within FIELD_VERIFY_TIMEOUT_MS -- clicking Save on a field the
+            # form itself disagrees with only reproduces the observed live
+            # failure (hh.ru's client-side validation rejects the empty
+            # field, Save no-ops, wait_for_url times out).
+            _dump_save_failure(
+                page,
+                index,
+                cfg.kind,
+                RuntimeError(f"поле {name!r} не сохранило значение после fill()"),
+            )
+            return _RowOutcome(
+                False,
+                f"строка {index}: поле {name!r} не приняло значение "
+                f"(осталось {locator.input_value()!r} вместо {value!r})",
+            )
+        filled.append((name, value))
+    if not _pre_save_stable(page, filled, additional=additional, trigger_shape=trigger_shape):
+        # #956: the clearing re-render may land after the LAST field was
+        # verified (live dump: every field empty at the click). Fail closed
+        # BEFORE clicking Save if the form would not hold the values.
+        _dump_save_failure(
+            page, index, cfg.kind, RuntimeError("форма сбросила значения полей перед сохранением")
+        )
+        return _RowOutcome(
+            False, f"строка {index}: поля сброшены формой перед сохранением, Save не нажат"
+        )
+    return _ROW_OK
+
+
+def _confirm_row(
+    page,
+    cfg: _BlockConfig,
+    record: EducationRecord,
+    *,
+    index: int,
+    shape: _FormShape,
+    direct: bool,
+    resume_id: str,
+    ledger: _BlockLedger,
+) -> _RowOutcome:
+    """Stage 3: click Save and prove the record landed (#825/#868/#857).
+
+    Every failure after save.click() is a post-click ambiguity: the click may
+    have reached hh.ru, so the outcome is uncertain regardless of which local
+    timeout reported it. ``commit не значит отрисовано``: timeout as such is
+    never proof of failure -- identity and the record's own text decide."""
+    save = page.locator(shape.save)
+    if save.count() != 1:
+        return _RowOutcome(False, "кнопка сохранения не найдена однозначно")
+    # #825: живой прогон подтвердил, что hh.ru показывает информер
+    # cookie-политики fixed внизу экрана на свежей навигации, и он может
+    # оставаться в DOM 40+ секунд -- всё это время он физически перекрывает
+    # кнопку Save, и клик по перекрытому узлу молча не долетает до формы (см.
+    # комментарий у dismiss_cookie_banner в browser.py). Дисмисс — best-effort
+    # прямо перед кликом, а не один раз при открытии страницы.
+    dismiss_cookie_banner(page)
+    ledger.row_clicked = True
+    save.click()
+    navigation_error: PlaywrightError | None = None
+    try:
+        # Trailing "**" (#958 follow-up, #960): the post-save redirect
+        # carries a query suffix (live log 2026-09-03, experience editor:
+        # navigated to ".../resume/{id}?hhtmFrom=profile_experience") — and a
+        # bare glob is a FULL match, so the wait would time out although the
+        # navigation happened. "**" (not "*") also matches a trailing slash;
+        # the identity checks below still guard the result.
+        page.wait_for_url(f"**/resume/{resume_id}**", wait_until="commit", timeout=SAVE_TIMEOUT_MS)
+    except PlaywrightError as exc:
+        # #825: явный короткий SAVE_TIMEOUT_MS вместо дефолтных 90с. Живой
+        # прогон нашёл случай (аналог #179 из CLAUDE.md): hh.ru сменил
+        # page.url на адрес резюме и запись реально появилась в DOM, но
+        # wait_for_url(wait_until="commit") всё равно истёк -- SPA/pushState
+        # не обязана поднимать lifecycle-событие документа. Таймаут здесь --
+        # НЕ доказательство неудачи: если identity и текст записи
+        # подтверждаются ниже, результат success, а не ложный uncertain.
+        navigation_error = exc
+    # ``commit`` only proves navigation, not React hydration. The saved row
+    # is a screen-local marker that cannot be present on the editor route;
+    # waiting for it separates a slow render from an actually
+    # missing/incorrect resume route (#868) and lets the URL settle after a
+    # SPA pushState navigation that timed out in Playwright.
+    post_save_marker_selector = (
+        PRIMARY_EDUCATION_CARD if direct else cfg.trigger.format(index=index)
+    )
+    resume_marker = page.locator(post_save_marker_selector).first
+    try:
+        resume_marker.wait_for(state="visible", timeout=POST_SAVE_RESUME_WAIT_TIMEOUT_MS)
+    except PlaywrightError as marker_exc:
+        logger.warning(
+            "resume_education: post-save marker unavailable; url=%s marker_count=%s "
+            "navigation_error=%s marker_error=%s",
+            page.url,
+            page.locator(post_save_marker_selector).count(),
+            navigation_error,
+            marker_exc,
+        )
+        failure = navigation_error or marker_exc
+        _dump_save_failure(page, index, cfg.kind, failure)
+        return _RowOutcome(
+            False, f"сохранение не подтверждено после клика: {failure}", uncertain=True
+        )
+    logger.info(
+        "resume_education: post-save marker visible; url=%s marker_count=%s navigation_error=%s",
+        page.url,
+        page.locator(post_save_marker_selector).count(),
+        navigation_error,
+    )
+    if not resume_identity_matches(page, resume_id):
+        # #825 review: dump the exact post-hydration state rather than
+        # attributing a selector race to identity blindly.
+        _dump_save_failure(page, index, cfg.kind, RuntimeError("identity резюме не подтверждён"))
+        return _RowOutcome(False, "после сохранения identity резюме не подтверждён", uncertain=True)
+    # #825: navigation back to the resume page is not itself proof the record
+    # was written -- live investigation found a case where a field silently
+    # reverted to empty (Magritte combobox race, unrelated to this click) with
+    # the URL still changing normally. The positive signal is the record's own
+    # institution text now visible on the resume page, mirroring the
+    # reload-and-recount check already used for experience rows
+    # (#787/experience.py) -- proportional here to one text() read rather than
+    # a full recount, since education entries are addressed by index, not by a
+    # growing count of new rows.
+    #
+    # #825 review: an empty institution_value (both institution and
+    # organization blank) must not silently skip this check --
+    # _record()/CLI manual-entry parsing already require a non-empty
+    # institution before a plan reaches this function, so an empty value here
+    # means the record itself is malformed in a way that earlier validation
+    # should have caught. Fail closed rather than treat "nothing to check" as
+    # "verified".
+    institution_value = record.institution or record.organization
+    if not institution_value:
+        return _RowOutcome(
+            False,
+            f"строка {index}: запись без institution/organization -- "
+            "результат сохранения не проверяем",
+            uncertain=True,
+        )
+    # #857 (live drill): the text check races the SPA's hydration of the
+    # resume page -- wait_for_url(commit) confirms the URL, not the rendered
+    # card, so an immediate get_by_text().count() saw 0 for a record hh.ru had
+    # genuinely saved (the record appeared once hydration finished, confirmed
+    # by a follow-up read-only probe). Poll for the text within a bounded
+    # budget (FORM_TIMEOUT_MS, not FIELD_VERIFY_TIMEOUT_MS -- the live drill's
+    # card rendered well after 3s) instead of trusting a single immediate
+    # read.
+    text_deadline = time.monotonic() + FORM_TIMEOUT_MS / 1000
+    while True:
+        if page.get_by_text(institution_value).count() > 0:
+            return _ROW_OK
+        if time.monotonic() >= text_deadline:
+            _dump_save_failure(
+                page,
+                index,
+                cfg.kind,
+                RuntimeError(f"{institution_value!r} не найден на резюме после сохранения"),
+            )
+            return _RowOutcome(
+                False,
+                f"строка {index}: запись не отображается на резюме после сохранения "
+                f"({institution_value!r} не найден)",
+                uncertain=True,
+            )
+        page.wait_for_timeout(FIELD_VERIFY_POLL_MS)
+
+
+def _process_row(
+    page,
+    cfg: _BlockConfig,
+    record: EducationRecord,
+    *,
+    index: int,
+    dry_run: bool,
+    resume_id: str,
+    ledger: _BlockLedger,
+) -> EducationResult | None:
+    """Open -> fill -> confirm for one row (issue #1048).
+
+    Returns a terminal EducationResult on failure, None when the row is done
+    (saved, or left via Cancel in dry-run -- Save is never pressed in
+    dry-run)."""
+    button = page.locator(cfg.trigger.format(index=index))
+    button_count = button.count()
+    if button_count > 1:
+        return ledger.fail(_RowOutcome(False, f"триггер образования {index} не найден однозначно"))
+    if button_count == 0:
+        add = page.locator(cfg.add_selector)
+        if add.count() != 1 and cfg.direct_shape is None:
+            return ledger.fail(
+                _RowOutcome(
+                    False,
+                    f"строка образования {index} отсутствует, подтвержденная кнопка Добавить "
+                    "не найдена однозначно",
+                )
+            )
+    # #857: additional with neither an existing row trigger nor the Add link
+    # (no card at all -- zero attached profile entries) opens the form through
+    # its resume-scoped direct route instead. The resume_id is part of the
+    # URL, so the identity check in _open_row_form binds the form to the
+    # right resume; nothing is scoped to a clickable trigger that does not
+    # exist.
+    direct = False
+    shape = cfg.trigger_shape
+    if cfg.direct_shape is not None and button_count == 0 and button.count() != 1:
+        direct = True
+        shape = cfg.direct_shape
+    # #857: the additional form's trigger-opened shape addresses fields by
+    # data-qa with empty label bindings, its direct-route shape by visible
+    # label; primary is always data-qa.
+    trigger_shape = not direct and cfg.direct_shape is not None
+    ledger.row_clicked = False
+    try:
+        _open_row_form(
+            page,
+            cfg,
+            index,
+            shape=shape,
+            trigger_selector=(
+                cfg.trigger.format(index=index) if button_count == 1 else cfg.add_selector
+            ),
+            direct=direct,
+            resume_id=resume_id,
+        )
+        outcome = _fill_row(page, cfg, record, index=index, trigger_shape=trigger_shape)
+        if not outcome.ok:
+            return ledger.fail(outcome)
+        if dry_run:
+            page.locator(shape.cancel).first.click()
+            return None
+        outcome = _confirm_row(
+            page,
+            cfg,
+            record,
+            index=index,
+            shape=shape,
+            direct=direct,
+            resume_id=resume_id,
+            ledger=ledger,
+        )
+        if not outcome.ok:
+            return ledger.fail(outcome)
+        return None
+    except (PlaywrightError, RuntimeError) as exc:
+        # open_hydrated_resume_editor raises RuntimeError (not PlaywrightError)
+        # for trigger-not-found/open-failed/wrong-route — a hydration failure
+        # on a later row must not escape _edit_block uncaught after an earlier
+        # row already saved (#352/#331 pattern, codex round 1 finding on #368).
+        return ledger.fail(_RowOutcome(False, f"ошибка UI: {exc}"))
+
+
 def _edit_block(
     page,
     records: list[EducationRecord],
@@ -421,18 +879,10 @@ def _edit_block(
     dry_run: bool,
     resume_id: str,
 ) -> EducationResult:
-    trigger = ADDITIONAL_TRIGGER if additional else PRIMARY_TRIGGER
-    add_selector = ADDITIONAL_ADD if additional else PRIMARY_ADD
-    route = ADDITIONAL_ROUTE if additional else PRIMARY_ROUTE
-    save_selector = ADDITIONAL_SAVE_BUTTON if additional else SAVE_BUTTON
-    cancel_selector = ADDITIONAL_CANCEL_BUTTON if additional else CANCEL_BUTTON
-    # Field names are identical for both blocks; only the way a field is
-    # addressed differs (data-qa on primary, visible label on additional).
-    field_names = tuple(_ADDITIONAL_LABELS if additional else _PRIMARY_FIELDS)
-    kind = "additional" if additional else "primary"
-    saved_count = 0
+    cfg = _additional_block_config() if additional else _primary_block_config()
+    ledger = _BlockLedger(cfg, len(records))
     if not records:
-        return EducationResult(kind, True, "нет записей для изменения")
+        return EducationResult(cfg.kind, True, "нет записей для изменения")
     # #812: goto_hh only guarantees URL commit, not rendered DOM (CLAUDE.md,
     # "commit не значит отрисовано") -- the resume page hydrates the
     # education card asynchronously, and a strict count() right after goto_hh
@@ -441,358 +891,26 @@ def _edit_block(
     # this section is never legitimately absent), so exactly one of the
     # possible markers must eventually appear. #857: for the additional block
     # the card and Add link may BOTH legitimately never render (no attached
-    # entries), so the always-present primary education card completes the
-    # marker set there; the per-row logic below reaches the form through the
-    # direct route in that case.
-    pre_loop = page.locator(trigger.format(index=0)).or_(page.locator(add_selector))
-    if additional:
-        pre_loop = pre_loop.or_(page.locator(PRIMARY_EDUCATION_CARD))
+    # entries), so the always-present primary education card (the adapter's
+    # fallback_marker) completes the marker set there; the per-row logic then
+    # reaches the form through the direct route in that case.
+    pre_loop = page.locator(cfg.trigger.format(index=0)).or_(page.locator(cfg.add_selector))
+    if cfg.fallback_marker is not None:
+        pre_loop = pre_loop.or_(page.locator(cfg.fallback_marker))
     try:
         pre_loop.first.wait_for(state="visible", timeout=FORM_TIMEOUT_MS)
     except PlaywrightTimeoutError as exc:
-        return EducationResult(
-            kind,
-            False,
-            f"блок образования не отобразился за {FORM_TIMEOUT_MS}мс: {exc}",
+        return ledger.fail(
+            _RowOutcome(False, f"блок образования не отобразился за {FORM_TIMEOUT_MS}мс: {exc}")
         )
     for index, record in enumerate(records):
-        button = page.locator(trigger.format(index=index))
-        button_count = button.count()
-        if button_count > 1:
-            return EducationResult(
-                kind,
-                False,
-                f"триггер образования {index} не найден однозначно",
-                uncertain=saved_count > 0,
-                saved=saved_count,
-            )
-        if button_count == 0:
-            # The confirmed Add link is the only safe way to create a missing
-            # row. Never guess an unverified route or API endpoint.
-            button = page.locator(add_selector)
-            if button.count() != 1 and not additional:
-                return EducationResult(
-                    kind,
-                    False,
-                    f"строка образования {index} отсутствует, подтвержденная кнопка Добавить "
-                    "не найдена однозначно",
-                    uncertain=saved_count > 0,
-                    saved=saved_count,
-                )
-        # #857: additional with neither an existing row trigger nor the Add
-        # link (no card at all -- zero attached profile entries) opens the
-        # form through its resume-scoped direct route instead. The resume_id
-        # is part of the URL, so the identity check below binds the form to
-        # the right resume; nothing is scoped to a clickable trigger that
-        # does not exist.
-        direct_route = additional and button_count == 0 and button.count() != 1
-        # #857 (live drill): the additional form renders TWO control shapes
-        # depending on how it was opened. Opened through the direct route it
-        # carries resume-partial-edit-save/cancel (as the 2026-08-30 probe
-        # that picked these selectors saw); opened through the resume card's
-        # row trigger it renders profile-layout-save-button/cancel-button --
-        # the SAME controls as the primary editor -- and the
-        # resume-partial-edit buttons are count=0 there (confirmed live by
-        # clicking the trigger and dumping the controls, no save pressed).
-        # The editor hydration marker follows the same choice.
-        if additional and not direct_route:
-            row_save_selector = SAVE_BUTTON
-            row_cancel_selector = CANCEL_BUTTON
-        else:
-            row_save_selector = save_selector
-            row_cancel_selector = cancel_selector
-        save_clicked = False
-        try:
-            if direct_route:
-                goto_hh(page, f"{HH_BASE_URL}{ADDITIONAL_DIRECT_PATH.format(resume_id=resume_id)}")
-                editor_marker = page.locator(row_save_selector)
-                editor_marker.first.wait_for(state="visible", timeout=FORM_TIMEOUT_MS)
-                current_path = urlsplit(page.url).path
-                path_parts = [part for part in current_path.split("/") if part]
-                if path_parts != ["resume", "edit", resume_id, "additionalEducation"]:
-                    raise RuntimeError(
-                        f"форма доп. образования открыта не для того резюме: {page.url}"
-                    )
-            else:
-                open_hydrated_resume_editor(
-                    page,
-                    trigger_selector=(
-                        trigger.format(index=index) if button_count == 1 else add_selector
-                    ),
-                    # The additional form exposes no data-qa on its inputs, so its
-                    # hydration marker is the editor's own save control (live probe
-                    # 2026-08-30: present on the rendered form, absent before it).
-                    editor_selector=(
-                        row_save_selector if additional else _PRIMARY_FIELDS["institution"]
-                    ),
-                    profile_path=f"/resume/{resume_id}",
-                    edit_path=route,
-                    timeout=FORM_TIMEOUT_MS,
-                    trigger_error=f"триггер образования {index} не найден однозначно",
-                    open_error=f"форма образования {index} не открылась",
-                    wrong_route_error=f"форма образования {index} открыта не для того резюме",
-                    expected_query={"resumeFrom": resume_id} if not additional else None,
-                )
-            for name in field_names:
-                value = getattr(record, name)
-                # Empty LLM fields mean "unknown", not "erase the current value".
-                # This protects prefill and also makes a partial from-scratch plan
-                # fail closed rather than destroy data already on hh.ru.
-                if not value:
-                    continue
-                try:
-                    locator = _field_locator(
-                        page,
-                        name,
-                        additional=additional,
-                        trigger_shape=additional and not direct_route,
-                    )
-                except PageStateIndeterminate as exc:
-                    return EducationResult(
-                        kind,
-                        False,
-                        str(exc),
-                        uncertain=saved_count > 0,
-                        saved=saved_count,
-                    )
-                if not _fill_and_verify(page, locator, value):
-                    # #825: the field accepted fill() but the DOM value did not
-                    # stick within FIELD_VERIFY_TIMEOUT_MS -- clicking Save on a
-                    # field the form itself disagrees with only reproduces the
-                    # observed live failure (hh.ru's client-side validation
-                    # rejects the empty field, Save no-ops, wait_for_url times
-                    # out). No click has happened yet on this row, so this is a
-                    # clean pre-click failure, not uncertain.
-                    _dump_save_failure(
-                        page,
-                        index,
-                        kind,
-                        RuntimeError(f"поле {name!r} не сохранило значение после fill()"),
-                    )
-                    return EducationResult(
-                        kind,
-                        False,
-                        f"строка {index}: поле {name!r} не приняло значение "
-                        f"(осталось {locator.input_value()!r} вместо {value!r})",
-                        uncertain=saved_count > 0,
-                        saved=saved_count,
-                    )
-            # #956: per-field verification happened during the loop above, but
-            # the clearing re-render may land after the LAST field was verified
-            # (live dump: every field empty at the click). Fail closed BEFORE
-            # clicking Save if the form would not hold the values.
-            filled_fields = [
-                (name, getattr(record, name)) for name in field_names if getattr(record, name)
-            ]
-            if not _pre_save_stable(
-                page,
-                filled_fields,
-                additional=additional,
-                trigger_shape=additional and not direct_route,
-            ):
-                _dump_save_failure(
-                    page,
-                    index,
-                    kind,
-                    RuntimeError("форма сбросила значения полей перед сохранением"),
-                )
-                return EducationResult(
-                    kind,
-                    False,
-                    f"строка {index}: поля сброшены формой перед сохранением, Save не нажат",
-                    uncertain=saved_count > 0,
-                    saved=saved_count,
-                )
-            if dry_run:
-                page.locator(row_cancel_selector).first.click()
-            else:
-                save = page.locator(row_save_selector)
-                if save.count() != 1:
-                    return EducationResult(
-                        kind,
-                        False,
-                        "кнопка сохранения не найдена однозначно",
-                        uncertain=saved_count > 0,
-                        saved=saved_count,
-                    )
-                # #825: живой прогон подтвердил, что hh.ru показывает информер
-                # cookie-политики fixed внизу экрана на свежей навигации, и он
-                # может оставаться в DOM 40+ секунд -- всё это время он
-                # физически перекрывает кнопку Save, и клик по перекрытому
-                # узлу молча не долетает до формы (см. комментарий у
-                # dismiss_cookie_banner в browser.py). Дисмисс — best-effort
-                # прямо перед кликом, а не один раз при открытии страницы: то
-                # же самое расследование увидело баннер как до, так и после
-                # открытия формы редактирования.
-                dismiss_cookie_banner(page)
-                save_clicked = True
-                save.click()
-                navigation_error: PlaywrightError | None = None
-                try:
-                    # Trailing "**" (#958 follow-up, #960): the post-save
-                    # redirect carries a query suffix (live log 2026-09-03,
-                    # experience editor: navigated to ".../resume/{id}?hhtmFrom=
-                    # profile_experience") — and a bare glob is a FULL match, so
-                    # the wait would time out although the navigation happened.
-                    # "**" (not "*") also matches a trailing slash, i.e. the
-                    # "/resume/{id}/" redirect shape from PR #958 review
-                    # cycle 3; the identity checks below still guard the result.
-                    page.wait_for_url(
-                        f"**/resume/{resume_id}**", wait_until="commit", timeout=SAVE_TIMEOUT_MS
-                    )
-                except PlaywrightError as exc:
-                    # #825: раньше здесь не было явного timeout -- Playwright
-                    # дефолтился на context-wide GOTO_TIMEOUT_MS (90с), так что
-                    # неудача проявлялась только через полторы минуты и без
-                    # единой зацепки, почему save не сработал. Короткий явный
-                    # SAVE_TIMEOUT_MS делает отказ быстрым, а дамп страницы
-                    # прямо в момент отказа делает следующее расследование
-                    # воспроизводимым без повторного похода в live-браузер.
-                    #
-                    # Живой прогон нашёл конкретный случай (аналог #179 из
-                    # CLAUDE.md для формы отклика): hh.ru сменил page.url на
-                    # адрес резюме и запись реально появилась в DOM, но
-                    # wait_for_url(wait_until="commit") всё равно истёк по
-                    # таймауту -- SPA/pushState-навигация не обязана поднимать
-                    # то же lifecycle-событие документа, которого ждёт
-                    # Playwright. Таймаут здесь -- НЕ доказательство неудачи
-                    # (то же рассуждение, что и для "коммит не значит
-                    # отрисовано" в CLAUDE.md, только в обратную сторону):
-                    # если identity и текст записи всё же подтверждаются,
-                    # результат success, а не ложный uncertain.
-                    navigation_error = exc
-                # ``commit`` only proves navigation, not React hydration.  The
-                # saved row is a screen-local marker that cannot be present on
-                # the editor route; waiting for it separates a slow render from
-                # an actually missing/incorrect resume route.  In particular,
-                # this also gives the URL a chance to settle after a SPA
-                # pushState navigation that timed out in Playwright.
-                post_save_marker_selector = (
-                    PRIMARY_EDUCATION_CARD if direct_route else trigger.format(index=index)
-                )
-                resume_marker = page.locator(post_save_marker_selector).first
-                try:
-                    resume_marker.wait_for(
-                        state="visible", timeout=POST_SAVE_RESUME_WAIT_TIMEOUT_MS
-                    )
-                except PlaywrightError as marker_exc:
-                    logger.warning(
-                        "resume_education: post-save marker unavailable; url=%s marker_count=%s "
-                        "navigation_error=%s marker_error=%s",
-                        page.url,
-                        page.locator(post_save_marker_selector).count(),
-                        navigation_error,
-                        marker_exc,
-                    )
-                    failure = navigation_error or marker_exc
-                    _dump_save_failure(page, index, kind, failure)
-                    return EducationResult(
-                        kind,
-                        False,
-                        f"сохранение не подтверждено после клика: {failure}",
-                        uncertain=True,
-                        saved=saved_count,
-                    )
-                logger.info(
-                    "resume_education: post-save marker visible; url=%s marker_count=%s "
-                    "navigation_error=%s",
-                    page.url,
-                    page.locator(post_save_marker_selector).count(),
-                    navigation_error,
-                )
-                if not resume_identity_matches(page, resume_id):
-                    # #825 review: dump the exact post-hydration state rather
-                    # than attributing a selector race to identity blindly.
-                    _dump_save_failure(
-                        page, index, kind, RuntimeError("identity резюме не подтверждён")
-                    )
-                    return EducationResult(
-                        kind,
-                        False,
-                        "после сохранения identity резюме не подтверждён",
-                        uncertain=True,
-                        saved=saved_count,
-                    )
-                # #825: navigation back to the resume page is not itself proof
-                # the record was written -- live investigation found a case
-                # where a field silently reverted to empty (Magritte combobox
-                # race, unrelated to this click) with the URL still changing
-                # normally. The positive signal is the record's own institution
-                # text now visible on the resume page, mirroring the
-                # reload-and-recount check already used for experience rows
-                # (#787/experience.py) -- proportional here to one text() read
-                # rather than a full recount, since education entries are
-                # addressed by index, not by a growing count of new rows.
-                #
-                # #825 review: an empty institution_value (both institution and
-                # organization blank) must not silently skip this check --
-                # _record()/CLI manual-entry parsing already require a non-empty
-                # institution before a plan reaches this function, so an empty
-                # value here means the record itself is malformed in a way that
-                # earlier validation should have caught. Fail closed rather than
-                # treat "nothing to check" as "verified".
-                institution_value = record.institution or record.organization
-                if not institution_value:
-                    return EducationResult(
-                        kind,
-                        False,
-                        f"строка {index}: запись без institution/organization -- "
-                        "результат сохранения не проверяем",
-                        uncertain=True,
-                        saved=saved_count,
-                    )
-                # #857 (live drill): the text check races the SPA's hydration
-                # of the resume page -- wait_for_url(commit) confirms the URL,
-                # not the rendered card, so an immediate get_by_text().count()
-                # saw 0 for a record hh.ru had genuinely saved (the record
-                # appeared once hydration finished, confirmed by a follow-up
-                # read-only probe). Poll for the text within a bounded budget
-                # (same "commit не значит отрисовано" class as the pre-loop
-                # wait above; FORM_TIMEOUT_MS, not FIELD_VERIFY_TIMEOUT_MS --
-                # the live drill's card rendered well after 3s) instead of
-                # trusting a single immediate read.
-                text_deadline = time.monotonic() + FORM_TIMEOUT_MS / 1000
-                while True:
-                    if page.get_by_text(institution_value).count() > 0:
-                        break
-                    if time.monotonic() >= text_deadline:
-                        _dump_save_failure(
-                            page,
-                            index,
-                            kind,
-                            RuntimeError(
-                                f"{institution_value!r} не найден на резюме после сохранения"
-                            ),
-                        )
-                        return EducationResult(
-                            kind,
-                            False,
-                            f"строка {index}: запись не отображается на резюме после сохранения "
-                            f"({institution_value!r} не найден)",
-                            uncertain=True,
-                            saved=saved_count,
-                        )
-                    page.wait_for_timeout(FIELD_VERIFY_POLL_MS)
-                saved_count += 1
-        except (PlaywrightError, RuntimeError) as exc:
-            # open_hydrated_resume_editor raises RuntimeError (not PlaywrightError)
-            # for trigger-not-found/open-failed/wrong-route — a hydration failure
-            # on a later row must not escape _edit_block uncaught after an earlier
-            # row already saved (#352/#331 pattern, codex round 1 finding on #368).
-            return EducationResult(
-                kind,
-                False,
-                f"ошибка UI: {exc}",
-                uncertain=save_clicked or saved_count > 0,
-                saved=saved_count,
-            )
-    return EducationResult(
-        kind,
-        True,
-        f"обработано записей: {len(records)}"
-        + ("; save не нажимался" if dry_run else "; сохранение подтверждено возвратом на резюме"),
-        saved=saved_count,
-    )
+        failure = _process_row(
+            page, cfg, record, index=index, dry_run=dry_run, resume_id=resume_id, ledger=ledger
+        )
+        if failure is not None:
+            return failure
+        ledger.saved += 1
+    return ledger.done(dry_run=dry_run)
 
 
 @dataclass(frozen=True)
