@@ -632,9 +632,11 @@ non-dry-run `apply` — диагностировать по `[WARN indeterminate
   и т.п.) в `__init__.py` не поднимаются — импортируются напрямую из модуля,
   где определены (см. `tests/test_scoring_ml.py`). Конфиг-секция скоринга живёт
   отдельно — в `config_sections/scoring.py`, в пакет `scoring/` не переносится.
-- **Схема SQLite — одна константа `SCHEMA` в `history.py`** (а не пакет `migrations/`):
+- **Схема SQLite — одна константа `SCHEMA` в `history_schema.py`** (а не пакет
+  `migrations/`); домены хранилища — миксины `history_*.py`, собираемые совместимым
+  фасадом `History` в `history.py` (#1035):
   `CREATE TABLE IF NOT EXISTS` для всех таблиц (`actions`, `responses`, `manual_offers`,
-  `skipped`, `replies` и другие — полный список см. `history.py`), применяется
+  `skipped`, `replies` и другие — полный список см. `history_schema.py`), применяется
   `_init_schema()` через `conn.executescript(SCHEMA)` в `History.__init__`.
   Системы миграций в проекте нет намеренно (оверинжиниринг для такого размера) — при
   сильных изменениях схемы базу пересоздают заново (данных мало). Не заводи DDL в `.sql`
