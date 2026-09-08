@@ -90,7 +90,7 @@ CHAT_MESSAGE_BOT_MARKER = "chat-bubble_bot"
 # Кнопки быстрых ответов робота-анкеты («Да»/«Нет»). data-qa у них нет —
 # адресация по класс-префиксам CSS-модулей (образец: resume_photo.py,
 # magritte-media-viewer___). Живой census 2026-09-08 (census --wait-ms 6000,
-# чат Банка ПСБ): <button> magritte-button_mode-secondary--<hash> внутри
+# чат робота-анкеты): <button> magritte-button_mode-secondary--<hash> внутри
 # div.buttons-wrapper--<hash> под вопросом бота; рендерятся с задержкой
 # гидратации ~6с ПОСЛЕ загрузки страницы — резолвер обязан ждать видимости,
 # а не читать count() сразу после goto.

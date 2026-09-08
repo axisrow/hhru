@@ -17,18 +17,18 @@ from hhru_bot.history import SCHEMA, History
 pytestmark = pytest.mark.unit
 
 
-def _mark(history: History, topic: str = "5558196272") -> None:
-    history.mark_robot_questionnaire(topic, vacancy_id="136418134", reason="robot_questionnaire")
+def _mark(history: History, topic: str = "100000001") -> None:
+    history.mark_robot_questionnaire(topic, vacancy_id="200000002", reason="robot_questionnaire")
 
 
 def test_marked_topic_is_pending_until_resolved(tmp_path):
     history = History(tmp_path / "h.db")
     _mark(history)
-    assert history.is_robot_questionnaire("5558196272") is True
+    assert history.is_robot_questionnaire("100000001") is True
 
-    history.resolve_robot_questionnaire("5558196272", answer="Нет")
+    history.resolve_robot_questionnaire("100000001", answer="Нет")
 
-    assert history.is_robot_questionnaire("5558196272") is False
+    assert history.is_robot_questionnaire("100000001") is False
     rows = history.list_robot_questionnaires()
     assert len(rows) == 1
     assert rows[0]["resolved_at"]
@@ -40,11 +40,11 @@ def test_double_resolve_overwrites_answer_for_multistep_questionnaires(tmp_path)
     ответа — повторный resolve легален и перезаписывает ответ свежим."""
     history = History(tmp_path / "h.db")
     _mark(history)
-    history.resolve_robot_questionnaire("5558196272", answer="Да")
-    history.resolve_robot_questionnaire("5558196272", answer="Нет")
-    row = history.robot_questionnaire_row("5558196272")
+    history.resolve_robot_questionnaire("100000001", answer="Да")
+    history.resolve_robot_questionnaire("100000001", answer="Нет")
+    row = history.robot_questionnaire_row("100000001")
     assert row["answer"] == "Нет"
-    assert history.is_robot_questionnaire("5558196272") is False
+    assert history.is_robot_questionnaire("100000001") is False
 
 
 def test_resolve_of_unknown_topic_is_fail_closed(tmp_path):
@@ -72,12 +72,12 @@ def test_legacy_db_without_columns_is_upgraded_in_place(tmp_path):
     )
     conn.execute(
         "INSERT INTO robot_questionnaires (topic, vacancy_id, reason, detected_at) "
-        "VALUES ('5558196272', '136418134', 'robot_questionnaire', '2026-09-08T12:00:00')"
+        "VALUES ('100000001', '200000002', 'robot_questionnaire', '2026-09-08T12:00:00')"
     )
     conn.commit()
     conn.close()
 
     history = History(path)
-    assert history.is_robot_questionnaire("5558196272") is True
-    history.resolve_robot_questionnaire("5558196272", answer="Нет")
-    assert history.is_robot_questionnaire("5558196272") is False
+    assert history.is_robot_questionnaire("100000001") is True
+    history.resolve_robot_questionnaire("100000001", answer="Нет")
+    assert history.is_robot_questionnaire("100000001") is False

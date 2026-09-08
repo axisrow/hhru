@@ -405,14 +405,21 @@ def click_quick_reply(page: Page, label: str) -> None:
 
     Fail-closed ДО клика: 0 или >1 совпадений — :class:`NoQuickReply`, на
     hh.ru следа нет. Повторный ``wait_for(visible)`` перед кликом — кнопка
-    могла перегидратироваться между резолвом и кликом.
+    могла перегидратироваться между резолвом и кликом; его таймаут тоже
+    :class:`NoQuickReply`, НЕ исключение клик-границы — клика ещё не было,
+    на hh.ru следа нет, повтор безопасен как ``failed`` (#163).
     """
     available = find_quick_replies(page)
     button = page.locator(QUICK_REPLY_BUTTONS_WRAPPER).get_by_role("button", name=label, exact=True)
     count = button.count()
     if count != 1:
         raise NoQuickReply(label, available=available)
-    button.first.wait_for(state="visible", timeout=3000)
+    try:
+        button.first.wait_for(state="visible", timeout=3000)
+    except PlaywrightError as exc:
+        # Кнопка посчитана в count(), но не отрисовалась до бюджета — клик ещё
+        # НЕ выполнялся, это отказ адресации, а не «исход клика неопределён».
+        raise NoQuickReply(label, available=available) from exc
     button.first.click()
 
 
