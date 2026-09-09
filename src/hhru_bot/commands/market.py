@@ -31,10 +31,12 @@ def register(subparsers) -> None:
 
 
 def run(args: argparse.Namespace) -> None:
-    from ..history import History
+    from ..market_store import MarketStore
     from ..report_market import market_summary
 
-    history = History(args.history)
+    # Рынок общий на все аккаунты (#1106): vacancies_seen живёт в data/market.db
+    # и читается всегда, независимо от --account/args.history.
+    history = MarketStore()
     rows = history.market_salary_by_query(include_estimates=args.estimates)
     print(market_summary(rows))
     ages = history.vacancy_age_distribution()

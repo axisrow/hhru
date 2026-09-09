@@ -556,7 +556,7 @@ def test_indeterminate_search_skips_resume_without_recording_partial_results(tmp
             partial_results=partial,
         )
 
-    def record_seen(cards, _query, _history):
+    def record_seen(cards, _query, _history, **_kwargs):
         record_seen_calls.append(cards)
 
     monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **k: _Context())
@@ -613,7 +613,7 @@ def _run_search_with_rank(monkeypatch, tmp_path, resumes, ranked):
         "hhru_bot.search.search_vacancies",
         lambda _page, _filters, max_pages: [card for card, _score, _b in ranked],
     )
-    monkeypatch.setattr(search_command_module(), "_record_seen", lambda cards, _q, _h: None)
+    monkeypatch.setattr(search_command_module(), "_record_seen", lambda cards, _q, _h, **_k: None)
     monkeypatch.setattr(
         "hhru_bot.search.filter_candidates", lambda cards, *a, **k: (list(cards), [])
     )
