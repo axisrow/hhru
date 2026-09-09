@@ -51,17 +51,44 @@ def register(subparsers) -> None:
     parser.set_defaults(func=run)
 
 
-def _letter(template: str, candidate: dict) -> str:
+def _letter(template: str, candidate: dict, title: str | None = None) -> str:
     from ..apply.letter import render_cover_letter
     from ..search import VacancyCard
 
     card = VacancyCard(
         vacancy_id=str(candidate["vacancy_id"]),
-        title=str(candidate["title"]),
+        title=title if title is not None else str(candidate["title"]),
         company=str(candidate.get("employer") or ""),
         url=f"https://hh.ru/vacancy/{candidate['vacancy_id']}",
     )
     return render_cover_letter(template, card)
+
+
+def _resolve_vacancy_title(page, candidate: dict, ssr_names: dict[str, str]) -> str | None:
+    """Название вакансии для письма (#1094): история → SSR-карточка → страница.
+
+    ``reply_candidates`` возвращает ``COALESCE(v.title, r.vacancy_id)``: чаты,
+    пришедшие мимо команды ``search`` (приглашения и т.п.), не имеют строки в
+    ``vacancies_seen`` — раньше это число молча подставлялось в
+    ``{vacancy_title}``. Теперь: title из истории, совпадающий с vacancy_id,
+    резолвится из SSR-карточки negotiations (``vacancyName``), затем read-only
+    чтением страницы вакансии (``fetch_vacancy_card``). Нигде не добыли —
+    None, вызывающий честно отказывается от отправки: письмо с числом
+    недопустимо (fail-closed).
+    """
+    vacancy_id = str(candidate["vacancy_id"])
+    if str(candidate["title"]) != vacancy_id:
+        return str(candidate["title"])
+    name = ssr_names.get(vacancy_id)
+    if name:
+        return name
+    from ..search import fetch_vacancy_card
+
+    try:
+        return fetch_vacancy_card(page, vacancy_id).title or None
+    except Exception as exc:  # noqa: BLE001 — резолв не должен валить прогон
+        print(f"[INFO] {vacancy_id}: страница вакансии не дала title ({exc})")
+        return None
 
 
 def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> bool:
@@ -157,6 +184,13 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
         # read_chat принимает Mapping[str, str] topic→chat_id, и менять его
         # контракт ради аналитического поля незачем.
         resume_by_topic = {ref.topic_id: ref.resume_id for ref in topic_list}
+        # #1094: название вакансии из SSR-карточки negotiations — первая
+        # ступень резолва после локальной истории (см. _resolve_vacancy_title).
+        ssr_vacancy_names = {
+            ref.vacancy_id: ref.vacancy_name
+            for ref in topic_list
+            if ref.vacancy_id and ref.vacancy_name
+        }
         for candidate in candidates:
             topic = str(candidate["topic"])
             label = f"{candidate['vacancy_id']} «{candidate['title']}» @ {candidate['employer']}"
@@ -320,6 +354,22 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                 print(f"[skip] {label} — {skip_reason}")
                 progress.skipped_count += 1
                 continue
+            # #1094: резолв названия ДО рендера письма и suggest — письмо с
+            # сырым vacancy_id вместо {vacancy_title} недопустимо. Локальная
+            # история покрывает только вакансии, виденные командой search;
+            # чаты-приглашения идут дальше по цепочке (SSR-карточка → read-only
+            # страница вакансии → отказ).
+            title = _resolve_vacancy_title(page, candidate, ssr_vacancy_names)
+            if title is None:
+                print(
+                    f"[FAIL] {label} — название вакансии не резолвится "
+                    "(история/SSR/страница вакансии), письмо не отправляем"
+                )
+                progress.failed_count += 1
+                failed = True
+                continue
+            if title != str(candidate["title"]):
+                label = f"{candidate['vacancy_id']} «{title}» @ {candidate['employer']}"
             # --follow-up/--suggest несовместимость проверена в run() до входа
             # сюда (sys.exit(1)); эта ветка её не дублирует, чтобы не оставлять
             # недостижимый код на случай прямого вызова _run() в обход run().
@@ -336,7 +386,7 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                                 inbound_marker=chat.inbound_marker or "",
                                 inbound_text=inbound.text,
                                 vacancy_id=str(candidate["vacancy_id"]),
-                                vacancy_title=str(candidate["title"]),
+                                vacancy_title=title,
                                 employer=str(candidate.get("employer") or ""),
                                 resume_id=resume_by_topic.get(topic),
                             )
@@ -358,7 +408,7 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                     progress.failed_count += 1
                     failed = True
                     continue
-            letter = _letter(template, candidate)
+            letter = _letter(template, candidate, title)
             progress.begin_attempt()
             inbound_marker = dedup_marker
             status = "dry_run" if args.dry_run else "failed"

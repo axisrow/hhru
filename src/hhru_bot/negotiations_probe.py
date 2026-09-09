@@ -27,6 +27,11 @@ class TopicRef:
     #: разметки: отсутствие поля не должно ронять маппинг topic→chat, на
     #: котором держатся responses/reply-employers.
     resume_id: str | None = None
+    #: Название вакансии из SSR ``topicList`` (``vacancyName``, #1094). Как и
+    #: resume_id — fail-open: отсутствие поля не роняет маппинг topic→chat;
+    #: резолвер письма в reply-employers при None идёт дальше по цепочке
+    #: (страница вакансии → честный отказ отправки).
+    vacancy_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -73,12 +78,23 @@ def topic_refs(html: str) -> list[TopicRef]:
             logger.debug("SSR topic entry missing id/chatId/vacancyId, dropped: %r", topic)
             continue
         resume_id = topic.get("resumeId")
+        # #1094: название вакансии — тот же fail-open-слот, что resumeId.
+        # Живой census 2026-09-09: DOM-карточка несёт title текстом
+        # negotiations-item-vacancy, а SSR topicList отдаёт vacancyName (его
+        # уже читает remindable_topic_refs). Ни то, ни другое не должно ронять
+        # маппинг — отсутствие поля просто оставляет резолв письма следующей
+        # ступени.
+        name = topic.get("vacancyName")
+        vacancy_obj = topic.get("vacancy")
+        if name is None and isinstance(vacancy_obj, dict):
+            name = vacancy_obj.get("name")
         refs.append(
             TopicRef(
                 str(topic["id"]),
                 str(topic["chatId"]),
                 str(topic["vacancyId"]),
                 None if resume_id is None else str(resume_id),
+                None if name is None else str(name),
             )
         )
     return refs
