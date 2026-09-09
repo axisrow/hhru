@@ -28,7 +28,16 @@ jobs:
           pip install jsonschema ruff pytest pytest-xdist
       - name: Install Chromium (Linux)
         if: runner.os == 'Linux'
-        run: python -m playwright install --with-deps chromium
+        run: |
+          # Предустановленный на ubuntu-раннере apt-репозиторий dl.google.com
+          # (google-chrome-stable) регулярно рассинхронизирует Release/Packages
+          # хэши, и `apt-get update` внутри `--with-deps` падает с
+          # "Hash Sum mismatch" (наблюдено трижды подряд 2026-09-09, run
+          # 34383787081). Chromium ставится из CDN Playwright, а не из этого
+          # репозитория — отключаем его до обновления индексов.
+          sudo rm -f /etc/apt/sources.list.d/dl_google_com_linux_chrome*.list
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*.list
+          python -m playwright install --with-deps chromium
 
       - name: Install Chromium (Windows)
         if: runner.os == 'Windows'
