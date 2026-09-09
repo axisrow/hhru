@@ -81,9 +81,22 @@ def test_parser_accepts_repeated_employer_flags():
     assert args.add_employer == ["Ксамата", "Law Business Group"]
 
 
-def test_no_mode_and_no_employer_flags_fails_closed(tmp_path, monkeypatch):
+def test_no_mode_and_no_employer_flags_reads_active_mode(tmp_path, monkeypatch, capsys):
+    """Без флагов действия команда — read-only диагностика: читает и печатает
+    активный режим, не мутируя hh.ru и не пишет actions в history."""
     monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda path: _config(tmp_path))
-    assert cmd.run(_args(tmp_path, mode=None)) is True
+    monkeypatch.setattr(hhru_bot.browser, "launch_context", lambda *a, **kw: _context())
+
+    def fake_read(page, resume):
+        del page
+        return rv.ResumeVisibilityResult(resume.resume_id, True, "everyone")
+
+    monkeypatch.setattr(rv, "read_current_visibility_mode", fake_read)
+
+    assert cmd.run(_args(tmp_path, mode=None)) is False
+    out = capsys.readouterr().out
+    assert "активный режим видимости «everyone»" in out
+    assert History(tmp_path / "h.db").count_today(RESUME_ID, "resume_visibility") == 0
 
 
 def test_dry_run_is_preview_and_writes_no_action(tmp_path, monkeypatch, capsys):

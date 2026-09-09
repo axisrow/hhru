@@ -70,6 +70,46 @@ def _resolve_resumes(config, key: str):
     return [resolve_resume(config, key)]
 
 
+def _run_read_modes(args: argparse.Namespace, config) -> bool:  # noqa: ANN001
+    """Read-only режим: печать активного режима видимости каждого резюме.
+
+    `resume-visibility --resume <id>` без флагов действия — диагностика, не
+    мутация: браузер открывает экран видимости и читает checked radio
+    (`read_current_visibility_mode`), без кликов, Save и записи в history.
+    """
+    from ..browser import launch_context
+    from ..config import ConfigError
+    from ..resume_visibility import read_current_visibility_mode
+
+    try:
+        resumes = _resolve_resumes(config, args.resume)
+    except ConfigError as exc:
+        print(f"[FAIL] {exc}")
+        return True
+    if not resumes:
+        print("[FAIL] В конфиге нет ни одного резюме.")
+        return True
+
+    failed = False
+    with launch_context(
+        config.storage_state_file, headless=args.headless, user_agent=config.user_agent
+    ) as context:
+        page = context.new_page()
+        for resume in resumes:
+            try:
+                result = read_current_visibility_mode(page, resume)
+            except Exception as exc:  # noqa: BLE001 - диагностический путь печатает, не роняет batch
+                print(f"[FAIL] {resume.id} — чтение режима видимости упало: {exc}")
+                failed = True
+                continue
+            if not result.success:
+                print(f"[FAIL] {resume.id} — {result.reason}")
+                failed = True
+            else:
+                print(f"[OK] Резюме {resume.id}: активный режим видимости «{result.reason}»")
+    return failed
+
+
 def run(args: argparse.Namespace):
     from ..browser import launch_context
     from ..config import ConfigError, load_config_or_exit
@@ -81,8 +121,7 @@ def run(args: argparse.Namespace):
     remove_employers = tuple(args.remove_employer)
 
     if args.mode is None and not add_employers and not remove_employers:
-        print("[FAIL] Укажите --mode и/или --add-employer/--remove-employer.")
-        return True
+        return _run_read_modes(args, config)
     # #746 review round 2: эта проверка — только ранний отказ от явно несовместимого
     # --mode (например --mode everyone --add-employer X), общего для ВСЕХ резюме
     # запуска (в т.ч. --resume all). Она НЕ гарантирует, что список применится к
