@@ -64,6 +64,35 @@ def test_scan_extracts_task_body_without_artifacts_or_submit(monkeypatch):
     assert not any(call[0] == "submit" for call in calls)
 
 
+def test_scan_one_click_shape_stops_before_click_not_retryable(monkeypatch):
+    """#1099: на one-click вакансии скан не нажимает кнопку отклика (клик =
+    submit, #1093) — UNKNOWN без ретрая: повтор упёрлся бы в тот же вердикт,
+    а NO_QUESTIONNAIRE было бы ложью («не проверено», а не «вопросов нет»)."""
+    from hhru_bot.apply.steps import OneClickStopBeforeClick
+
+    class Page:
+        def set_default_navigation_timeout(self, timeout):
+            pass
+
+    monkeypatch.setattr(questionnaire, "goto_hh", lambda page, url: None)
+    monkeypatch.setattr(questionnaire, "require_authenticated_page", lambda page: None)
+    monkeypatch.setattr(questionnaire, "wait_apply_button", lambda page, **kwargs: True)
+
+    def navigate(page, vacancy_id, **kwargs):
+        # Скан обязан запросить stop-before-click — иначе клик по кнопке на
+        # one-click вакансии отправил бы реальный отклик (#1099).
+        assert kwargs["stop_before_one_click"] is True
+        return OneClickStopBeforeClick()
+
+    monkeypatch.setattr(questionnaire, "navigate_to_response_form", navigate)
+
+    result = questionnaire.scan_questionnaire(Page(), _card("105"))
+
+    assert result.status == questionnaire.UNKNOWN
+    assert result.retryable is False
+    assert "ДО клика" in result.reason
+
+
 def test_timeout_is_unknown_and_retryable_not_no_questionnaire(monkeypatch):
     class Page:
         def set_default_navigation_timeout(self, timeout):

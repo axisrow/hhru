@@ -71,6 +71,39 @@ class SubmitClickUncertain(Exception):
         self.playwright_error = cause
 
 
+class OneClickStopBeforeClick:
+    """#1099: один-click shape распознан ДО клика — кнопка не была нажата.
+
+    Pre-click детект (SSR HH-Lux-InitialState страницы вакансии): если у
+    вакансии нет обязательных полей отклика, клик по VACANCY_APPLY_BUTTON —
+    это и есть submit (#1093). Режимы «без боевых последствий» (dry-run
+    #373, probe, questionnaire-скан) обязаны остановиться ДО клика: сам
+    клик в этом shape отправляет реальный отклик. Возвращается ТОЛЬКО при
+    ``stop_before_one_click=True`` (сухие режимы); боевой путь кликает как
+    раньше — для него one-click легитимен и классифицируется пост-клик
+    сентинелом ``OneClickResponded``.
+
+    ``ssr_indeterminate=True`` — SSR не подтверждает НАЛИЧИЕ формы (шаблон
+    не найден/битый/нет записи вакансии): fail-closed для сухих режимов,
+    «не доказано, что клик безопасен» == «не кликаем», тот же принцип, что
+    у ensure_resume_selected (#33).
+    """
+
+    def __init__(self, *, ssr_indeterminate: bool = False) -> None:
+        if ssr_indeterminate:
+            self.reason = (
+                "SSR страницы вакансии не подтверждает форму отклика: клик по "
+                "кнопке может быть реальным submit — остановлено ДО клика "
+                "(fail-closed, ноль мутаций)"
+            )
+        else:
+            self.reason = (
+                "one-click shape (SSR: сопроводительное письмо не обязательное, "
+                "тестов нет): клик по кнопке отклика = реальный submit — "
+                "остановлено ДО клика (ноль мутаций)"
+            )
+
+
 class OneClickResponded:
     """#1093: клик по кнопке отклика отправил отклик сразу, БЕЗ формы.
 
@@ -197,7 +230,8 @@ def navigate_to_response_form(
     dump_diagnostics: bool = True,
     allow_relocation: bool = False,
     run_id: str | None = None,
-) -> str | bool | PostClickBlocker | OneClickResponded:
+    stop_before_one_click: bool = False,
+) -> str | bool | PostClickBlocker | OneClickResponded | OneClickStopBeforeClick:
     """Кликает кнопку отклика и дожидается навигации на форму отклика.
 
     Возвращает:
@@ -206,6 +240,9 @@ def navigate_to_response_form(
       на форму отклика);
     - ``True`` — submit-кнопка формы стала видимой;
     - ``OneClickResponded`` — отклик отправлен самим кликом без формы (#1093);
+    - ``OneClickStopBeforeClick`` — #1099: dry-режим (``stop_before_one_click=True``)
+      распознал one-click shape ДО клика и не нажал кнопку: в этом shape клик =
+      submit, «безбоевой» предпросмотр невозможен в принципе;
     - ``False`` — рендер формы не подтверждён (навигация/рендер не удались).
 
     Это различие важно: pipeline не должен запускать детекцию вопросов для формы,
@@ -276,6 +313,23 @@ def navigate_to_response_form(
     )
 
     apply_button = page.locator(vacancy_page.VACANCY_APPLY_BUTTON).first
+    # #1099: stop-before-click для dry-режимов. В one-click shape сам клик по
+    # кнопке — submit (#1093), «безбоевой» клик-for-preview невозможен: сначала
+    # SSR-детект, и только при подтверждённой форме (letterRequired/hasTests)
+    # кликаем. SSR не прочитан — тоже не кликаем: fail-closed, «не доказано,
+    # что клик безопасен» (тот же принцип, что ensure_resume_selected #33).
+    # Боевой путь (flag=False) не проходит эту проверку вовсе — его поведение
+    # не меняется.
+    if stop_before_one_click:
+        shape = one_click_shape_by_ssr(page)
+        if shape is not False:
+            sentinel = OneClickStopBeforeClick(ssr_indeterminate=shape is None)
+            logger.info(
+                "Кнопка отклика НЕ нажата (%s): %s",
+                "one-click shape" if shape else "SSR не подтверждает форму",
+                sentinel.reason,
+            )
+            return sentinel
     # #80/#179: потолок навигации на форму отклика — GOTO_TIMEOUT_MS (как у всех
     # goto). Двухшаговая навигация (CLAUDE.md п.4) — это сетевой запрос hh.ru,
     # который под DDoS-Guard грузится 33с+; APPLY_TIMEOUT_MS (10с) тут падал.
@@ -461,6 +515,61 @@ def _preselected_resume_confirmed_by_ssr(page: Page, resume_id: str) -> bool:
         and only.get("hash") == resume_id
         and only.get("isIncomplete") is not True
     )
+
+
+def one_click_shape_by_ssr(page: Page) -> bool | None:
+    """#1099: pre-click детект one-click shape по SSR страницы вакансии.
+
+    Источник истины — SSR HH-Lux-InitialState (тот же носитель, что у
+    negotiations и у ``_preselected_resume_confirmed_by_ssr``):
+
+    ``applicantVacancyResponseStatuses[<vacancy>].shortVacancy.@responseLetterRequired``
+    и ``…test.hasTests``.
+
+    Живые факты (2026-09-09): 42/42 one-click вакансий боевого прогона —
+    letterRequired=False, hasTests=False; форма отклика в этом shape не
+    монтируется вообще (9/9 дампов #1093). Единственная в тот же день
+    form-вакансия (обязательное письмо, дамп probe_137014905) —
+    letterRequired=True.
+    Read-only сверка GET двух живых страниц вакансии подтвердила: это
+    единственное поведенческое различие записей до клика (полный diff
+    записей совпадает вне shortVacancy-описания вакансии).
+
+    Возврат:
+    - ``True`` — обязательных полей нет: клик по кнопке отклика = submit;
+    - ``False`` — форма подтверждена (письмо обязательное и/или тесты);
+    - ``None`` — SSR не прочитан/нет записи вакансии: форма НЕ подтверждена,
+      для сухих режимов это тот же «не доказано, что клик безопасен».
+
+    Диагностический контракт: ключ единственной записи statuses НЕ сверяется
+    с vacancy_id текущей вакансии (вызывающие не передают его), а условие
+    ``len(statuses) != 1`` уводит в indeterminate → стоп. При будущем дрейфе
+    SSR (несколько записей / другой ключ) dry-режимы молча остановятся на
+    ВСЕХ вакансиях с причиной «SSR не подтверждает форму» — при систематических
+    stop-before-click в логах первый подозреваемый именно здесь.
+    """
+    from ..negotiations_probe import parse_initial_state
+
+    try:
+        state = parse_initial_state(page.content())
+    # JSONDecodeError — подкласс ValueError, одного ValueError достаточно.
+    except ValueError:
+        return None
+    statuses = state.get("applicantVacancyResponseStatuses")
+    if not isinstance(statuses, dict) or len(statuses) != 1:
+        return None
+    entry = next(iter(statuses.values()))
+    if not isinstance(entry, dict):
+        return None
+    short_vacancy = entry.get("shortVacancy")
+    letter_required = (
+        isinstance(short_vacancy, dict) and short_vacancy.get("@responseLetterRequired") is True
+    )
+    tests = entry.get("test")
+    has_tests = isinstance(tests, dict) and tests.get("hasTests") is True
+    if letter_required or has_tests:
+        return False
+    return True
 
 
 def ensure_resume_selected(page: Page, resume_id: str) -> str | None:

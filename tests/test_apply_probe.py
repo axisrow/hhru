@@ -136,7 +136,9 @@ class FakeProbePage:
         resume_select: bool = True,
         resume_options: tuple[str, ...] = ("RID",),
         screenshot_error_from_call: int | None = None,
+        ssr_letter_required: bool = True,
     ):
+        self.ssr_letter_required = ssr_letter_required
         # Дефолты моделируют ЖИВУЮ форму: `resume-title` присутствует всегда —
         # и на single-, и на multi-resume аккаунте (см. steps._select_resume_in_form).
         # Отсутствие селектора — аномалия, а не happy path: боевой fill_response_form
@@ -180,7 +182,24 @@ class FakeProbePage:
 
     def content(self) -> str:
         self.content_calls += 1
-        return "<html><body>probe dump</body></html>"
+        # #1099: probe-путь читает SSR страницы вакансии для one-click
+        # детекта (steps.one_click_shape_by_ssr). Дефолт — форма подтверждена
+        # (обязательное письмо), как у живых form-вакансий; тесты stop-before-
+        # click выключают флаг. Тело дампов от SSR не зависит: probe пишет
+        # page.content() ЦЕЛИКОМ, а детект лишь читает его.
+        import json
+
+        entry = {
+            "shortVacancy": {"@responseLetterRequired": self.ssr_letter_required},
+            "test": {"hasTests": False},
+        }
+        state = {"applicantVacancyResponseStatuses": {"42": entry}}
+        return (
+            "<html><body>probe dump"
+            '<template style="display:none" id="HH-Lux-InitialState">'
+            + json.dumps(state)
+            + "</template></body></html>"
+        )
 
     def locator(self, selector: str):  # noqa: ARG002
         from hhru_bot.selector_groups import apply_form, vacancy_page
@@ -296,6 +315,22 @@ def test_probe_fills_cover_letter(tmp_path: Path):
 
     assert page._textarea_locator is not None
     assert page._textarea_locator.fill_calls == ["Здравствуйте, Acme"]
+
+
+def test_probe_one_click_shape_stops_before_click(tmp_path: Path):
+    """#1099: probe на one-click вакансии не нажимает кнопку отклика — клик в
+    этом shape = реальный submit (#1093). Отчёт честный (skipped, причина
+    stop-before-click), дампов формы нет: мы остались на странице вакансии."""
+    page = FakeProbePage(ssr_letter_required=False)
+
+    result = probe_vacancy(page, _vacancy(), "RID", "письмо", tmp_path)
+
+    assert result.success is False
+    assert result.skipped is True
+    assert "ДО клика" in result.reason
+    # Формы не открывали — её дампов быть не должно.
+    assert not (tmp_path / "probe_42_form_initial.html").exists()
+    assert not (tmp_path / "probe_42_form.html").exists()
 
 
 def test_probe_reports_missing_letter_field_and_still_dumps(tmp_path: Path):

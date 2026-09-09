@@ -24,7 +24,12 @@ from ..external_forms.detect import normalize
 from ..search import VacancyCard
 from .dedup import check_already_responded
 from .questions import detect_questions
-from .steps import OneClickResponded, navigate_to_response_form, wait_apply_button
+from .steps import (
+    OneClickResponded,
+    OneClickStopBeforeClick,
+    navigate_to_response_form,
+    wait_apply_button,
+)
 
 QUESTIONNAIRE = "questionnaire"
 NO_QUESTIONNAIRE = "no_questionnaire"
@@ -162,7 +167,16 @@ def scan_questionnaire(
             vacancy.vacancy_id,
             form_timeout_ms=form_timeout_ms,
             dump_diagnostics=False,
+            # #1099: скан — read-only разведка, но в one-click shape клик по
+            # кнопке отклика = submit (#1093) — кнопка не нажимается вовсе.
+            stop_before_one_click=True,
         )
+        if isinstance(form_state, OneClickStopBeforeClick):
+            # #1099: ноль мутаций — кнопка не была нажата. Анкету без формы
+            # посмотреть нельзя (one-click shape не монтирует форму), поэтому
+            # UNKNOWN, а не NO_QUESTIONNAIRE: «не проверено», а не «вопросов
+            # нет». retryable=False: ретрай упёрся бы в тот же SSR-вердикт.
+            return QuestionnaireScanResult(vacancy, UNKNOWN, form_state.reason, retryable=False)
         if isinstance(form_state, OneClickResponded):
             # #1093: one-click shape — сам клик по кнопке отклика отправил
             # реальный отклик (скан этого не планировал). Вакансия теперь

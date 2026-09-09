@@ -211,8 +211,23 @@ def probe_vacancy(
         return ProbeResult(vacancy, False, "кнопка отклика не найдена на странице")
 
     navigation_result = apply_steps.navigate_to_response_form(
-        page, vacancy.vacancy_id, run_id=run_id
+        page,
+        vacancy.vacancy_id,
+        run_id=run_id,
+        # #1099: probe никогда не планирует submit, но в one-click shape клик
+        # по кнопке отклика = submit (#1093) — кнопка не нажимается вовсе.
+        stop_before_one_click=True,
     )
+    if isinstance(navigation_result, apply_steps.OneClickStopBeforeClick):
+        # #1099: ноль мутаций — кнопка не была нажата. skipped=True без дампа:
+        # дамплить нечего (мы остались на странице вакансии), и это не отказ
+        # селектора, а честный stop-before-click.
+        logger.warning(
+            "[PROBE] %s — %s",
+            vacancy.title,
+            navigation_result.reason,
+        )
+        return ProbeResult(vacancy, False, navigation_result.reason, skipped=True)
     if isinstance(navigation_result, str):
         # #350: развёрнутое предупреждение о видимости резюме — недвусмысленный
         # пропуск, без дампа (hh.ru дал определённый ответ прямо на странице).

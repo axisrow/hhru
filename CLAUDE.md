@@ -95,6 +95,21 @@ python3 -m playwright install chromium
      (acted=True); not_found — вердикт сайта без изменений; список не прочитан →
      `uncertain` + `acted=True` (fail-closed, как #176). До клика по кнопке отклика
      проверка не применяется — там отклик физически невозможен.
+   - **One-click shape и stop-before-click для dry-режимов** (#1099, следствие
+     #1093/#1096): в one-click shape (у вакансии нет обязательных полей) клик по
+     `VACANCY_APPLY_BUTTON` — это и есть submit. Pre-click детект —
+     `steps.one_click_shape_by_ssr` по SSR `HH-Lux-InitialState` страницы вакансии:
+     `applicantVacancyResponseStatuses[<vacancy>].shortVacancy.@responseLetterRequired`
+     + `…test.hasTests` (живые факты 2026-09-09: 42/42 one-click вакансий — оба
+     false; единственная form-вакансия дня — письмо обязательное; read-only GET
+     двух страниц подтвердил, что иных поведенческих различий в записи до клика
+     нет). `navigate_to_response_form(stop_before_one_click=True)` (его передают
+     ТОЛЬКО dry-режимы: apply --dry-run с answerer, probe, questionnaire-скан)
+     при неподтверждённой форме возвращает сентинел `OneClickStopBeforeClick`,
+     НЕ нажимая кнопку: acted=False, ноль мутаций. SSR не прочитан — тоже стоп
+     (fail-closed: «не доказано, что клик безопасен»). Боевой путь флаг не
+     передаёт и кликает как раньше; пост-клик сентинел `OneClickResponded`
+     из #1096 остаётся defense-in-depth.
 
 4. **Форма отклика — двухшаговая навигация.** `VACANCY_APPLY_BUTTON` на странице вакансии
    это `<a href="/applicant/vacancy_response?...">`, а НЕ триггер модалки на той же
