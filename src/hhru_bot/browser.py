@@ -372,6 +372,11 @@ def goto_hh(page: Page, url: str, *, ready_selector: str | None = None) -> None:
         # вообще" (анти-бот/дрейф селектора/сеть недоступна) — сигнал уже
         # идущего page.goto(), НЕ отдельный сетевой запрос (запрет CLAUDE.md/#747).
         response_observed = False
+        # #1069 (review): сбрасываем на каждой итерации, иначе stale-ошибка
+        # ready_selector с ранней попытки описывала бы пакет дрейфа, когда
+        # финальная попытка провалилась уже в самом goto — диагностика и
+        # проброшенное исключение разошлись бы.
+        ready_selector_error = None
 
         def _on_response(response, _url=url) -> None:
             nonlocal response_observed

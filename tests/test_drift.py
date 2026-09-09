@@ -131,6 +131,24 @@ def test_emit_drift_report_prints_full_package(drift_log_dir, capsys):
     assert "+7" not in body
 
 
+def test_note_drift_step_feeds_expected_selectors(drift_log_dir, capsys):
+    # Продакшн-подключение: apply/steps.py::navigate_to_response_form
+    # фиксирует шаг и ожидаемые селекторы ДО работы с формой — центральные
+    # точки отказа browser.py подхватывают их без явной передачи.
+    drift.begin_drift_session("apply")
+    drift.note_drift_step(
+        "navigate_to_response_form",
+        expected=("[data-qa='vacancy-response-letter-toggle']",),
+        screen="vacancy_response",
+    )
+    page = _CannedPage(_drift_payload())
+    drift.emit_drift_report(page, RuntimeError("форма не найдена"))
+    out = capsys.readouterr().out
+    assert "apply_form.APPLY_COVER_LETTER_TOGGLE" in out
+    assert "navigate_to_response_form" in out
+    assert "vacancy_response" in out
+
+
 def test_emit_masks_employer_text(drift_log_dir, capsys):
     drift.begin_drift_session("probe")
     page = _CannedPage(_drift_payload())
