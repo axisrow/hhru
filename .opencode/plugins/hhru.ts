@@ -31,7 +31,7 @@ const READ_COMMANDS = new Set([
 const LOCAL_WRITE_COMMANDS = new Set([
   "account", "backup", "blacklist", "clear-skipped", "config",
   "import-cookies", "mark", "profile", "questionnaire", "refresh-token",
-  "reject", "restore", "settings", "update",
+  "reject", "restore", "robot-mark", "settings", "update",
 ])
 
 /** Меняют состояние аккаунта на hh.ru через браузер (видны работодателям
@@ -41,10 +41,10 @@ const HH_WRITE_COMMANDS = new Set([
   "about", "adaptive-resume", "apply", "bump", "calendar", "clear-negotiations",
   "common", "copy-resume", "create-resume", "delete-education-entry",
   "delete-photo", "delete-resume", "edit-education", "edit-experience",
-  "edit-languages", "edit-skills", "fill-form", "publish-resume",
-  "rename-resume", "reply-employers", "report-vacancy", "resume-pool",
-  "resume-position", "resume-sections", "resume-visibility", "run",
-  "select-photo", "upload-photo", "wizard-next",
+  "edit-languages", "edit-skills", "fill-form", "import-resume",
+  "publish-resume", "rename-resume", "reply-employers", "report-vacancy",
+  "resume-pool", "resume-position", "resume-sections", "resume-visibility",
+  "robot-reply", "run", "select-photo", "upload-photo", "wizard-next",
 ])
 
 /** Команды из правил проекта «сначала --dry-run»: боевой вызов через
@@ -52,8 +52,9 @@ const HH_WRITE_COMMANDS = new Set([
  *  успешный dry-run (страж в памяти плагина, fail-closed). */
 const DRY_RUN_FIRST_COMMANDS = new Set([
   "about", "apply", "bump", "clear-negotiations", "copy-resume",
-  "edit-education", "edit-experience", "edit-skills", "publish-resume",
-  "reply-employers", "resume-position", "resume-sections", "run",
+  "edit-education", "edit-experience", "edit-skills", "import-resume",
+  "publish-resume", "reply-employers", "resume-position", "resume-sections",
+  "robot-reply", "run",
 ])
 
 /** Требуют headed-браузер (человек видит окно и участвует). */
@@ -209,7 +210,8 @@ export const HhruPlugin: Plugin = async ({ directory, worktree, $ }) => {
           "skipped, uncertain, review, robot-queue, resume-views, schedule, learn, " +
           "professional-roles, competitors, adaptive-report, export-resume, call-api) — свободны. " +
           "WRITE-hh.ru (apply, bump, run, publish-resume, reply-employers, clear-negotiations, " +
-          "copy-resume, delete-resume, create-resume, edit-*, about, resume-position, " +
+          "copy-resume, delete-resume, create-resume, import-resume, edit-*, about, " +
+          "resume-position, robot-reply, " +
           "resume-sections, wizard-next, фото, rename-resume, resume-pool, resume-visibility, " +
           "fill-form, report-vacancy, common) меняют аккаунт на hh.ru: сначала dry_run=true и " +
           "покажи план человеку; боевой запуск ТОЛЬКО после его явного «да» в чате — тогда " +
@@ -217,6 +219,7 @@ export const HhruPlugin: Plugin = async ({ directory, worktree, $ }) => {
           "copy-resume/edit-*/about/resume-position/resume-sections боевой вызов отклонится, если " +
           "dry-run для той же команды+резюме не выполнялся. WRITE-local (mark, clear-skipped, " +
           "questionnaire, config, settings, profile, account, backup, restore, blacklist, reject, " +
+          "robot-mark, " +
           "refresh-token, import-cookies, update) — тоже confirmed=true. login/login-code — " +
           "открывают окно входа на экране человека (headed), подтверждение не нужно. " +
           "Вывод — текст/ASCII-таблицы; не добавляй эмодзи в пересказ. " +
@@ -287,7 +290,8 @@ export const HhruPlugin: Plugin = async ({ directory, worktree, $ }) => {
 
           // --dry-run добавляем только командам, которые его поддерживают
           // (список DRY_RUN_FIRST + остальные HH_WRITE по правилам проекта).
-          const supportsDryRun = kind === "hh_write" && command !== "login"
+          // login сюда не попадает: classify() отдаёт для него headed_auth.
+          const supportsDryRun = kind === "hh_write"
           const flagTokens = dryRun && supportsDryRun && !rest.includes("--dry-run")
             ? ["--dry-run", ...rest]
             : rest
