@@ -21,6 +21,16 @@ account:
   # current_employer:
   #   - "ООО Пример"
   #   - "Пример"
+  # Сессии внешних провайдеров (#1103) — отдельный секрет второго уровня:
+  # СВОЙ файл на провайдера, никогда не hh_session.json (Яндекс-сессия шире
+  # hh.ru: почта и пр.). Путь резолвится относительно этого файла конфига,
+  # держите его внутри data/. Вход — командой
+  # `hhru login-external --provider yandex` (пароль вводится руками в браузере).
+  # После этого fill-form сам открывает яндексовые URL (forms.yandex.ru и др.)
+  # в контексте этой сессии; submit внешней формы всегда остаётся за человеком.
+  # external_sessions:
+  #   yandex:
+  #     storage_state_file: storage_state/yandex_session.json
 
 # Дефолтный аккаунт (#1086): команды без --account и без HHRU_ACCOUNT идут
 # с data/accounts/<name>/ вместо корневого data/config.yaml + data/history.db.

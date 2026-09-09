@@ -350,6 +350,7 @@ READ hh.ru: competitors collect --text QUERY [--search-in SCOPE] [--max-pages N]
 - `--url` — Явный URL внешней формы
 - `--resume` — ID резюме из конфига
 - `--dry-run` — Обязательный режим: без submit и навигации формы
+- `--external-session` — Явно использовать сессию провайдера (например, yandex), даже если домен URL не принадлежит ему (#1103); требует выполненного login-external
 
 ### `funnel`
 
@@ -401,6 +402,10 @@ READ hh.ru: competitors collect --text QUERY [--search-in SCOPE] [--max-pages N]
 
 - `--login` — Email или телефон
 - `--code-file CODE_FILE` — Файл с одноразовым кодом; без него код читается из stdin
+
+### `login-external`
+
+- `--provider` — Провайдер внешней сессии
 
 ### `mark`
 

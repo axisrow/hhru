@@ -37,6 +37,7 @@ def test_browser_command_registry_is_complete() -> None:
         "import-resume",
         "login",
         "login-code",
+        "login-external",
         "probe",
         "professional-roles",
         "publish-resume",
