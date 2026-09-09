@@ -141,7 +141,9 @@ let timeoutBin: string | null | undefined
 function findTimeoutBin(): string | null {
   if (timeoutBin === undefined) {
     timeoutBin = null
-    for (const dir of (process.env.PATH ?? "").split(":")) {
+    // PATH сплитим и по ":", и по ";": на Windows разделитель ";", лишние
+    // пустые сегменты от смешанного содержимого отсеиваются проверкой выше.
+    for (const dir of (process.env.PATH ?? "").split(/[:;]/)) {
       if (!dir) continue
       for (const name of ["timeout", "gtimeout"]) {
         const candidate = join(dir, name)
