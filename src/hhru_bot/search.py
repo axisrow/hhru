@@ -12,7 +12,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
 from . import selectors as sel
-from .browser import HH_BASE_URL, goto_hh
+from .browser import HH_BASE_URL, PAGE_STATE, goto_hh
 from .config import ResumeConfig, SearchFilters
 from .config_sections.scoring import ScoringConfig, ScoringWeights
 from .history import SKIP_REASONS
@@ -794,6 +794,83 @@ def _extract_vacancy_id(href: str) -> str | None:
     path = href.split("?")[0].rstrip("/")
     parts = path.split("/")
     return parts[-1] if parts and parts[-1].isdigit() else None
+
+
+class VacancyPageUnavailable(RuntimeError):
+    """Целевая страница вакансии недоступна или не подтверждена (#1085).
+
+    Альтернативный источник карточки для ``apply --vacancy-id``: страница
+    открыта напрямую по id, минуя поиск. ``state`` — словарь
+    ``browser.PAGE_STATE``: ``unavailable`` не входит в него, поэтому
+    подтверждённое отсутствие вакансии (закрыта/не существует — заголовок
+    не отрендерен при загруженной странице) кодируется ``confirmed``,
+    а timeout/сетевой сбой — ``indeterminate``/``unreachable``. Пустую
+    карточку за достоверный результат не выдаём (принцип #5 CLAUDE.md).
+    """
+
+    def __init__(self, vacancy_id: str, state: str, detail: str = "") -> None:
+        self.vacancy_id = vacancy_id
+        self.state = state
+        self.detail = detail
+        reason = {
+            PAGE_STATE["confirmed"]: "вакансия закрыта или не существует",
+            PAGE_STATE["indeterminate"]: "страница вакансии не подтверждена",
+            PAGE_STATE["unreachable"]: "страница вакансии недоступна",
+        }.get(state, state)
+        message = f"vacancy_id={vacancy_id}: {reason}"
+        if detail:
+            message += f" ({detail})"
+        super().__init__(message)
+
+
+def _raise_for_antibot_if_challenged(page: Page) -> None:
+    """Терминальный анти-бот сигнал до вердикта «вакансия закрыта» (PR #1089).
+
+    Челлендж DDoS-Guard рендерится без селекторов вакансии, поэтому без этой
+    проверки «confirmed: вакансия закрыта» выдавался бы за сетевое/анти-бот
+    состояние. Ленивый импорт — search.py не тянет пакет apply на уровень
+    своего импорта.
+    """
+    from .apply.antibot import raise_for_antibot
+
+    raise_for_antibot(page)
+
+
+def fetch_vacancy_card(page: Page, vacancy_id: str) -> VacancyCard:
+    """Строит VacancyCard прямо со страницы вакансии ``/vacancy/{id}`` (#1085).
+
+    Альтернативный источник кандидата для ``apply --vacancy-id`` вместо
+    ``search_vacancies``: title/company читаются из живой страницы
+    (селекторы подтверждены curl-дампом, см. selector_groups/vacancy_page.py).
+    Fail-closed: если заголовок не появился за RENDER_TIMEOUT_MS, карточка не
+    строится вовсе — поднимается :class:`VacancyPageUnavailable`, различающая
+    «подтверждённо нет вакансии» (закрыта/удалена) от «страница не прочитана».
+    """
+    url = f"{HH_BASE_URL}/vacancy/{vacancy_id}"
+    try:
+        goto_hh(page, url)
+        title_loc = page.locator(sel.VACANCY_TITLE)
+        title_loc.first.wait_for(state="visible", timeout=RENDER_TIMEOUT_MS)
+    except PlaywrightError as exc:
+        # Страница не загрузилась/не отрисовалась — состояние не подтверждено,
+        # «вакансии нет» из этого не следует (DDoS-Guard, сетевой сбой, дрейф
+        # селектора). Команда печатает внятный [FAIL], прогон не падает.
+        _raise_for_antibot_if_challenged(page)
+        raise VacancyPageUnavailable(
+            vacancy_id, PAGE_STATE["indeterminate"], type(exc).__name__
+        ) from exc
+    title = (title_loc.first.inner_text() or "").strip()
+    if not title:
+        # Страница загрузилась, но заголовка нет — hh.ru так рендерит закрытую
+        # или несуществующую вакансию. Это подтверждённое состояние, а не
+        # неопределённость. Но сначала исключаем анти-бот челлендж: он тоже
+        # рендерится без селекторов вакансии, и диагноз «вакансия закрыта»
+        # при живой вакансии был бы неверным (review PR #1089).
+        _raise_for_antibot_if_challenged(page)
+        raise VacancyPageUnavailable(vacancy_id, PAGE_STATE["confirmed"])
+    company_loc = page.locator(sel.VACANCY_COMPANY_NAME)
+    company = (company_loc.first.inner_text() or "").strip() if company_loc.count() else ""
+    return VacancyCard(vacancy_id=vacancy_id, title=title, company=company, url=url)
 
 
 def current_employer_hit(company: str, current_employers: list[str]) -> str | None:
