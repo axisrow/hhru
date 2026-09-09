@@ -371,6 +371,53 @@ def fill_cover_letter(page: Page, letter: str) -> str | None:
     return None
 
 
+def _preselected_resume_confirmed_by_ssr(page: Page, resume_id: str) -> bool:
+    """SSR-подтверждение ПРЕДВЫБРАННОГО резюме без дропдауна (2026-09-09).
+
+    Живой факт (дамп probe_137014905_form.html + скриншот живой формы): на
+    вакансиях с ОБЯЗАТЕЛЬНЫМ сопроводительным письмом hh.ru предвыбирает
+    единственное резюме аккаунта и НЕ монтирует дропдаун — клик по
+    APPLY_RESUME_SELECT панель не открывает, прежний путь выбора падал
+    «резюме не найдено среди опций», не доходя до письма (которое apply
+    заполняет всегда). Источник истины — SSR HH-Lux-InitialState (тот же
+    носитель, что у negotiations):
+    ``applicantVacancyResponseStatuses[<vacancy>].resumes[<id>].hash``.
+    Подтверждение identity-bound: hash совпал, запись не incomplete и
+    ``responseImpossible`` не true — это не «доверие дефолту» (#33), а чтение
+    фактического выбора из состояния страницы (паттерн verify_wizard_save).
+    Ровно одна запись в statuses: страница формы описывает одну вакансию;
+    иное — дрейф, не подтверждение. Ровно ОДНО резюме в ``resumes`` с нашим
+    hash: ``resumes`` — реестр доступности аккаунта для вакансии (рядом в SSR
+    живут usedResumeIds/unusedResumeIds/hiddenResumeIds, т.е. записей может
+    быть несколько), а какое из них предвыбрано формой состояние не сообщает.
+    Принять «наш hash есть среди многих» — submit с резюме, выбранным hh.ru,
+    а не нашим (#33); multi-resume-запись — дрейф относительно наблюдавшегося
+    single-resume shape, не подтверждение.
+    """
+    from ..negotiations_probe import parse_initial_state
+
+    try:
+        state = parse_initial_state(page.content())
+    # JSONDecodeError — подкласс ValueError, одного ValueError достаточно.
+    except ValueError:
+        return False
+    statuses = state.get("applicantVacancyResponseStatuses")
+    if not isinstance(statuses, dict) or len(statuses) != 1:
+        return False
+    entry = next(iter(statuses.values()))
+    if not isinstance(entry, dict) or entry.get("responseImpossible") is True:
+        return False
+    resumes = entry.get("resumes")
+    if not isinstance(resumes, dict) or len(resumes) != 1:
+        return False
+    only = next(iter(resumes.values()))
+    return (
+        isinstance(only, dict)
+        and only.get("hash") == resume_id
+        and only.get("isIncomplete") is not True
+    )
+
+
 def ensure_resume_selected(page: Page, resume_id: str) -> str | None:
     """Подтверждает выбор резюме в форме отклика. None — подтверждено, иначе причина отказа.
 
@@ -428,23 +475,31 @@ def ensure_resume_selected(page: Page, resume_id: str) -> str | None:
             "отправка отменена (нестабильная страница)"
         )
     if not _select_resume_in_form(page, resume_id):
-        # Гейт «компаний-клиентов HeadHunter» (живой дамп
-        # probe_137014905_form.html, 2026-09-09): форма отрисовывается, но
-        # вместо дропдауна опций резюме рендерит СВЁРНУТОЕ предупреждение
-        # (max-height:0) — клик по триггеру панель не монтирует. Безликое
-        # «не удалось выбрать» прятало реальную причину за разбором дампа.
-        # Признак — наличие узла (тот же селектор, что у #350-детекта
-        # расширённого предупреждения), НЕ его видимость/текст: текст hh.ru
-        # держит легаси-имя режима «Видно компаниям-клиентам HeadHunter»,
-        # которого нет среди пяти актуальных radio видимости и в enum схемы
-        # accessType — парсить его нельзя.
-        from ..selector_groups import vacancy_page
-
+        # Два различимых исхода, оба ДО submit (на hh.ru следа нет):
+        # (а) резюме ПРЕДВЫБРАНО формой без дропдауна (shape с обязательным
+        #     письмом, 2026-09-09) — identity подтверждается SSR, выбор не
+        #     требуется, продолжаем к письму;
+        # (б) выбора нет и SSR нашего резюме не подтверждает — fail-closed
+        #     отказ прежней семантики (#33), с уточнением причины, если в DOM
+        #     есть свёрнутое hidden-resume-warning (узел есть — признак
+        #     наличия узла, НЕ его текста: текст hh.ru держит легаси-имя
+        #     режима «Видно компаниям-клиентам HeadHunter», которого нет
+        #     среди пяти актуальных radio видимости; живая проверка
+        #     2026-09-09 показала, что отклик на таких формах возможен при
+        #     заполненном письме, поэтому тексту предупреждения доверять
+        #     нельзя — см. PR #1082/#1084).
+        if _preselected_resume_confirmed_by_ssr(page, resume_id):
+            logger.info(
+                "Резюме '%s' предвыбрано формой (SSR identity подтверждён), "
+                "дропдаун не монтируется — выбор не требуется",
+                resume_id,
+            )
+            return None
         if page.locator(vacancy_page.VACANCY_HIDDEN_RESUME_WARNING).count():
             return (
-                "вакансия компании-клиента HeadHunter: видимость резюме не "
-                f"позволяет отклик, резюме '{resume_id}' недоступно для выбора "
-                "(hidden-resume-warning)"
+                f"резюме '{resume_id}' не выбрано в форме отклика: дропдаун не "
+                "открылся, SSR предвыбор не подтверждает, в DOM свёрнутое "
+                "предупреждение hidden-resume-warning"
             )
         return f"не удалось однозначно выбрать резюме '{resume_id}' в форме отклика"
     return None

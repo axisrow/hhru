@@ -9,6 +9,7 @@ submit даёт отказ при отсутствии.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -252,6 +253,10 @@ class FakeStepsPage:
 
     def __init__(self) -> None:
         self.states: dict[str, _SelectorState] = {}
+        # SSR-состояние страницы (HH-Lux-InitialState) для
+        # _preselected_resume_confirmed_by_ssr; по умолчанию состояния нет —
+        # parse_initial_state честно откажет, как страница без шаблона.
+        self.content_html = "<html>diagnostic</html>"
         self.navigation_entered = 0
         self.last_navigation_timeout: int | None = None
         self.last_navigation_wait_until: str | None = None
@@ -271,7 +276,7 @@ class FakeStepsPage:
 
     def content(self) -> str:
         self.content_calls += 1
-        return "<html>diagnostic</html>"
+        return self.content_html
 
     def wait_for_function(self, _expression, *, arg=None, timeout=None, polling=None):
         self.wait_for_function_calls.append(("function", arg, timeout))
@@ -663,20 +668,107 @@ def test_fill_form_missing_submit_returns_reason_no_click():
     assert "кнопка отправки отклика не найдена" in result
 
 
-def test_fill_form_hidden_resume_warning_names_the_gate():
-    """Гейт «компаний-клиентов HeadHunter» (живой дамп
-    probe_137014905_form.html, 2026-09-09): форма отрисована (триггер
-    резюме, письмо, submit на месте), но опций резюме нет — вместо дропдауна
-    свёрнутое hidden-resume-warning. Причина отказа обязана называть гейт,
-    а не прятать его за безликим «не удалось однозначно выбрать резюме»."""
+def _ssr_form_state_html(resume_hash: str | None, *, multi_resume: bool = False) -> str:
+    """SSR HH-Lux-InitialState формы отклика с предвыбранным резюме.
+
+    Живой shape (дамп probe_137014905_form.html, 2026-09-09):
+    applicantVacancyResponseStatuses[<vacancy>].resumes[<id>].hash +
+    responseImpossible. resume_hash=None — состояние без нашего резюме.
+    multi_resume=True — наш hash среди ДВУХ резюме (реестр доступности
+    multi-resume аккаунта, не предвыбор). Числовые ключи резюме — очевидно
+    подставные: реальные id аккаунта в фикстурах запрещены (hex-страж
+    числовой id не ловит).
+    """
+    resumes: dict
+    if multi_resume:
+        resumes = {
+            "111111111": {"hash": resume_hash, "isIncomplete": False},
+            "222222222": {"hash": "e" * 38, "isIncomplete": False},
+        }
+    elif resume_hash:
+        resumes = {"111111111": {"hash": resume_hash, "isIncomplete": False}}
+    else:
+        resumes = {"111111111": {"hash": "f" * 38, "isIncomplete": False}}
+    entry: dict = {
+        "hiddenResumeIds": [],
+        "responseImpossible": False,
+        "resumes": resumes,
+    }
+    state = {"applicantVacancyResponseStatuses": {"136173988": entry}}
+    return (
+        '<template style="display:none" id="HH-Lux-InitialState">'
+        + json.dumps(state)
+        + "</template>"
+    )
+
+
+def test_fill_form_accepts_ssr_confirmed_preselected_resume():
+    """Shape с ОБЯЗАТЕЛЬНЫМ письмом (живой факт 2026-09-09: скриншот живой
+    формы + дамп probe_137014905): hh.ru предвыбирает единственное резюме
+    аккаунта БЕЗ дропдауна — клик по триггеру панель не монтирует. Когда SSR
+    формы подтверждает наш hash, выбор не требуется: путь продолжается к
+    письму и submit (письмо обязательно — без него submit disabled)."""
+    page = FakeStepsPage()
+    page.content_html = _ssr_form_state_html("RID")
+    page.set_visible(apply_form.APPLY_RESUME_SELECT, True)  # опций нет: option_resume_ids=[]
+    page.set_visible(vacancy_page.VACANCY_HIDDEN_RESUME_WARNING, True)
+    page.set_visible(apply_form.APPLY_COVER_LETTER_TEXTAREA, True)
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    result = steps.fill_response_form(page, "RID", "письмо")
+
+    assert result is None
+    assert page._state(apply_form.APPLY_COVER_LETTER_TEXTAREA).fills == ["письмо"]
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 1
+
+
+def test_fill_form_rejects_preselection_of_foreign_resume():
+    """SSR подтверждает ЧУЖОЕ резюме (hh.ru предвыбрал не наше) — приём
+    предвыбора не срабатывает, fail-closed отказ #33."""
+    page = FakeStepsPage()
+    page.content_html = _ssr_form_state_html("OTHER")
+    page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
+    page.set_visible(apply_form.APPLY_COVER_LETTER_TEXTAREA, True)
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    result = steps.fill_response_form(page, "RID", "письмо")
+
+    assert result is not None
+    assert "не удалось однозначно выбрать резюме 'RID'" in result
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 0
+
+
+def test_fill_form_rejects_multi_resume_ssr_registry():
+    """``resumes`` в SSR — реестр доступности, не предвыбор: на multi-resume
+    аккаунте наш hash среди ДВУХ записей не доказывает, что форма предвыбрала
+    именно наше (рядом в SSR живут usedResumeIds/unusedResumeIds). Принять
+    такой реестр — submit с резюме, выбранным hh.ru (#33); ровно одна запись
+    с нашим hash — единственный принимаемый shape."""
+    page = FakeStepsPage()
+    page.content_html = _ssr_form_state_html("RID", multi_resume=True)
+    page.set_visible(apply_form.APPLY_RESUME_SELECT, True)  # опций нет: option_resume_ids=[]
+    page.set_visible(apply_form.APPLY_COVER_LETTER_TEXTAREA, True)
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    result = steps.fill_response_form(page, "RID", "письмо")
+
+    assert result is not None
+    assert "не удалось однозначно выбрать резюме 'RID'" in result
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 0
+
+
+def test_fill_form_hidden_resume_warning_names_the_dom_fact():
+    """Дропдаун не открылся, SSR предвыбор НЕ подтверждает, в DOM свёрнутое
+    hidden-resume-warning — различимый отказ, описывающий DOM-факт без
+    вины «видимости»: текст предупреждения — легаси hh.ru (режима «Видно
+    компаниям-клиентам HeadHunter» нет среди пяти актуальных radio), живая
+    проверка 2026-09-09 показала, что отклик возможен при заполненном
+    письме — доверять тексту нельзя, только наличию узла."""
     page = FakeStepsPage()
     page.set_visible(apply_form.APPLY_RESUME_SELECT, True)  # опций нет: option_resume_ids=[]
     # Фейк различает только present/absent: visible-флаг здесь изображает
-    # ПРИСУТСТВИЕ узла, а прод-сигнал гейта — наличие СВЁРНУТОГО (max-height:0)
+    # ПРИСУТСТВИЕ узла, а прод-сигнал — наличие СВЁРНУТОГО (max-height:0)
     # предупреждения (детект по count() в ensure_resume_selected, не по видимости).
-    # Если фейк получит computed-style-семантику (как у
-    # _hidden_resume_warning_is_expanded), свёрнутый shape должен моделироваться
-    # здесь первым — этот тест место, где она проявится.
     page.set_visible(vacancy_page.VACANCY_HIDDEN_RESUME_WARNING, True)
     page.set_visible(apply_form.APPLY_COVER_LETTER_TEXTAREA, True)
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
@@ -684,8 +776,8 @@ def test_fill_form_hidden_resume_warning_names_the_gate():
     result = steps.fill_response_form(page, "RID", "письмо")
 
     assert result is not None
-    assert "компании-клиента HeadHunter" in result
     assert "hidden-resume-warning" in result
+    assert "не выбрано в форме отклика" in result
     # Отказ ДО submit: отклик не отправлялся.
     assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 0
 
