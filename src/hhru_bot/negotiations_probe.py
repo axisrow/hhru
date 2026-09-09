@@ -132,6 +132,31 @@ def remindable_topic_refs(html: str) -> list[RemindableTopicRef]:
     return result
 
 
+def _require_windows_overlap(
+    prev_first_topic_id: str | None, page_refs: list, page_num: int
+) -> None:
+    """Fail-closed guard стопа «ноль новых топиков» (ревью PR #1072).
+
+    Ноль новых тем на странице N>0 доказывает конец списка только если это
+    подтверждённый повтор окна: выдача пересекается с прошлой (первый topic_id
+    прошлой страницы встречается в новой). Если его там нет — окна между GET
+    разъехались (список сдвинулся между запросами) и стоп молча отдал бы
+    усечённый список за полный; в этом случае — ``ResponsesIndeterminate``.
+    Пустая страница и пустая прошлая — серверный контракт конца/нулевого
+    списка, не сдвиг: расхождения в них нет.
+    """
+    if not page_refs or prev_first_topic_id is None:
+        return
+    if prev_first_topic_id not in {r.topic_id for r in page_refs}:
+        from .responses import ResponsesIndeterminate
+
+        raise ResponsesIndeterminate(
+            f"окна страниц {page_num - 1} и {page_num} разошлись: первая тема "
+            f"прошлой выдачи ({prev_first_topic_id}) отсутствует в новой — "
+            f"список сдвинулся между GET, хвост мог быть пропущен"
+        )
+
+
 def paginated_topic_refs(page, max_pages: int = 5) -> list[TopicRef]:
     """Read SSR topic mappings from every available negotiations page.
 
@@ -150,6 +175,7 @@ def paginated_topic_refs(page, max_pages: int = 5) -> list[TopicRef]:
 
     refs: list[TopicRef] = []
     seen: set[str] = set()
+    prev_first_topic_id: str | None = None
     for page_num in range(max_pages):
         url = NEGOTIATIONS_URL if page_num == 0 else f"{NEGOTIATIONS_URL}?page={page_num}"
         goto_hh(page, url)
@@ -173,9 +199,19 @@ def paginated_topic_refs(page, max_pages: int = 5) -> list[TopicRef]:
         # аккаунтах; дедуп по topic_id страхует и от сервера, игнорирующего
         # ?page (он вернёт те же темы → ноль новых → стоп).
         if page_num > 0 and not new_refs:
+            # Ревью PR #1072 (находка по семантике #1066): «ноль новых» —
+            # честный конец списка только если новая выдача — подтверждённый
+            # повтор окна (пересекается с прошлой). Если прошлая страница
+            # начиналась с темы, которой в новой нет вовсе, окна между GET
+            # разъехались (список сдвинулся: тема ушла вниз или новая встала
+            # выше) — непросмотренный хвост мог остаться за окном, и молчаливый
+            # стоп здесь выдал бы усечённый список за полный. Пустая страница —
+            # серверный контракт конца, а не сдвиг, индетерминатности в ней нет.
+            _require_windows_overlap(prev_first_topic_id, page_refs, page_num)
             break
         seen.update(r.topic_id for r in new_refs)
         refs.extend(new_refs)
+        prev_first_topic_id = page_refs[0].topic_id if page_refs else prev_first_topic_id
     return refs
 
 
@@ -218,6 +254,7 @@ def paginated_topic_and_remindable_refs(
     topics_out: list[TopicRef] = []
     remindable_out: list[RemindableTopicRef] = []
     seen: set[str] = set()
+    prev_first_topic_id: str | None = None
     for page_num in range(max_pages):
         url = NEGOTIATIONS_URL if page_num == 0 else f"{NEGOTIATIONS_URL}?page={page_num}"
         goto_hh(page, url)
@@ -231,9 +268,15 @@ def paginated_topic_and_remindable_refs(
         # (полное обоснование в комментарии там). Дедуп по topic_id не даёт
         # повторной странице задвоить темы в обоих представлениях.
         if page_num > 0 and not new_ids:
+            # Тот же инвариант расхождения окон, что в paginated_topic_refs
+            # (ревью PR #1072): «ноль новых» доказывает конец списка только
+            # пересечением с прошлой выдачей; полное обоснование — в
+            # _require_windows_overlap.
+            _require_windows_overlap(prev_first_topic_id, page_topics, page_num)
             break
         topics_out.extend(r for r in page_topics if r.topic_id in new_ids)
         remindable_out.extend(r for r in remindable_topic_refs(html) if r.topic_id in new_ids)
+        prev_first_topic_id = page_topics[0].topic_id if page_topics else prev_first_topic_id
         seen.update(new_ids)
         topics = parse_initial_state(html)["applicantNegotiations"]["topicList"]
         # An explicitly empty SSR list is a confirmed empty inbox.  Waiting

@@ -4,11 +4,12 @@ import pytest
 
 from hhru_bot.negotiations_probe import (
     chat_url,
+    paginated_topic_and_remindable_refs,
     paginated_topic_refs,
     parse_initial_state,
     topic_refs,
 )
-from hhru_bot.responses import NotAuthenticated
+from hhru_bot.responses import NotAuthenticated, ResponsesIndeterminate
 
 pytestmark = pytest.mark.integration
 
@@ -178,6 +179,101 @@ def test_paginated_topic_refs_survives_server_ignoring_page_param(monkeypatch):
         "https://hh.ru/applicant/negotiations",
         "https://hh.ru/applicant/negotiations?page=1",
     ]
+
+
+def _pages_page(pages):
+    class Page:
+        def __init__(self):
+            self.page_num = 0
+
+        def content(self):
+            return _state_html(pages[self.page_num])
+
+    page = Page()
+    urls = []
+
+    def goto(_page, url):
+        urls.append(url)
+        page.page_num = len(urls) - 1
+
+    return page, goto, urls
+
+
+def test_paginated_topic_refs_empty_next_page_confirms_end(monkeypatch):
+    """Пустая следующая страница — серверный контракт конца, не сдвиг окон:
+    стоп по нулю новых без indeterminate."""
+
+    page, goto, urls = _pages_page({0: [1, 2], 1: []})
+
+    monkeypatch.setattr("hhru_bot.browser.goto_hh", goto)
+    monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr("hhru_bot.browser.has_login_form", lambda _page: False)
+
+    refs = paginated_topic_refs(page, max_pages=3)
+
+    assert [ref.topic_id for ref in refs] == ["1", "2"]
+    assert urls[-1] == "https://hh.ru/applicant/negotiations?page=1"
+
+
+def test_paginated_topic_refs_shifted_window_raises_indeterminate(monkeypatch):
+    """Ревью PR #1072: список сдвинулся между GET — окно page=1 целиком из уже
+    виденных тем, но НЕ пересекается с началом прошлой выдачи (первой темы
+    прошлой страницы в новой нет). Стоп по нулю новых молча отдал бы усечённый
+    список за полный; вместо этого — ResponsesIndeterminate (fail-closed)."""
+
+    # page 0: темы 1-5; между GET сверху встали новые темы → окно page=1
+    # сползло назад на 3-5 (все уже seen), хвост 6+ остался за окном.
+    page, goto, _urls = _pages_page({0: [1, 2, 3, 4, 5], 1: [3, 4, 5]})
+
+    monkeypatch.setattr("hhru_bot.browser.goto_hh", goto)
+    monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr("hhru_bot.browser.has_login_form", lambda _page: False)
+
+    with pytest.raises(ResponsesIndeterminate, match="разошлись"):
+        paginated_topic_refs(page, max_pages=3)
+
+
+def test_combined_walk_shifted_window_raises_indeterminate(monkeypatch):
+    """Тот же инвариант для комбинированного обхода (#710): сдвиг окна между
+    страницами → ResponsesIndeterminate, а не молчаливая усечёнка тем/флагов
+    напоминаний."""
+
+    def remindable_state_html(topic_ids):
+        state = {
+            "applicantNegotiations": {
+                "topicList": [
+                    {
+                        "id": tid,
+                        "chatId": tid + 100,
+                        "vacancyId": tid + 200,
+                        "responseReminderState": {"allowed": False},
+                    }
+                    for tid in topic_ids
+                ]
+            }
+        }
+        return '<template id="HH-Lux-InitialState">' + json.dumps(state) + "</template>"
+
+    pages = {0: [1, 2, 3, 4, 5], 1: [3, 4, 5]}
+
+    class Page:
+        def __init__(self):
+            self.page_num = 0
+
+        def content(self):
+            return remindable_state_html(pages[self.page_num])
+
+    page = Page()
+
+    def goto(_page, url):
+        page.page_num = 0 if url.endswith("negotiations") else int(url.rsplit("=", 1)[1])
+
+    monkeypatch.setattr("hhru_bot.browser.goto_hh", goto)
+    monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr("hhru_bot.browser.has_login_form", lambda _page: False)
+
+    with pytest.raises(ResponsesIndeterminate, match="разошлись"):
+        paginated_topic_and_remindable_refs(page, max_pages=3)
 
 
 # --- Codex review (#201): expired session must not surface as a raw ValueError
