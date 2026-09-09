@@ -671,6 +671,12 @@ def test_fill_form_hidden_resume_warning_names_the_gate():
     а не прятать его за безликим «не удалось однозначно выбрать резюме»."""
     page = FakeStepsPage()
     page.set_visible(apply_form.APPLY_RESUME_SELECT, True)  # опций нет: option_resume_ids=[]
+    # Фейк различает только present/absent: visible-флаг здесь изображает
+    # ПРИСУТСТВИЕ узла, а прод-сигнал гейта — наличие СВЁРНУТОГО (max-height:0)
+    # предупреждения (детект по count() в ensure_resume_selected, не по видимости).
+    # Если фейк получит computed-style-семантику (как у
+    # _hidden_resume_warning_is_expanded), свёрнутый shape должен моделироваться
+    # здесь первым — этот тест место, где она проявится.
     page.set_visible(vacancy_page.VACANCY_HIDDEN_RESUME_WARNING, True)
     page.set_visible(apply_form.APPLY_COVER_LETTER_TEXTAREA, True)
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
