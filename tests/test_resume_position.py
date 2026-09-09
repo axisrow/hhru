@@ -768,7 +768,7 @@ def test_apply_position_skips_set_control_when_value_already_current(monkeypatch
     monkeypatch.setattr(
         resume_position,
         "_set_control",
-        lambda page, selector, value, labels: calls.append((selector, value)),
+        lambda page, selector, value, labels, trigger_labels=None: calls.append((selector, value)),
     )
     page = MagicMock()
     current = PositionValues(
@@ -794,7 +794,7 @@ def test_apply_position_calls_set_control_when_value_differs_from_current(monkey
     monkeypatch.setattr(
         resume_position,
         "_set_control",
-        lambda page, selector, value, labels: calls.append((selector, value)),
+        lambda page, selector, value, labels, trigger_labels=None: calls.append((selector, value)),
     )
     page = MagicMock()
     current = PositionValues(
@@ -827,7 +827,7 @@ def test_apply_position_calls_set_control_unconditionally_without_current(monkey
     monkeypatch.setattr(
         resume_position,
         "_set_control",
-        lambda page, selector, value, labels: calls.append((selector, value)),
+        lambda page, selector, value, labels, trigger_labels=None: calls.append((selector, value)),
     )
     page = MagicMock()
     plan = PositionValues(commute="no_limit", business_trips=True)
@@ -1212,6 +1212,204 @@ def test_set_control_fails_when_checked_option_lacks_data_qa(monkeypatch):
         resume_position._set_control(
             page, resume_position.WORK_FORMAT, "remote", resume_position.WORK_LABELS
         )
+
+
+def test_set_control_fails_closed_when_both_options_lack_data_qa(monkeypatch):
+    """#1075: при пустых data-qa у ОБЕИХ опций дедуп «"" == target_qa»
+    продолжал цикл до fail-closed guard'а — «Выбрать» коммитил оба значения.
+    Порядок проверок: отказ на пустой qa ДО дедупа, ни одного клика."""
+    monkeypatch.setattr(resume_position, "_dump_control_failure", MagicMock())
+
+    class _Row:
+        def __init__(self, panel, qa):
+            self.panel = panel
+            self.qa = qa
+
+        def count(self):
+            return 1
+
+        def get_attribute(self, name):  # noqa: ARG002
+            return self.qa
+
+        def click(self):
+            self.panel.row_clicks.append(self.qa)
+
+    class _RowList:
+        def __init__(self, panel, qas):
+            self.panel = panel
+            self.qas = qas
+
+        def count(self):
+            return len(self.qas)
+
+        def nth(self, i):
+            return _Row(self.panel, self.qas[i])
+
+    class _ApplyButton:
+        def __init__(self, panel):
+            self.panel = panel
+
+        def count(self):
+            return 1
+
+        def click(self):
+            self.panel.apply_clicks += 1
+
+    panel = MagicMock()
+    panel.wait_for.return_value = None
+    panel.row_clicks = []
+    panel.apply_clicks = 0
+    # Обе опции отмечены и обе без data-qa: цель «Офис» и чужая «Удалённо».
+    panel.locator.side_effect = lambda selector: (
+        _ApplyButton(panel)
+        if selector == resume_position.SELECT_APPLY
+        else _RowList(panel, ["", ""])
+        if selector == resume_position.SELECT_OPTION_CHECKED
+        else MagicMock()
+    )
+    panel.get_by_role.return_value = _Row(panel, "")
+    control = MagicMock()
+    control.count.return_value = 1
+    control.first = control
+    control.evaluate.return_value = "BUTTON"
+    page = MagicMock()
+    page.locator.side_effect = lambda selector: (
+        panel if selector == resume_position.RESUME_POSITION_DROPDOWN else control
+    )
+
+    with pytest.raises(RuntimeError, match="без data-qa"):
+        resume_position._set_control(
+            page, resume_position.WORK_FORMAT, "office", resume_position.WORK_LABELS
+        )
+
+    # Refusal до кликов: ни чекбокс, ни «Выбрать» не нажаты (#1075).
+    assert panel.row_clicks == []
+    assert panel.apply_clicks == 0
+
+
+def test_set_control_accepts_display_work_trigger_label():
+    """#1075: панель формата работы подписывает опцию «Офис», а триггер после
+    применения рендерит «На месте работодателя» (DISPLAY_WORK) — post-hoc
+    проверка по подписи панели репортила успешный выбор отказом."""
+
+    class _Row:
+        def __init__(self, panel, qa):
+            self.panel = panel
+            self.qa = qa
+
+        def count(self):
+            return 1
+
+        def get_attribute(self, name):  # noqa: ARG002
+            return self.qa
+
+        def click(self):
+            self.panel.row_clicks.append(self.qa)
+            row = self.panel.rows[self.qa]
+            row["checked"] = not row["checked"]
+
+    class _RowList:
+        def __init__(self, panel, qas):
+            self.panel = panel
+            self.qas = qas
+
+        def count(self):
+            return len(self.qas)
+
+        def nth(self, i):
+            return _Row(self.panel, self.qas[i])
+
+        def click(self):
+            self.nth(0).click()
+
+    class _ApplyButton:
+        def __init__(self, panel):
+            self.panel = panel
+
+        def count(self):
+            return 1
+
+        def click(self):
+            self.panel.apply_clicks += 1
+            self.panel.open = False
+
+    class FakePanel:
+        def __init__(self):
+            self.rows = {
+                "resume-work-format-office": {"label": "Офис", "checked": False},
+                "resume-work-format-remote": {"label": "Удалённо", "checked": True},
+            }
+            self.open = False
+            self.row_clicks = []
+            self.apply_clicks = 0
+
+        def wait_for(self, *, state, timeout=None):
+            assert self.open is (state == "visible")
+
+        def get_by_role(self, role, *, name, exact):
+            assert (role, exact) == ("option", True)
+            qa = next(q for q, r in self.rows.items() if r["label"] == name)
+            return _Row(self, qa)
+
+        def locator(self, selector):
+            if selector == resume_position.SELECT_APPLY:
+                return _ApplyButton(self)
+            if selector == resume_position.SELECT_OPTION_CHECKED:
+                checked = [q for q, r in self.rows.items() if r["checked"]]
+                return _RowList(self, checked)
+            if selector.startswith("label[role='option'][data-qa='"):
+                qa = selector.split("data-qa='", 1)[1].rstrip("']")
+                return _RowList(self, [qa])
+            raise AssertionError(f"неожиданный селектор панели: {selector}")
+
+    class FakeControl:
+        def __init__(self, panel):
+            self.panel = panel
+            self.first = self
+
+        def count(self):
+            return 1
+
+        def evaluate(self, _script):
+            return "BUTTON"
+
+        def click(self):
+            self.panel.open = True
+
+        def inner_text(self):
+            # Триггер показывает лейблы DISPLAY_WORK, а не панели.
+            key_by_qa = {
+                "resume-work-format-office": "office",
+                "resume-work-format-remote": "remote",
+                "resume-work-format-hybrid": "hybrid",
+            }
+            labels = [
+                resume_position.DISPLAY_WORK[key_by_qa[q]]
+                for q, r in self.panel.rows.items()
+                if r["checked"]
+            ]
+            return ", ".join(labels)
+
+    panel = FakePanel()
+    control = FakeControl(panel)
+    page = MagicMock()
+    page.locator.side_effect = lambda selector: (
+        panel if selector == resume_position.RESUME_POSITION_DROPDOWN else control
+    )
+
+    # Вызов как в apply_position_to_editor: панель — WORK_LABELS, триггер —
+    # DISPLAY_WORK. Успех НЕ должен репортиться отказом.
+    resume_position._set_control(
+        page,
+        resume_position.WORK_FORMAT,
+        "office",
+        resume_position.WORK_LABELS,
+        resume_position.DISPLAY_WORK,
+    )
+
+    assert panel.rows["resume-work-format-office"]["checked"] is True
+    assert panel.rows["resume-work-format-remote"]["checked"] is False
+    assert panel.apply_clicks == 1
 
 
 def test_set_control_passes_explicit_timeout_to_panel_waits():

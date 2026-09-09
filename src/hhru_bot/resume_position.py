@@ -999,7 +999,17 @@ def _dump_control_failure(page: Page, selector: str, exc: Exception) -> None:
         logger.warning("resume_position: %s — дамп недоступен: %s", selector, dump_exc)
 
 
-def _set_control(page: Page, selector: str, value: str, labels: dict[str, str]) -> None:
+def _set_control(
+    page: Page,
+    selector: str,
+    value: str,
+    labels: dict[str, str],
+    trigger_labels: dict[str, str] | None = None,
+) -> None:
+    """``labels`` — подписи опций в панели, ``trigger_labels`` — подпись того же
+    значения на триггере после применения (у формата работы они расходятся:
+    панель показывает «Офис», триггер — «На месте работодателя», #1075);
+    по умолчанию триггер совпадает с панелью."""
     loc = page.locator(selector)
     if loc.count() != 1:
         raise RuntimeError(f"селектор формы не подтверждён: {selector}")
@@ -1051,8 +1061,9 @@ def _set_control(page: Page, selector: str, value: str, labels: dict[str, str]) 
             if target_qa not in checked_qas:
                 option.click()
             for qa in checked_qas:
-                if qa == target_qa:
-                    continue
+                # Порядок важен (#1075): fail-closed на пустой data-qa ДО
+                # дедупа — иначе «"" == target_qa» у обеих опций без data-qa
+                # продолжал цикл, и «Выбрать» коммитил оба значения.
                 if not qa:
                     # Молчаливый пропуск оставил бы полю несколько значений
                     # (#526), а substring-проверка триггера «Удалённо +1»
@@ -1062,6 +1073,8 @@ def _set_control(page: Page, selector: str, value: str, labels: dict[str, str]) 
                     raise RuntimeError(
                         "отмеченная опция без data-qa — нечем снять (одно значение на поле, #526)"
                     )
+                if qa == target_qa:
+                    continue
                 panel.locator(f"label[role='option'][data-qa='{qa}']").click()
             apply_button.click()
         else:
@@ -1080,10 +1093,11 @@ def _set_control(page: Page, selector: str, value: str, labels: dict[str, str]) 
         # неоткрытая панель) здесь становится маркированным отказом, а не
         # успехом с неизменившимся значением.
         trigger_text = el.inner_text()
-        if labels[value] not in trigger_text:
+        shown = (trigger_labels or labels)[value]
+        if shown not in trigger_text:
             raise RuntimeError(
                 f"выбор не применился: триггер показывает «{trigger_text.strip()}» "
-                f"после выбора «{labels[value]}»"
+                f"после выбора «{shown}»"
             )
     except (PlaywrightError, RuntimeError) as exc:
         _dump_control_failure(page, selector, exc)
@@ -1439,7 +1453,10 @@ def apply_position(
         for value in plan.work_format:
             if current_work_format == [value]:
                 continue
-            _set_control(page, WORK_FORMAT, value, WORK_LABELS)
+            # Панель и триггер формата работы подписаны по-разному: опция в
+            # панели — «Офис», триггер после применения — «На месте
+            # работодателя» (DISPLAY_WORK, #1075).
+            _set_control(page, WORK_FORMAT, value, WORK_LABELS, DISPLAY_WORK)
     if plan.commute and (current is None or current.commute != plan.commute):
         _set_control(page, TRAVEL, plan.commute, TRAVEL_LABELS)
     if plan.business_trips is not None and (
