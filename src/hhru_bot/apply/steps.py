@@ -398,7 +398,8 @@ def _preselected_resume_confirmed_by_ssr(page: Page, resume_id: str) -> bool:
 
     try:
         state = parse_initial_state(page.content())
-    except (ValueError, json.JSONDecodeError):
+    # JSONDecodeError — подкласс ValueError, одного ValueError достаточно.
+    except ValueError:
         return False
     statuses = state.get("applicantVacancyResponseStatuses")
     if not isinstance(statuses, dict) or len(statuses) != 1:
