@@ -308,28 +308,56 @@ def parse_response_card(item) -> ResponseItem | None:
     )
 
 
+def _confirmed_no_new_topics(page: Page, seen_topic_ids: set[str], *, strict: bool) -> bool:
+    """Подтверждает ли пустая по DOM страницу конец списка по SSR-топикам.
+
+    У negotiations нет проверенного empty-state-селектора: по DOM пустая
+    последняя страница неотличима от несработавшего рендера. SSR ``topicList``
+    читается из уже загруженного HTML (read-only) и решает: подтверждённо
+    пустой или повторный список — конец (та же семантика, что у paginated_*-
+    обходчиков negotiations_probe, #1066/#1074); битый SSR (для strict —
+    включая неполные записи, которые ``topic_refs`` молча дропает) или новые
+    топики без отрисованных карточек — НЕ конец.
+    """
+    try:
+        from .negotiations_probe import parse_initial_state, topic_refs
+
+        if not hasattr(page, "content"):
+            return False
+        html = page.content()
+        if strict:
+            raw = parse_initial_state(html).get("applicantNegotiations", {}).get("topicList")
+            if not isinstance(raw, list) or any(
+                not isinstance(ref, dict)
+                or any(ref.get(key) in (None, "") for key in ("id", "chatId", "vacancyId"))
+                for ref in raw
+            ):
+                return False
+        return not ({ref.topic_id for ref in topic_refs(html)} - seen_topic_ids)
+    except (AttributeError, TypeError, ValueError, KeyError, json.JSONDecodeError, PlaywrightError):
+        return False
+
+
 def fetch_responses(
     page: Page,
     max_pages: int = 5,
     *,
     strict_empty: bool = False,
     strict_scrape: bool = False,
-    pagerless: bool = False,
 ) -> list[ResponseItem]:
     """Собирает ответы работодателей с /applicant/negotiations.
 
     Возвращает список ResponseItem (без дедупликации — upsert в истории её сделает
-    по UNIQUE (vacancy_id, topic)). Пагинация: до ``max_pages``, стоп только на
-    подтверждённой последней странице. Неподтверждённая пагинация поднимает
-    :class:`ResponsesIndeterminate`, а не выдаёт неопределённость за последнюю
-    страницу.
-
-    ``pagerless=True`` (для clear-negotiations, #1067): конец списка
-    определяется нулём НОВЫХ SSR-топиков на странице, а не UI-пейджером —
-    hh.ru убрал пейджер из /applicant/negotiations (дрейф 2026-09-09, PR
-    #1066), и «пейджер не отрисован» больше не доказывает «страница одна».
-    Достижение ``max_pages`` при непустой последней странице поднимает
-    :class:`ResponsesIndeterminate`: полнота списка не подтверждена.
+    по UNIQUE (vacancy_id, topic)). Пагинация pagerless (#1074, семантика
+    #1066/#1068): конец списка определяется нулём НОВЫХ SSR-топиков на странице,
+    а не UI-пейджером — hh.ru убрал пейджер из /applicant/negotiations (дрейф
+    2026-09-09, PR #1066), и «пейджер не отрисован» больше не доказывает
+    «страница одна». Дедуп по topic_id страхует и от сервера, игнорирующего
+    ``?page`` (он вернёт те же темы -> ноль новых -> стоп), и от сдвига списка
+    между GET: перекрытие окон даёт дубликаты только уже собранных топиков,
+    новые не теряются. Достижение ``max_pages`` при непустой последней
+    странице поднимает :class:`ResponsesIndeterminate`: полнота списка не
+    подтверждена, тихая обрезка запрещена.
 
     Read-only по hh.ru: только goto + чтение, никаких кликов действий.
 
@@ -339,7 +367,15 @@ def fetch_responses(
     cookie jar, поэтому после навигации дополнительно проверяем подтверждённый
     DOM-маркер серверной формы входа. Если он обнаружен, поднимается
     NotAuthenticated (команда НЕ должна трактовать такой пустой результат как
-    «нет новых ответов» и НЕ должна затирать историю). Для списка negotiations пока нет проверенного
+    «нет новых ответов» и НЕ должна затирать историю). Для списка negotiations
+    нет проверенного empty-state-селектора, поэтому render-timeout на ПЕРВОЙ
+    странице сохраняет исторический контракт честно пустого inbox (возвращает
+    []). Это осознанная асимметрия pagerless-обхода (#1074): на последующих
+    страницах то же состояние (нет карточек, SSR не подтверждает ноль новых
+    топиков) — :class:`ResponsesIndeterminate`, потому что полнота списка без
+    SSR не подтверждается; на первой же странице до неё ничего не собрано и
+    «пусто» ничего не обрезает.
+
     ``strict_scrape`` включает fail-closed для рендера и разбора карточек без
     требования topic/resume identity (более строгий контракт ``strict_empty``
     остаётся только для --sync-applied). Это позволяет alert-polling принимать
@@ -405,6 +441,22 @@ def fetch_responses(
                     f"не появились за {RENDER_TIMEOUT_MS} мс"
                 )
             if page_num > 0 and not cards_rendered:
+                # Пустая по DOM страница без empty-state-селектора неотличима
+                # от несработавшего рендера. Конец подтверждается данными —
+                # нулём новых SSR-топиков (та же семантика, что у paginated_*-
+                # обходчиков negotiations_probe, #1066/#1074); всё прочее —
+                # indeterminate, а не «дочитано».
+                if _confirmed_no_new_topics(
+                    page,
+                    seen_topic_ids,
+                    strict=bool(strict_empty or strict_scrape),
+                ):
+                    logger.info(
+                        "Страница %d: карточек нет, новых SSR-топиков нет — "
+                        "достигнут конец списка откликов",
+                        page_num,
+                    )
+                    break
                 raise ResponsesIndeterminate(
                     f"страницы {page_num} не подтверждена: карточки переписки "
                     f"не появились за {RENDER_TIMEOUT_MS} мс после подтверждённой пагинации"
@@ -581,14 +633,6 @@ def fetch_responses(
         except ResponsesIndeterminate:
             raise
         except (TypeError, ValueError, KeyError, json.JSONDecodeError, PlaywrightError):
-            if pagerless:
-                # Ноль новых топиков — единственное доказательство конца списка
-                # в pagerless-режиме; без прочитанного SSR topicList его нечем
-                # подтвердить — fail-closed, а не «дочитано».
-                raise ResponsesIndeterminate(
-                    f"страница {page_num}: SSR topicList не прочитан — полнота "
-                    "списка без пейджера не подтверждается (#1067)"
-                ) from None
             if strict_empty or strict_scrape:
                 # #742: отсутствующий/битый HH-Lux-InitialState — тот же
                 # неопределённый page-state, что и не появившиеся карточки
@@ -599,77 +643,37 @@ def fetch_responses(
                 raise ResponsesIndeterminate(
                     f"страница {page_num}: SSR topic/resume mapping не подтверждён"
                 ) from None
-            logger.warning("SSR topic mapping unavailable; keeping parsed chat URLs")
-
-        if pagerless:
-            # Дрейф 2026-09-09 (PR #1066): пейджер из UI удалён, серверный
-            # GET-контракт ?page=N жив — конец списка доказывается данными:
-            # страница без НОВЫХ топиков (пустая или повтор предыдущей) —
-            # конец. Дедуп по topic_id страхует и от сервера, игнорирующего
-            # ?page (он вернёт те же темы -> ноль новых -> стоп).
-            if page_num > 0 and not (page_topic_ids - seen_topic_ids):
-                logger.info(
-                    "Страница %d без новых топиков — достигнут конец списка откликов",
-                    page_num,
-                )
-                break
-            if page_num == max_pages - 1 and page_topic_ids:
-                # Последняя страница бюджета непуста, а пейджера, который
-                # доказал бы «дальше пусто», больше не существует — полнота
-                # списка не подтверждена. Для необратимого clear-negotiations
-                # это отказ до любого клика (инвариант PR #196, #1067).
-                raise ResponsesIndeterminate(
-                    f"обход достиг --max-pages={max_pages} при непустой странице "
-                    f"{page_num} — продолжение списка не опровергнуто"
-                )
-            seen_topic_ids |= page_topic_ids
-            continue
-        has_next = _has_next_page(page, page_num)
-        if not has_next:
-            logger.info("Достигнута последняя страница откликов (%d)", page_num)
-            break
-        if (strict_empty or strict_scrape) and page_num == max_pages - 1:
+            # Ноль новых топиков — единственное доказательство конца списка
+            # в pagerless-режиме (#1074); без прочитанного SSR topicList его
+            # нечем подтвердить — fail-closed, а не «дочитано».
             raise ResponsesIndeterminate(
-                "sync достиг ограничения страниц, но negotiations продолжается"
+                f"страница {page_num}: SSR topicList не прочитан — полнота "
+                "списка без пейджера не подтверждается (#1067)"
+            ) from None
+
+        # Дрейф 2026-09-09 (PR #1066): пейджер из UI удалён, серверный
+        # GET-контракт ?page=N жив — конец списка доказывается данными:
+        # страница без НОВЫХ топиков (пустая или повтор предыдущей) — конец.
+        # Дедуп по topic_id страхует и от сервера, игнорирующего ?page (он
+        # вернёт те же темы -> ноль новых -> стоп), и от сдвига списка между
+        # GET: перекрытие окон даёт дубликаты только уже собранных топиков.
+        if page_num > 0 and not (page_topic_ids - seen_topic_ids):
+            logger.info(
+                "Страница %d без новых топиков — достигнут конец списка откликов",
+                page_num,
             )
+            break
+        if page_num == max_pages - 1 and page_topic_ids:
+            # Последняя страница бюджета непуста, а пейджера, который доказал
+            # бы «дальше пусто», больше не существует — полнота списка не
+            # подтверждена. Для необратимого clear-negotiations это отказ до
+            # любого клика (инвариант PR #196, #1067); для responses --sync
+            # и обычного responses — отказ вместо тихой обрезки (#1074).
+            raise ResponsesIndeterminate(
+                f"обход достиг --max-pages={max_pages} при непустой странице "
+                f"{page_num} — продолжение списка не опровергнуто"
+            )
+        seen_topic_ids |= page_topic_ids
 
     logger.info("Собрано ответов работодателей всего: %d", len(results))
     return results
-
-
-def _has_next_page(page: Page, page_num: int) -> bool:
-    """Подтверждённо ли существует следующая страница negotiations.
-
-    Отсутствующий ``pager-block`` после готовых карточек означает единственную
-    страницу. Если контейнер есть, ``pager-next`` достаточен; иначе проверяем
-    нумерованные страницы и ждём их bounded-временем fail-closed.
-    """
-    if page.locator(ns.NEGOTIATIONS_PAGINATION_NEXT).count() > 0:
-        return True
-
-    pagination = page.locator(ns.NEGOTIATIONS_PAGINATION_BLOCK)
-    if pagination.count() == 0:
-        return False
-
-    pages = page.locator(ns.NEGOTIATIONS_PAGINATION_PAGE)
-    if pages.count() == 0:
-        try:
-            pages.first.wait_for(state="attached", timeout=RENDER_TIMEOUT_MS)
-        except PlaywrightError:
-            raise ResponsesIndeterminate(
-                f"пагинация ответов на странице {page_num} не подтверждена: "
-                f"маркер pager-page не появился за {RENDER_TIMEOUT_MS} мс"
-            ) from None
-        if pages.count() == 0:
-            raise ResponsesIndeterminate(
-                f"пагинация ответов на странице {page_num} не подтверждена: "
-                "pager-page исчез после ожидания"
-            )
-
-    for i in range(pages.count()):
-        try:
-            if int(pages.nth(i).inner_text().strip()) > page_num + 1:
-                return True
-        except ValueError:
-            continue
-    return False

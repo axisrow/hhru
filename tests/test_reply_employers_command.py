@@ -108,10 +108,8 @@ def _patch_common(
         lambda html: {"applicantNegotiations": {"topicList": [{}]}},
     )
     # Lightweight _Page fakes expose content() but not locator() (single-page
-    # inbox in tests); paginated_topic_refs() tolerates the resulting
-    # AttributeError itself, but paginated_remindable_topic_refs() calls
-    # _has_next_page() unconditionally, so it is stubbed here instead.
-    monkeypatch.setattr("hhru_bot.responses._has_next_page", lambda page, page_num: False)
+    # inbox in tests); both paginated_* walkers are SSR-based (#1066) and never
+    # touch the page locator for this fixture shape.
     if reader is not None:
         monkeypatch.setattr("hhru_bot.negotiations_chat.read_chat", reader)
     if send is not None:
