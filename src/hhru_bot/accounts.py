@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+import yaml
+
 
 class AccountError(ValueError):
     """A requested account cannot be resolved."""
@@ -29,6 +31,47 @@ def validate_account_name(name: str) -> None:
     """
     if not name or name in {".", ".."} or Path(name).name != name:
         raise AccountError(f"недопустимое имя аккаунта: {name!r}")
+
+
+def read_default_account(
+    config_path: Path = Path("data") / "config.yaml",
+) -> str | None:
+    """Read the top-level ``default_account`` from the root config (#1086).
+
+    The root ``data/config.yaml`` belongs to the unnamed account, so this is a
+    deliberately light YAML read (not ``load_config``): the value must exist
+    before any account's config can be fully parsed, and an unparsable or
+    partially filled account config must not break account resolution for a
+    different account. Absent file or absent key -> ``None`` (the caller keeps
+    the byte-for-byte pre-#1086 behavior). A present-but-non-scalar value is a
+    config error the user must see, not silently ignore.
+    """
+    try:
+        with config_path.open(encoding="utf-8") as stream:
+            raw = yaml.safe_load(stream)
+    except FileNotFoundError:
+        return None
+    except yaml.YAMLError as exc:
+        # Синтаксически битый корневой конфиг до #1086 падал в
+        # load_config_or_exit с аккуратным [FAIL]; здесь тот же контракт —
+        # AccountError, а не сырой traceback из _resolve_paths. Возврат None
+        # (молчаливый fallback на корневые дефолты) скрыл бы поломку.
+        raise AccountError(f"не удалось прочитать {config_path}: {exc}") from exc
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or "default_account" not in raw:
+        return None
+    value = raw["default_account"]
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise AccountError(
+            f"default_account в {config_path} должен быть строкой-именем аккаунта, "
+            f"получено: {value!r}"
+        )
+    # Пустая строка — то же, что отсутствие ключа: раскомментированный
+    # шаблон без значения не должен ломать каждый запуск.
+    return value.strip() or None
 
 
 def resolve_account_paths(

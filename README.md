@@ -153,6 +153,12 @@ HHRU_ACCOUNT=marketing scripts/scheduled_run.sh --headless apply --limit 5
 
 Список аккаунтов и их состояние: `./scripts/run.sh account list`.
 
+Дефолтный аккаунт для команд без флага и env задаётся строкой
+`default_account: <name>` в корневом `data/config.yaml` (#1086):
+без неё поведение прежнее (корневой конфиг), с ней команда без `--account`
+идёт с `data/accounts/<name>/`. Указание на несуществующий аккаунт — `[FAIL]`
+при запуске. Явные `--config`/`--history` отменяют настройку.
+
 У каждого аккаунта своя сессия, своя история откликов/поднятий и свои
 дневные лимиты — они не суммируются и не переносятся между аккаунтами.
 Разные аккаунты можно гонять параллельно; два одновременных прогона
@@ -395,7 +401,7 @@ Write-команды (`apply`/`bump`/`run`/...) сначала `--dry-run`, по
 
 - `--config` — Путь к config.yaml
 - `--history` — Путь к файлу истории (SQLite)
-- `--account` — Имя аккаунта (data/accounts/<name>/config.yaml + history.db); по умолчанию из HHRU_ACCOUNT
+- `--account` — Имя аккаунта (data/accounts/<name>/config.yaml + history.db); по умолчанию HHRU_ACCOUNT, затем default_account из data/config.yaml (#1086)
 - `--headless` — Запустить браузер в headless-режиме
 - `--verbose` — Подробное логирование
 - `--quiet` — Не печатать поток прогресса

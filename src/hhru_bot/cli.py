@@ -19,7 +19,7 @@ from pathlib import Path
 from playwright.sync_api import Error as PlaywrightError
 
 from . import commands as _commands_pkg
-from .accounts import AccountError, resolve_account_paths
+from .accounts import AccountError, read_default_account, resolve_account_paths
 from .apply.antibot import AntiBotChallengeDetected
 from .browser import BrowserLaunchError, ResumeUnavailable, ThrottledChannelDetected
 from .exit_codes import CommandExitCode
@@ -196,7 +196,7 @@ def build_parser() -> argparse.ArgumentParser:
         # CLI-энтрипоинта это эквивалентно, чтение env после билда не учитывается.
         default=os.environ.get("HHRU_ACCOUNT") or None,
         help="Имя аккаунта (data/accounts/<name>/config.yaml + history.db); "
-        "по умолчанию из HHRU_ACCOUNT",
+        "по умолчанию HHRU_ACCOUNT, затем default_account из data/config.yaml (#1086)",
     )
     parser.add_argument(
         "--headless", action="store_true", help="Запустить браузер в headless-режиме"
@@ -343,6 +343,20 @@ def _resolve_paths(args: argparse.Namespace) -> None:
     account_paths = None
     if args.account is not None and (args.config is None or args.history is None):
         account_paths = resolve_account_paths(args.account)
+    elif (
+        args.account is None
+        and args.config is None
+        and args.history is None
+        and (name := read_default_account(DEFAULT_CONFIG_PATH)) is not None
+    ):
+        # #1086: третье звено цепочки --account > HHRU_ACCOUNT > default_account
+        # > корневые дефолты. Применяется только к полностью дефолтному вызову:
+        # любой явный --config/--history — осознанное указание путей, смешивать
+        # их с аккаунтом по умолчанию нельзя (получился бы config одного
+        # аккаунта с history.db другого). default_account, указывающий на
+        # несуществующий аккаунт, падает AccountError -> [FAIL] (fail-closed,
+        # не молчаливый fallback на корневой конфиг).
+        account_paths = resolve_account_paths(name)
     args.config = str(
         Path(args.config)
         if args.config is not None

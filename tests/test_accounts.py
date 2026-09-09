@@ -7,6 +7,7 @@ import pytest
 from hhru_bot.accounts import (
     AccountError,
     AccountPaths,
+    read_default_account,
     resolve_account_paths,
     validate_account_name,
 )
@@ -97,3 +98,56 @@ def test_resolve_account_paths_rejects_symlink_escaping_accounts_root(tmp_path: 
 
     with pytest.raises(AccountError):
         resolve_account_paths("escape", data_dir=tmp_path / "data")
+
+
+# --- read_default_account (#1086) ---
+
+
+def test_read_default_account_returns_name(tmp_path: Path):
+    config = tmp_path / "config.yaml"
+    config.write_text("default_account: marketing\n", encoding="utf-8")
+    assert read_default_account(config) == "marketing"
+
+
+def test_read_default_account_strips_whitespace(tmp_path: Path):
+    config = tmp_path / "config.yaml"
+    config.write_text('default_account: "  marketing  "\n', encoding="utf-8")
+    assert read_default_account(config) == "marketing"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",  # пустой файл
+        "resumes: []\n",  # поля нет
+        "default_account:\n",  # ключ есть, значения нет
+        "default_account: ''\n",
+        "# default_account: marketing\n",  # закомментирован
+    ],
+)
+def test_read_default_account_absent_value_is_none(tmp_path: Path, text: str):
+    config = tmp_path / "config.yaml"
+    config.write_text(text, encoding="utf-8")
+    assert read_default_account(config) is None
+
+
+def test_read_default_account_missing_file_is_none(tmp_path: Path):
+    assert read_default_account(tmp_path / "config.yaml") is None
+
+
+@pytest.mark.parametrize("value", ["[marketing]", "42", "{name: marketing}"])
+def test_read_default_account_non_string_fails(tmp_path: Path, value: str):
+    config = tmp_path / "config.yaml"
+    config.write_text(f"default_account: {value}\n", encoding="utf-8")
+    with pytest.raises(AccountError, match="default_account"):
+        read_default_account(config)
+
+
+def test_read_default_account_broken_yaml_fails_explicitly(tmp_path: Path):
+    """Синтаксически битый корневой конфиг — AccountError (аккуратный [FAIL]
+    через cli.main), не сырой yaml-traceback из _resolve_paths; молчаливый
+    None скрыл бы поломку fallback'ом на корневые дефолты."""
+    config = tmp_path / "config.yaml"
+    config.write_text("default_account: [unclosed\n", encoding="utf-8")
+    with pytest.raises(AccountError, match="не удалось прочитать"):
+        read_default_account(config)
