@@ -23,6 +23,11 @@ def register(subparsers) -> None:
     p.add_argument(
         "--dry-run", action="store_true", help="Обязательный режим: без submit и навигации формы"
     )
+    p.add_argument(
+        "--external-session",
+        help="Явно использовать сессию провайдера (например, yandex), даже если "
+        "домен URL не принадлежит ему (#1103); требует выполненного login-external",
+    )
     p.set_defaults(func=run)
 
 
@@ -37,12 +42,36 @@ def run(args: argparse.Namespace) -> bool:
 
     from ..browser import launch_context
     from ..config import load_config_or_exit
+    from ..external_sessions import resolve_external_session
 
     config = load_config_or_exit(args.config)
     history = History(args.history)
     answers = history.get_profile_answers()
+    # #1103: внешняя форма за логином провайдера. Сессия провайдера — отдельный
+    # секрет, никогда hh_session.json. Автоматически — по домену URL и
+    # наличию файла сессии; явный флаг форсирует провайдера даже на чужом
+    # домене (а при отсутствии сессии отказывает явно, не молча).
+    session_state = config.storage_state_file
+    try:
+        # getattr — тот же контракт, что у ai-секции ниже: тестовые двойники
+        # конфига (см. test_fill_form) не обязаны знать про новое поле.
+        external = resolve_external_session(
+            args.url,
+            getattr(config, "external_sessions", {}),
+            forced_provider=getattr(args, "external_session", None),
+        )
+    except ValueError as exc:
+        print(f"[FAIL] {exc}")
+        return True
+    if external is not None:
+        provider, provider_session = external
+        print(
+            f"[INFO] URL открывается в контексте сессии провайдера '{provider.name}' "
+            f"({provider_session}); submit остаётся за человеком"
+        )
+        session_state = provider_session
     with launch_context(
-        config.storage_state_file, headless=args.headless, user_agent=config.user_agent
+        session_state, headless=args.headless, user_agent=config.user_agent
     ) as context:
         page = context.new_page()
         page.goto(args.url, wait_until="domcontentloaded")

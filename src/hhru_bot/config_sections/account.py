@@ -21,6 +21,10 @@ class AccountConfig:
     # только если hh.ru требует конкретный User-Agent.
     user_agent: str | None = None
     current_employers: list[str] = field(default_factory=list)
+    # #1103: сессии внешних провайдеров (провайдер → путь storage_state-файла).
+    # Отдельный секрет второго уровня — никогда не hh_session.json. Пусто по
+    # умолчанию: логин-сессия провайдера опциональна.
+    external_sessions: dict[str, Path] = field(default_factory=dict)
 
 
 def parse_account(raw, base_dir: Path) -> AccountConfig:
@@ -49,12 +53,47 @@ def parse_account(raw, base_dir: Path) -> AccountConfig:
         not isinstance(name, str) or not name.strip() for name in current_employers
     ):
         raise ConfigError("Поле 'current_employer' (account) должно быть списком непустых строк")
+    external_sessions = _parse_external_sessions(raw.get("external_sessions"), base_dir)
     return AccountConfig(
         storage_state_file=(base_dir / storage_state_file).resolve(),
         # `or None` намеренно: пустая строка трактуется как «не задано» → родной UA.
         user_agent=user_agent or None,
         current_employers=[name.strip() for name in current_employers],
+        external_sessions=external_sessions,
     )
+
+
+def _parse_external_sessions(raw, base_dir: Path) -> dict[str, Path]:
+    """Секция ``account.external_sessions`` → провайдер → абсолютный путь.
+
+    #1103: каждый провайдер — свой storage_state-файл, резолвится относительно
+    директории конфига (тот же контракт, что ``storage_state_file``). Имена
+    провайдеров сверяются с реестром external_sessions.PROVIDERS на этапе
+    загрузки конфига: опечатка («yandeks») не должна молча оставить fill-form
+    без сессии. Один провайдер — один файл: дубликаты в YAML невозможны
+    (последний ключ выигрывает в safe_load), мультилогин за рамками #1103.
+    """
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ConfigError("Поле 'external_sessions' (account) должно быть секцией провайдеров")
+    from ..external_sessions import PROVIDERS
+
+    result: dict[str, Path] = {}
+    for provider_name, section in raw.items():
+        if provider_name not in PROVIDERS:
+            known = ", ".join(sorted(PROVIDERS))
+            raise ConfigError(
+                f"Неизвестный провайдер 'external_sessions.{provider_name}' (account); "
+                f"доступны: {known}"
+            )
+        if not isinstance(section, dict):
+            raise ConfigError(
+                f"Поле 'external_sessions.{provider_name}' (account) должно быть секцией"
+            )
+        path = require(section, "storage_state_file", f"account.external_sessions.{provider_name}")
+        result[provider_name] = (base_dir / path).resolve()
+    return result
 
 
 # account — корневая секция, не resume-подсекция, поэтому в реестр resume-секций

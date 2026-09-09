@@ -158,6 +158,10 @@ class AppConfig:
     follow_up_letter: str = ""
     # None = родной UA Playwright. Пробрасывается из account.user_agent (см. parse_account).
     user_agent: str | None = None
+    # #1103: сессии внешних провайдеров (провайдер → путь storage_state-файла),
+    # из секции account.external_sessions. Секрет второго уровня — отдельный
+    # файл, никогда hh_session.json. Пусто = сессий провайдеров нет.
+    external_sessions: dict[str, Path] = field(default_factory=dict)
     # None = AI-функциональность выключена (issue #16, Этап 5). TOP-LEVEL секция ai
     # (как account), парсится в load_config через config_sections.ai.parse_ai.
     ai: AiConfig | None = None
@@ -223,6 +227,7 @@ def load_config(path: str | Path) -> AppConfig:
     account = parse_account(raw.get("account"), path.parent)
     storage_state_file = account.storage_state_file
     user_agent = account.user_agent
+    external_sessions = account.external_sessions
 
     # TOP-LEVEL секция ai (issue #16, Этап 5): провайдер/модель/base_url.
     # Опциональна — None, если секции нет. API-ключ НЕ парсится из yaml (только env).
@@ -307,6 +312,7 @@ def load_config(path: str | Path) -> AppConfig:
         follow_up_letter=follow_up_letter,
         resumes=resumes,
         user_agent=user_agent,
+        external_sessions=external_sessions,
         ai=ai,
         questionnaires=questionnaires,
     )

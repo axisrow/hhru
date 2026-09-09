@@ -71,6 +71,7 @@ BROWSER_COMMANDS = frozenset(
         "import-resume",
         "login",
         "login-code",
+        "login-external",
         "probe",
         "professional-roles",
         "publish-resume",
