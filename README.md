@@ -352,7 +352,9 @@ Write-команды (`apply`/`bump`/`run`/...) сначала `--dry-run`, по
   что у Claude Code / Codex plugin: `/hhru whoami`,
   `/hhru search --resume <id> --dry-run`.
 - **Скиллы** — общий каталог `skills/` подключён симлинком
-  `.opencode/skills` (документированный путь обнаружения opencode).
+  `.opencode/skills` (документированный путь обнаружения opencode). На Windows
+  симлинк требует включённого Developer Mode (или `git config core.symlinks true`
+  при клонировании), иначе git оставит текстовую заглушку и скиллы не подхватятся.
 
 Маркетплейса как в Claude Code (`claude plugin marketplace add`) у opencode нет:
 по докам распространение плагинов — npm-пакет в `"plugin"`-ключе `opencode.json`
