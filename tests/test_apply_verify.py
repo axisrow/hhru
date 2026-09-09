@@ -430,6 +430,20 @@ def test_found_on_delayed_tail_of_second_attempt():
     assert page.goto_calls.count(f"{NEGOTIATIONS_URL}?page=1") == 2
 
 
+def test_found_second_topic_of_same_vacancy_on_next_page():
+    # Ревью PR #1068 (вторая находка): у одной вакансии может быть несколько
+    # тем (разные резюме). Прогресс-признак пейджинга — идентификатор ТЕМЫ,
+    # не vacancy_id: тема V с чужим резюме на странице 0 не делает вторую
+    # тему той же V на странице 1 «не новой» — diff по vacancy_id
+    # останавливал бы скан до чтения страницы 1 и возвращал not_found.
+    page0 = _ssr_html([_topic(7, _V2, "R1")])  # V, чужое резюме — скан идёт дальше
+    page1 = _ssr_html([_topic(8, _V2, "R2")])  # V, наше резюме — found
+    page = FakeNegotiationsPage({NEGOTIATIONS_URL: page0, f"{NEGOTIATIONS_URL}?page=1": page1})
+    result = verify_response_in_negotiations(page, _V2, resume_id="R2", account_resume_ids={"R2"})
+    assert result.found
+    assert f"{NEGOTIATIONS_URL}?page=1" in page.goto_calls
+
+
 def test_not_found_on_server_rendered_empty_list():
     # topicList=[] — сервер честно отрисовал пустой список: это чистое чтение,
     # а не «не отрендерилось».

@@ -256,14 +256,14 @@ def _scan_negotiations(
     confirmed_incomplete = False
     attribution_incomparable = False
     reads: list[PageRead] = []
-    # Ноль новых vacancy_id — stop-условие этого скана, поэтому набор обязан
-    # быть ЛОКАЛЬНЫМ для попытки: внешний seen_vacancy_ids накапливается
-    # между NEGOTIATIONS_VERIFY_ATTEMPTS (аудит not_found «прочитано: ...»),
-    # и с ним неизменная страница 0 повторной попытки дала бы ноль «новых»
-    # ещё ДО захода на ?page=1 — опоздавший отклик на хвосте получил бы
-    # ложный not_found (ревью PR #1068). Каждая попытка проходит страницы
-    # заново; накопленный аудит мерджится в конце.
-    attempt_seen: set[str] = set()
+    # Ноль новых записей — stop-условие этого скана, поэтому набор ключей
+    # обязан быть ЛОКАЛЬНЫМ для попытки (внешний seen_vacancy_ids — аудит
+    # «прочитано: ...», копится между всеми NEGOTIATIONS_VERIFY_ATTEMPTS).
+    # Ключ — идентификатор ТЕМЫ (SSR) или карточки (DOM-fallback), не
+    # vacancy_id: у одной вакансии может быть несколько тем (разные резюме),
+    # и вторая тема V на странице 1 не «новая вакансия» — diff по vacancy_id
+    # остановил бы скан до её чтения (ревью PR #1068, вторая находка).
+    attempt_keys: set[str] = set()
     for page_num in range(NEGOTIATIONS_VERIFY_MAX_PAGES):
         if page_num > 0:
             try:
@@ -281,11 +281,11 @@ def _scan_negotiations(
                 break
             else:
                 raise_for_antibot(page)
-        ids_before = set(attempt_seen)
-        found_detail, page_clean, page_problem, page_attribution_incomparable = _scan_single_page(
-            page, wanted, resume_id, account_resume_ids, attempt_seen
+        found_detail, page_clean, page_problem, page_attribution_incomparable, page_keys = (
+            _scan_single_page(page, wanted, resume_id, account_resume_ids, seen_vacancy_ids)
         )
-        new_ids = attempt_seen - ids_before
+        new_keys = page_keys - attempt_keys
+        attempt_keys |= page_keys
         attribution_incomparable = attribution_incomparable or page_attribution_incomparable
         if page_attribution_incomparable:
             reads.append(
@@ -312,11 +312,9 @@ def _scan_negotiations(
         # hh.ru удалил пейджер из UI, и «пейджер не отрисован» больше не
         # доказывает «страница одна» — иначе отклик на хвосте списка получал
         # ложный not_found с clean=True (нарушение fail-closed серой зоны
-        # #207). Страница без НОВЫХ vacancy_id (пустая или повтор предыдущей
-        # — сервер, игнорирующий ?page, возвращает те же карточки) — конец.
-        # Для поиска вакансии diff по vacancy_id достаточен: если целевая
-        # вакансия была на этой странице, её id был бы новым.
-        if not new_ids:
+        # #207). Страница без НОВЫХ записей (пустая или повтор предыдущей —
+        # сервер, игнорирующий ?page, возвращает те же темы) — конец.
+        if not new_keys:
             break
         if page_num == NEGOTIATIONS_VERIFY_MAX_PAGES - 1:
             # Достигли потолка скана, а последняя страница принесла новые
@@ -329,7 +327,6 @@ def _scan_negotiations(
             break
     # Keep the legacy tuple for the browser reader, but let the typed decision
     # table own the final absence/uncertainty policy (#213).
-    seen_vacancy_ids.update(attempt_seen)
     composed = compose(reads, wanted)
     if composed == "not_found":
         clean = True
@@ -344,15 +341,21 @@ def _scan_single_page(
     resume_id: str | None,
     account_resume_ids: set[str] | None,
     seen_vacancy_ids: set[str],
-) -> tuple[str | None, bool, str | None, bool]:
+) -> tuple[str | None, bool, str | None, bool, set[str]]:
+    """Пятый элемент — ключи прочитанной страницы (идентичность для
+    pagerless-стопа «ноль новых», см. _scan_negotiations): SSR — ключ темы
+    (id/chatId), DOM-fallback — ключ вакансии карточки (DOM не различает
+    несколько тем одной вакансии — его потолок и так fail-closed по
+    атрибуции)."""
     try:
         html = page.content()
     except PlaywrightError as exc:
-        return None, False, f"page.content() упал ({exc})", False
+        return None, False, f"page.content() упал ({exc})", False, set()
     topics = _ssr_topic_list(html)
     if topics is not None:
         # SSR — серверная истина; DOM читает те же данные, fallback не нужен.
         seen_vacancy_ids.update(str(t.get("vacancyId")) for t in topics if t.get("vacancyId"))
+        page_keys = {f"t{t.get('id', t.get('chatId'))}" for t in topics}
         attribution_problem: str | None = None
         for topic in topics:
             if str(topic.get("vacancyId", "")) != wanted:
@@ -388,15 +391,17 @@ def _scan_single_page(
                     f"быть создана предыдущим откликом"
                 )
                 continue
-            return _describe_topic(topic), True, None, False
+            return _describe_topic(topic), True, None, False, page_keys
         return (
             None,
             attribution_problem is None,
             attribution_problem,
             attribution_problem is not None,
+            page_keys,
         )
     dom_ids, cards_seen = _read_dom_vacancy_ids(page)
     seen_vacancy_ids.update(dom_ids)
+    dom_keys = {f"v{v}" for v in dom_ids}
     if wanted in dom_ids:
         if resume_id is not None:
             # DOM-карточка не несёт resumeId — не можем атрибутировать отклик
@@ -405,11 +410,17 @@ def _scan_single_page(
             # attribution_incomparable=True: находка вакансии без атрибуции
             # обязана перевесить чистое чтение ДРУГОЙ попытки (иначе ложный
             # not_found — тот же false negative, что #212 устраняет).
-            return None, False, "DOM-карточка без атрибуции резюме — исход неопределён", True
-        return "DOM-карточка списка (SSR-состояние недоступно)", True, None, False
+            return (
+                None,
+                False,
+                "DOM-карточка без атрибуции резюме — исход неопределён",
+                True,
+                dom_keys,
+            )
+        return "DOM-карточка списка (SSR-состояние недоступно)", True, None, False, dom_keys
     if cards_seen:
-        return None, True, None, False
-    return None, False, "список не отрендерился (нет ни SSR-состояния, ни карточек)", False
+        return None, True, None, False, dom_keys
+    return None, False, "список не отрендерился (нет ни SSR-состояния, ни карточек)", False, set()
 
 
 def _resume_attribution(
