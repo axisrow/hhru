@@ -36,6 +36,11 @@ def register(subparsers) -> None:
         "--approved", type=int, metavar="ID", help="Отправить ровно approved-запись review-очереди"
     )
     p.add_argument("--permit", help="Одноразовый permit из `review approve`")
+    p.add_argument(
+        "--vacancy-id",
+        metavar="ID",
+        help="Точечный отклик: открыть вакансию по id напрямую, минуя поиск (#1085)",
+    )
     p.set_defaults(func=run)
 
 
@@ -46,6 +51,16 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
     if getattr(args, "approved", None) is not None and args.dry_run:
         print("[FAIL] --approved нельзя использовать вместе с --dry-run")
         return True
+
+    if getattr(args, "vacancy_id", None):
+        if args.limit:
+            print(
+                "[FAIL] --vacancy-id несовместим с --limit: точечный отклик — ровно одна вакансия"
+            )
+            return True
+        if getattr(args, "approved", None) is not None:
+            print("[FAIL] --vacancy-id несовместим с --approved: оба адресуют ровно одну вакансию")
+            return True
 
     if getattr(args, "approved", None) is not None and args.resume is None:
         items = [item for item in history.review_items() if item["id"] == args.approved]
@@ -59,6 +74,19 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
             return True
         args.resume = matches[0].id
     resumes = resumes_from_args(config, args)
+    vacancy_id = getattr(args, "vacancy_id", None)
+    if vacancy_id:
+        from ..search import _extract_vacancy_id
+
+        # Каноническая валидация id (isdigit), та же, что у probe --vacancy-id.
+        if not _extract_vacancy_id(vacancy_id):
+            print(f"[FAIL] --vacancy-id ожидает числовой ID из URL вакансии: {vacancy_id}")
+            return True
+        if len(resumes) > 1:
+            print(
+                "[FAIL] --vacancy-id требует явный --resume: точечный отклик адресует одно резюме"
+            )
+            return True
     throttle = Throttle(config.throttle, history)
 
     try:
@@ -163,6 +191,23 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
         else:
             cards_by_resume = None
             ranked_by_resume = None
+        target_cards = None
+        if vacancy_id:
+            # #1085: карточка строится прямо со страницы вакансии (title/
+            # company из живого DOM), дальше штатный пайплайн через
+            # cards_override — тот же маршрут, что у --approved: дедуп
+            # has_applied, стоп-листы/фильтры, дневные лимиты, dry-run,
+            # verify после submit и троттлинг не меняются.
+            from ..search import VacancyPageUnavailable, fetch_vacancy_card
+
+            try:
+                target_card = fetch_vacancy_card(page, vacancy_id)
+            except VacancyPageUnavailable as e:
+                print(f"[FAIL] Вакансия недоступна: {e}")
+                return True
+            company = target_card.company or "(без работодателя)"
+            print(f"[OK] Целевая вакансия: {target_card.title} — {company}")
+            target_cards = [target_card]
         # #441 round-2 review: --limit документирован как "целевое число
         # успешных откликов ЗА ЗАПУСК", а не за резюме — общий ApplyProgress
         # должен считать успехи по всем резюме этого прогона, иначе --limit N
@@ -171,7 +216,14 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
             for resume in resumes:
                 if cards_by_resume is None:
                     result = run_apply_for_resume(
-                        page, config, resume, history, throttle, args, progress=progress
+                        page,
+                        config,
+                        resume,
+                        history,
+                        throttle,
+                        args,
+                        target_cards,
+                        progress=progress,
                     )
                 else:
                     result = run_apply_for_resume(
