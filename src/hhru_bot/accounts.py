@@ -51,6 +51,12 @@ def read_default_account(
             raw = yaml.safe_load(stream)
     except FileNotFoundError:
         return None
+    except yaml.YAMLError as exc:
+        # Синтаксически битый корневой конфиг до #1086 падал в
+        # load_config_or_exit с аккуратным [FAIL]; здесь тот же контракт —
+        # AccountError, а не сырой traceback из _resolve_paths. Возврат None
+        # (молчаливый fallback на корневые дефолты) скрыл бы поломку.
+        raise AccountError(f"не удалось прочитать {config_path}: {exc}") from exc
     if raw is None:
         return None
     if not isinstance(raw, dict) or "default_account" not in raw:

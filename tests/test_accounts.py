@@ -141,3 +141,13 @@ def test_read_default_account_non_string_fails(tmp_path: Path, value: str):
     config.write_text(f"default_account: {value}\n", encoding="utf-8")
     with pytest.raises(AccountError, match="default_account"):
         read_default_account(config)
+
+
+def test_read_default_account_broken_yaml_fails_explicitly(tmp_path: Path):
+    """Синтаксически битый корневой конфиг — AccountError (аккуратный [FAIL]
+    через cli.main), не сырой yaml-traceback из _resolve_paths; молчаливый
+    None скрыл бы поломку fallback'ом на корневые дефолты."""
+    config = tmp_path / "config.yaml"
+    config.write_text("default_account: [unclosed\n", encoding="utf-8")
+    with pytest.raises(AccountError, match="не удалось прочитать"):
+        read_default_account(config)
