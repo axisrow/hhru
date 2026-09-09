@@ -131,6 +131,26 @@ function firstSubcommand(tokens: string[]): string | null {
   return null
 }
 
+/** `timeout` (coreutils) или `gtimeout` (Homebrew) по PATH; на стоковом
+ *  macOS его нет — тогда команды запускаются без OS-лимита времени
+ *  (graceful-деградация: защитные лимиты остаются на стороне самого CLI).
+ *  Результат кэшируется на процесс. */
+let timeoutBin: string | null | undefined
+
+function findTimeoutBin(): string | null {
+  if (timeoutBin === undefined) {
+    timeoutBin = null
+    for (const dir of (process.env.PATH ?? "").split(":")) {
+      if (!dir) continue
+      for (const name of ["timeout", "gtimeout"]) {
+        const candidate = join(dir, name)
+        if (existsSync(candidate)) timeoutBin = candidate
+      }
+    }
+  }
+  return timeoutBin
+}
+
 function timeoutFor(kind: Kind, command: string, dryRun: boolean): number {
   if (kind === "headed_auth") return 400_000 // login: до 300 с + запас
   if (command === "update") return 900_000
@@ -285,11 +305,16 @@ export const HhruPlugin: Plugin = async ({ directory, worktree, $ }) => {
           // У Bun shell нет цепочечного .timeout() (и .kill()) — проверено на
           // Bun 1.4.0: ShellExpression предоставляет только cwd/nothrow/quiet/
           // env/text/json/lines/run/then/throws. Поэтому ограничение времени —
-          // OS-уровня через coreutils `timeout`: TERM после limitSec, KILL ещё
-          // через 10 с (exit 124/137). Аргументы передаются массивом — Bun shell
-          // экранирует их сам, `timeout` получает их как есть.
+          // OS-уровня через coreutils `timeout`/`gtimeout`: TERM после limitSec,
+          // KILL ещё через 10 с (exit 124/137). На стоковом macOS `timeout` нет —
+          // запускаем без него (лимиты времени остаются на стороне самого CLI).
+          // Аргументы передаются массивом — Bun shell экранирует их сам.
           const limitSec = Math.ceil(timeoutFor(kind, command, dryRun) / 1000)
-          const proc = await $`timeout -k 10 ${limitSec} ${binary} ${argv}`
+          const osTimeout = findTimeoutBin()
+          const argvFull = osTimeout
+            ? [osTimeout, "-k", "10", String(limitSec), binary, ...argv]
+            : [binary, ...argv]
+          const proc = await $`${argvFull}`
             .cwd(root)
             .nothrow()
             .quiet()

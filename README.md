@@ -347,14 +347,19 @@ Write-команды (`apply`/`bump`/`run`/...) сначала `--dry-run`, по
 - **Плагин** (`.opencode/plugins/hhru.ts`) — инструмент `hhru`: READ-команды
   свободны, WRITE-hh.ru только через `dry_run=true` + явное подтверждение
   (`confirmed=true`), локальные WRITE — по подтверждению; WRITE через голый bash
-  в обход инструмента блокируется. Ищет CLI в `.venv/bin/hhru` или в `PATH`.
+  в обход инструмента блокируется. Ищет CLI в `.venv/bin/hhru` или в `PATH`;
+  ограничение времени команд использует coreutils `timeout`/`gtimeout`, если
+  найден в `PATH` (на стоковом macOS его нет — команды идут без OS-лимита,
+  защитные лимиты остаются на стороне самого CLI).
 - **Команда `/hhru`** (`.opencode/commands/hhru.md`) — тот же слэш-интерфейс,
   что у Claude Code / Codex plugin: `/hhru whoami`,
   `/hhru search --resume <id> --dry-run`.
 - **Скиллы** — общий каталог `skills/` подключён симлинком
-  `.opencode/skills` (документированный путь обнаружения opencode). На Windows
-  симлинк требует включённого Developer Mode (или `git config core.symlinks true`
-  при клонировании), иначе git оставит текстовую заглушку и скиллы не подхватятся.
+  `.opencode/skills` (документированный путь обнаружения opencode). Симлинк
+  сохраняется только при установке через `git clone` (zip-выгрузка GitHub его
+  разрушает). На Windows требуется включённый Developer Mode (или
+  `git config core.symlinks true` при клонировании), иначе git оставит
+  текстовую заглушку и скиллы не подхватятся.
 
 Маркетплейса как в Claude Code (`claude plugin marketplace add`) у opencode нет:
 по докам распространение плагинов — npm-пакет в `"plugin"`-ключе `opencode.json`
