@@ -923,6 +923,132 @@ def test_no_verdict_keeps_heuristic_gates(tmp_path, monkeypatch, capsys):
     assert history.is_robot_questionnaire("tp1") is True
 
 
+# --- #1094: название вакансии не должно подставляться сырым vacancy_id ------
+
+
+def _seed_response_without_title(history: History, *, vacancy_id: str, topic: str):
+    """Чат мимо команды search: нет строки vacancies_seen, COALESCE отдаёт id."""
+    history.upsert_response(vacancy_id, "Acme", "read", None, topic=topic)
+
+
+def test_dry_run_letter_uses_ssr_vacancy_name_when_history_has_no_title(
+    tmp_path, monkeypatch, capsys
+):
+    """#1094: title==vacancy_id резолвится из SSR-карточки negotiations —
+    в письме название, а не число."""
+    history = History(tmp_path / "history.db")
+    _seed_response_without_title(history, vacancy_id="1", topic="tp1")
+    Ref = TopicRef("tp1", "c1", "1", "r1", "Data Engineer")
+    chat = ChatMessage(author="employer", inbound_marker="m1")
+
+    _patch_common(
+        monkeypatch,
+        history,
+        refs=[Ref],
+        reader=lambda page, topic, refs: chat,
+    )
+
+    command.run(_args(dry_run=True))
+    out = capsys.readouterr().out
+    assert "[DRY-RUN]" in out
+    assert "Data Engineer" in out
+    # Письмо с числом вместо названия — сам дефект ишью — не воспроизводится.
+    assert "Здравствуйте! 1" not in out
+
+
+def test_dry_run_letter_resolves_title_from_vacancy_page_when_ssr_silent(
+    tmp_path, monkeypatch, capsys
+):
+    """SSR имя не отдал — read-only чтение страницы вакансии достаёт title."""
+    from hhru_bot.search import VacancyCard
+
+    history = History(tmp_path / "history.db")
+    _seed_response_without_title(history, vacancy_id="1", topic="tp1")
+    Ref = TopicRef("tp1", "c1", "1", "r1")
+    chat = ChatMessage(author="employer", inbound_marker="m1")
+    fetched = {"called": False}
+
+    def _fetch(page, vacancy_id):
+        fetched["called"] = True
+        return VacancyCard(
+            vacancy_id=vacancy_id, title="Backend Developer", company="Acme", url="u"
+        )
+
+    monkeypatch.setattr("hhru_bot.search.fetch_vacancy_card", _fetch)
+    _patch_common(
+        monkeypatch,
+        history,
+        refs=[Ref],
+        reader=lambda page, topic, refs: chat,
+    )
+
+    command.run(_args(dry_run=True))
+    out = capsys.readouterr().out
+    assert fetched["called"] is True
+    assert "[DRY-RUN]" in out
+    assert "Backend Developer" in out
+
+
+def test_unresolvable_vacancy_title_fails_closed_without_letter(tmp_path, monkeypatch, capsys):
+    """Нигде не добыли название — честный отказ отправки этого чата, а не
+    письмо с числом (fail-closed)."""
+    from hhru_bot.search import VacancyPageUnavailable
+
+    history = History(tmp_path / "history.db")
+    _seed_response_without_title(history, vacancy_id="1", topic="tp1")
+    Ref = TopicRef("tp1", "c1", "1", "r1")
+    chat = ChatMessage(author="employer", inbound_marker="m1")
+
+    def _fetch(page, vacancy_id):
+        raise VacancyPageUnavailable(vacancy_id, "indeterminate", "TimeoutError")
+
+    def _boom_send(*a, **k):
+        raise AssertionError("письмо с vacancy_id вместо названия не отправляется")
+
+    monkeypatch.setattr("hhru_bot.search.fetch_vacancy_card", _fetch)
+    _patch_common(
+        monkeypatch,
+        history,
+        refs=[Ref],
+        reader=lambda page, topic, refs: chat,
+        send=_boom_send,
+    )
+
+    result = command.run(_args(dry_run=True))
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out
+    assert "не резолвится" in out
+    assert "[DRY-RUN]" not in out
+    assert result is True
+    with history._connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM replies").fetchone()[0] == 0
+
+
+def test_history_title_is_preferred_over_resolvers(tmp_path, monkeypatch, capsys):
+    """Название из vacancies_seen (команда search) — первая ступень цепочки:
+    резолверы не перезаписывают его и страницу вакансии не открывают."""
+    history = History(tmp_path / "history.db")
+    _seed_response(history, vacancy_id="1", topic="tp1", title="Python dev")
+    Ref = TopicRef("tp1", "c1", "1", "r1", "Data Engineer")
+    chat = ChatMessage(author="employer", inbound_marker="m1")
+
+    def _boom_fetch(page, vacancy_id):
+        raise AssertionError("история уже дала title — страница вакансии не нужна")
+
+    monkeypatch.setattr("hhru_bot.search.fetch_vacancy_card", _boom_fetch)
+    _patch_common(
+        monkeypatch,
+        history,
+        refs=[Ref],
+        reader=lambda page, topic, refs: chat,
+    )
+
+    command.run(_args(dry_run=True))
+    out = capsys.readouterr().out
+    assert "[DRY-RUN]" in out
+    assert "Python dev" in out
+
+
 # --- #710: --follow-up --after-days N ---------------------------------------
 
 
