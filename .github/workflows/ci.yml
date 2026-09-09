@@ -30,13 +30,17 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           # Предустановленный на ubuntu-раннере apt-репозиторий dl.google.com
-          # (google-chrome-stable) регулярно рассинхронизирует Release/Packages
-          # хэши, и `apt-get update` внутри `--with-deps` падает с
-          # "Hash Sum mismatch" (наблюдено трижды подряд 2026-09-09, run
-          # 34383787081). Chromium ставится из CDN Playwright, а не из этого
-          # репозитория — отключаем его до обновления индексов.
-          sudo rm -f /etc/apt/sources.list.d/dl_google_com_linux_chrome*.list
-          sudo rm -f /etc/apt/sources.list.d/google-chrome*.list
+          # (google-chrome-stable) рассинхронизировал Release/Packages хэши,
+          # и `apt-get update` внутри `--with-deps` падает с "Hash Sum
+          # mismatch" (5 раз подряд 2026-09-09, runs 34383787081/34384467919/
+          # 34384558117 — фиксированные имена файлов на образе не совпали,
+          # источник живёт не в *google-chrome*.list). Chromium ставится из
+          # CDN Playwright, а не из этого репозитория — вырезаем его ПО
+          # СОДЕРЖИМОМУ из всех apt-источников до обновления индексов.
+          # find вместо grep| xargs: grep без совпадений выходит с 1 и валит
+          # шаг на -eo pipefail; find стабильно возвращает 0.
+          sudo sed -i '/dl.google.com/d' /etc/apt/sources.list
+          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f -exec grep -l 'dl.google.com' {} + | sudo xargs -r rm -f || true
           python -m playwright install --with-deps chromium
 
       - name: Install Chromium (Windows)
