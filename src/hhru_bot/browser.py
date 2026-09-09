@@ -432,7 +432,7 @@ def goto_hh(page: Page, url: str, *, ready_selector: str | None = None) -> None:
                         # Диагностика печатается один раз, после последней
                         # попытки (ниже), а не на каждом retry.
                         ready_selector_error = exc
-                        raise ready_selector_error from exc
+                        raise
                 return
             except (PlaywrightTimeoutError, PlaywrightError) as exc:
                 last_error = exc

@@ -94,6 +94,14 @@ def test_mask_personal_data_masks_structured_pii():
     assert "<hex-id-1>" in masked
 
 
+def test_mask_personal_data_masks_dashed_phone():
+    # 3-3-2-2 с дефисами: группы короче 7 цифр, LONG_DIGITS их не ловит —
+    # телефон обязан матчится сам (code-review PR #1072).
+    masked = drift.mask_personal_data("data-phone='8-912-345-67-89'")
+    assert "912" not in masked
+    assert "<телефон-1>" in masked
+
+
 def test_registry_lookup_finds_selector_name():
     selector = "[data-qa='vacancy-response-letter-toggle']"
     name = drift.registry_lookup(selector)
@@ -120,9 +128,12 @@ def test_emit_drift_report_prints_full_package(drift_log_dir, capsys):
     assert "example.com" not in out
     assert "912" not in out
     assert "0123456789abcdef" not in out
-    # Готовая команда создания ишью с записанным body-файлом.
-    assert "gh issue create --title " in out
+    # Готовая команда создания ишью с записанным body-файлом (shell-safe).
+    assert "gh issue create" in out
     assert f"--body-file {body_path}" in out
+    # title и путь закавычены shlex-ом: спецсимволы текста страницы не
+    # сломают вставленную команду.
+    assert "--title '" in out
 
     body = body_path.read_text(encoding="utf-8")
     assert "## Что наблюдалось" in body

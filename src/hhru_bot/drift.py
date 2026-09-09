@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -34,7 +35,7 @@ _MAX_CANDIDATES = 8
 # или классах маскируется целиком (см. _mask_census_rows).
 
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
-_PHONE_RE = re.compile(r"(?:\+7|8)[\s(-]?\d{3}[\s)-]?\d{3}[\s-]?\d{2}[\s-]?\d{2}")
+_PHONE_RE = re.compile(r"(?:\+7|8)[\s(-]*\d{3}[\s)-]*\d{3}[\s-]*\d{2}[\s-]*\d{2}")
 _HEX_ID_RE = re.compile(r"\b[0-9a-fA-F]{16,}\b")
 _LONG_DIGITS_RE = re.compile(r"\b\d{7,}\b")
 
@@ -280,7 +281,14 @@ def render_drift_block(report: DriftReport, body_path: Path | None) -> str:
     if body_path is not None:
         lines.append(f"[DRIFT] Диагностический пакет записан: {body_path}")
         lines.append("[DRIFT] Готовая команда создания ишью:")
-        lines.append(f'gh issue create --title "{_issue_title(report)}" --body-file {body_path}')
+        # shlex.quote: title содержит текст страницы/подписи полей —
+        # незакавыченная кавычка/$( )/бэктик сломали бы вставленную в
+        # шелл команду (инъекция из контролируемого страницей текста).
+        lines.append(
+            "gh issue create"
+            f" --title {shlex.quote(_issue_title(report))}"
+            f" --body-file {shlex.quote(str(body_path))}"
+        )
     return "\n".join(lines)
 
 
