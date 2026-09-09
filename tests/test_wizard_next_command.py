@@ -57,6 +57,7 @@ def _args(tmp_path, **overrides):
         "dry_run": False,
         "force": False,
         "allow_auto_publish": False,
+        "skip_empty": False,
     }
     base.update(overrides)
     return argparse.Namespace(**base)
@@ -75,7 +76,9 @@ def env(monkeypatch, tmp_path):
             "educations", True, "экран «educations» подтверждён", acted=True
         ),
         submit_calls=0,
+        skip_empty_seen=[],
         inspect_calls=0,
+        inspect_skip_empty_seen=[],
         launched=0,
     )
 
@@ -93,15 +96,17 @@ def env(monkeypatch, tmp_path):
             raise AssertionError("неожиданное чтение состояния")
         return state.state_queue.pop(0)
 
-    def fake_submit(page, resume, target, *, before_click=None):
+    def fake_submit(page, resume, target, *, before_click=None, skip_empty=False):
         state.submit_calls += 1
+        state.skip_empty_seen.append(skip_empty)
         if state.result.success or state.result.uncertain:
             before_click()
         return state.result
 
-    def fake_inspect(page, resume_id, target):
+    def fake_inspect(page, resume_id, target, *, skip_empty=False):
         state.inspect_calls += 1
-        return "Сохранить и продолжить"
+        state.inspect_skip_empty_seen.append(skip_empty)
+        return "Добавлю потом" if skip_empty else "Сохранить и продолжить"
 
     monkeypatch.setattr(rw, "read_resume_state", fake_read_state)
     monkeypatch.setattr(rw, "submit_wizard_screen", fake_submit)
@@ -254,6 +259,70 @@ def test_run_resolve_refusal_fails_without_attempt(env, capsys, tmp_path):
     assert h.count_today(RESUME_ID, "wizard_next") == 0
     run = h.command_runs()[-1]
     assert (run["status"], run["attempted"]) == ("failed", 0)
+
+
+# --- #1091: --skip-empty — путь пустого экрана через «Добавлю потом» --------
+
+
+def test_skip_empty_flag_reaches_submit(env, capsys, tmp_path):
+    """--skip-empty доходит до submit_wizard_screen; обычный прогон — нет."""
+    assert cmd.run(_args(tmp_path, force=True, allow_auto_publish=True, skip_empty=True)) is False
+    assert env.submit_calls == 1 and env.skip_empty_seen == [True]
+    # без флага путь по-прежнему NEXT
+    env.state_queue = [
+        ResumeState(status="not_finished", next_incomplete_screen_id="educations"),
+        ResumeState(status="not_finished", next_incomplete_screen_id="keyskills"),
+    ]
+    assert cmd.run(_args(tmp_path, force=True, allow_auto_publish=True)) is False
+    assert env.skip_empty_seen == [True, False]
+
+
+def test_skip_empty_dry_run_inspects_skip_button(env, capsys, tmp_path):
+    """dry-run с --skip-empty сверяет именно skip-кнопку и не кликает."""
+    env.state_queue = [
+        ResumeState(status="not_finished", next_incomplete_screen_id="educations"),
+    ]
+    assert cmd.run(_args(tmp_path, dry_run=True, skip_empty=True)) is False
+    out = capsys.readouterr().out
+    assert "[DRY-RUN]" in out and "Добавлю потом" in out
+    assert env.inspect_calls == 1 and env.inspect_skip_empty_seen == [True]
+    assert env.submit_calls == 0
+
+
+def test_skip_empty_on_publishing_screen_still_requires_auto_publish(env, capsys, tmp_path):
+    """skip закрывает экран так же, как NEXT: на последнем незакрытом экране
+    (#1012) гейт --allow-auto-publish действует и для --skip-empty."""
+    env.state_queue = [
+        ResumeState(status="not_finished", next_incomplete_screen_id="experience"),
+    ]
+    assert cmd.run(_args(tmp_path, force=True, skip_empty=True)) is True
+    out = capsys.readouterr().out
+    assert "hh.ru опубликует резюме сам" in out and "Ничего не нажато" in out
+    assert env.submit_calls == 0
+
+
+def test_validation_rejection_result_is_plain_failed_no_retry_barrier(env, capsys, tmp_path):
+    """#1091: сабмит, отклонённый валидацией — acted failed без uncertain:
+    строки uncertain в actions нет, повтор не заблокирован."""
+    env.result = WizardAdvanceResult(
+        "educations",
+        False,
+        "hh.ru отклонил сабмит экрана «educations» валидацией открытой формы (#1091)",
+        acted=True,
+    )
+    assert cmd.run(_args(tmp_path, force=True, allow_auto_publish=True)) is True
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out and "[FAIL] (uncertain)" not in out
+    # вторая попытка проходит тот же путь без SystemExit-барьера
+    env.state_queue = [
+        ResumeState(status="not_finished", next_incomplete_screen_id="educations"),
+        ResumeState(status="not_finished", next_incomplete_screen_id="keyskills"),
+    ]
+    env.result = WizardAdvanceResult(
+        "educations", True, "экран «educations» подтверждён", acted=True
+    )
+    assert cmd.run(_args(tmp_path, force=True, allow_auto_publish=True)) is False
+    assert env.submit_calls == 2
 
 
 def test_publish_resume_guidance_points_to_wizard_next(env, capsys, tmp_path, monkeypatch):

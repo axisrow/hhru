@@ -46,18 +46,20 @@ def _markup(
 
 
 class _NextButton:
-    def __init__(self, page):
+    def __init__(self, page, *, count_attr="next_count", label="Сохранить и продолжить"):
         self._page = page
+        self._count_attr = count_attr
+        self._label = label
 
     def count(self):
-        return self._page.next_count
+        return getattr(self._page, self._count_attr)
 
     @property
     def first(self):
         return self
 
     def inner_text(self):
-        return "Сохранить и продолжить"
+        return self._label
 
     def click(self):
         self._page.clicks += 1
@@ -65,6 +67,20 @@ class _NextButton:
         self._page.url = self._page.final_url
         if self._page.click_error is not None:
             raise rw.PlaywrightError(self._page.click_error)
+
+
+class _ErrorsLocator:
+    """Дубль локатора form-helper-error (#1091): непустой text = отказ валидации."""
+
+    def __init__(self, texts):
+        self._texts = texts
+
+    def count(self):
+        return len(self._texts)
+
+    def nth(self, i):
+        text = self._texts[i]
+        return SimpleNamespace(inner_text=lambda: text)
 
 
 class _WizardPage:
@@ -78,6 +94,8 @@ class _WizardPage:
         next_count=1,
         click_error=None,
         goto_override=None,
+        skip_count=1,
+        validation_errors=(),
     ):
         self.markup = markup
         self.url = url
@@ -87,12 +105,19 @@ class _WizardPage:
         self.click_error = click_error
         # #999: hh.ru может редиректить goto на другой экран визарда.
         self.goto_override = goto_override
+        # #1091: skip-кнопка «Добавлю потом» и валидационные подсказки экрана.
+        self.skip_count = skip_count
+        self.validation_errors = list(validation_errors)
         self.clicks = 0
 
     def content(self):
         return self.markup
 
     def locator(self, selector):
+        if selector == rw.RESUME_WIZARD_VALIDATION_ERRORS:
+            return _ErrorsLocator(self.validation_errors)
+        if selector == rw.RESUME_WIZARD_SKIP_LATER:
+            return _NextButton(self, count_attr="skip_count", label="Добавлю потом")
         # #1016: сабмит любого экрана, включая skill_levels на dynamic_screen,
         # — стандартный NEXT визарда.
         assert selector == RESUME_CREATION_NEXT
@@ -418,6 +443,104 @@ def test_submit_skill_levels_requires_next_button(monkeypatch):
 
 
 # --- inspect_wizard_screen: read-only сверка для --dry-run ------------------
+
+
+# --- #1091: skip-кнопка «Добавлю потом» и честная классификация валидации ---
+
+
+def test_submit_skip_empty_clicks_skip_button(monkeypatch):
+    """#1091: --skip-empty кликает «Добавлю потом», а не NEXT; тот же
+    защищённый клик и before_click-seam."""
+    _install_nav_stubs(monkeypatch)
+    page = _WizardPage(
+        _markup(),
+        final_url="https://hh.ru/profile/resume/keyskills?resume=" + RESUME_ID,
+    )
+    clicks = []
+    result = rw.submit_wizard_screen(
+        page, _resume(), "educations", before_click=lambda: clicks.append(1), skip_empty=True
+    )
+    assert result.success and result.acted and not result.uncertain
+    assert page.clicks == 1 and len(clicks) == 1
+
+
+def test_submit_skip_empty_refuses_when_button_absent(monkeypatch):
+    """Нет skip-кнопки (экран не пуст / другой shape) — отказ ДО before_click,
+    NEXT не нажимается."""
+    _install_nav_stubs(monkeypatch)
+    page = _WizardPage(_markup(), skip_count=0)
+    clicks = []
+    with pytest.raises(rw.WizardScreenRefused, match="«Добавлю потом» найдена 0 раз"):
+        rw.submit_wizard_screen(
+            page, _resume(), "educations", before_click=lambda: clicks.append(1), skip_empty=True
+        )
+    assert page.clicks == 0 and clicks == []
+
+
+def test_submit_timeout_with_validation_errors_is_plain_failed(monkeypatch):
+    """#1091: непустой form-helper-error на непокинутом экране — hh.ru отклонил
+    сабмит валидацией, мутации нет: честный failed, а НЕ uncertain (retry-барьер
+    не создаётся). Приём #958, живой кейс wizard_next_failure_20260909."""
+    dumps = _install_nav_stubs(monkeypatch)
+    page = _WizardPage(
+        _markup(),
+        final_url=f"https://hh.ru/profile/resume/educations?resume={RESUME_ID}",
+        validation_errors=[
+            "Поле обязательное для заполнения",
+            "Поле обязательное для заполнения",
+        ],
+    )
+    result = rw.submit_wizard_screen(page, _resume(), "educations")
+    assert not result.success and result.acted and not result.uncertain
+    assert "#1091" in result.reason
+    assert "валидацией" in result.reason
+    assert dumps == ["wizard_next_failure"]
+
+
+def test_uncertain_timeout_without_validation_errors_unchanged(monkeypatch):
+    """Ошибок на экране нет — «клик мог уйти» остаётся fail-closed uncertain."""
+    _install_nav_stubs(monkeypatch)
+    page = _WizardPage(
+        _markup(),
+        final_url=f"https://hh.ru/profile/resume/educations?resume={RESUME_ID}",
+        validation_errors=[""],  # пустой контейнер есть, текста нет — не отказ
+    )
+    result = rw.submit_wizard_screen(page, _resume(), "educations")
+    assert not result.success and result.acted and result.uncertain
+
+
+def test_submit_skip_empty_hydration_gate_before_before_click(monkeypatch):
+    """#991 на skip-пути: не гидратирована — клик не отправлялся, before_click
+    не вызван (попытка не засчитывается)."""
+    dumps = _install_nav_stubs(monkeypatch)
+    page = _WizardPage(_markup(), hydrated=False)
+    clicks = []
+    result = rw.submit_wizard_screen(
+        page, _resume(), "educations", before_click=lambda: clicks.append(1), skip_empty=True
+    )
+    assert not result.success and not result.acted and not result.uncertain
+    assert "клик не отправлялся" in result.reason
+    assert page.clicks == 0 and clicks == []
+    assert dumps == ["wizard_next_failure"]
+
+
+def test_inspect_skip_empty_reports_skip_button_label(monkeypatch):
+    _install_nav_stubs(monkeypatch)
+    page = _WizardPage(_markup(), url=f"https://hh.ru/profile/resume/educations?resume={RESUME_ID}")
+    assert (
+        rw.inspect_wizard_screen(page, RESUME_ID, "educations", skip_empty=True) == "Добавлю потом"
+    )
+
+
+def test_inspect_skip_empty_refuses_ambiguous_skip(monkeypatch):
+    _install_nav_stubs(monkeypatch)
+    page = _WizardPage(
+        _markup(),
+        url=f"https://hh.ru/profile/resume/educations?resume={RESUME_ID}",
+        skip_count=2,
+    )
+    with pytest.raises(rw.WizardScreenRefused, match="«Добавлю потом» найдена 2 раз"):
+        rw.inspect_wizard_screen(page, RESUME_ID, "educations", skip_empty=True)
 
 
 def test_inspect_reports_next_button_label(monkeypatch):

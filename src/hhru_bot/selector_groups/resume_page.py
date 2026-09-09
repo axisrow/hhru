@@ -28,6 +28,21 @@ RESUME_PUBLISH_BUTTON_DATA_QA = _optional_selector("resume_page.RESUME_PUBLISH_B
 # Только read-only сообщение о текущей видимости; команда его не нажимает.
 RESUME_VISIBILITY_BUTTON = "button:has-text('Изменить видимость')"
 
+# #1091 (census wizard_next_failure_20260909_150808, строка 92): на пустом
+# экране educations hh.ru отклоняет NEXT валидацией обязательных полей открытой
+# пустой формы; единственный способ закрыть экран без записи — tertiary-кнопка
+# «Добавлю потом» рядом с resume-profile-prev/next-screen. data-qa у кнопки
+# НЕТ (живой census), классы magritte версионируются хэшами — адресация
+# возможна только по тексту. Команда обязана проверять count()==1.
+RESUME_WIZARD_SKIP_LATER = "button:has-text('Добавлю потом')"
+# Тот же generic magritte namespace валидационных подсказок, что и у
+# experience #958 (resume_experience.EXPERIENCE_SAVE_VALIDATION_ERRORS):
+# непустой видимый text после отклонённого сабмита — доказанный отказ
+# валидацией, а не «клик мог уйти». Пустые контейнеры существуют в DOM и на
+# валидной форме (census #1091, form-helper-error без текста) — читается
+# именно непустой text, не сам факт присутствия.
+RESUME_WIZARD_VALIDATION_ERRORS = "[data-qa='form-helper-error']"
+
 # Inline editor selectors confirmed by the authenticated read-only research in
 # issue #268.  NOTE: #268 called this section inline (no /edit route), but #328
 # found the same claim false for the neighbouring position/skills editors on
