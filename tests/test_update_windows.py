@@ -55,7 +55,15 @@ def test_hhru_exe_reexecs_real_upgrade_before_pip_replaces_launcher(tmp_path: Pa
     git("branch", "-M", "main")
     git("remote", "add", "origin", checkout.as_uri())
     plugin_cache = tmp_path / "plugin-cache"
-    shutil.copytree(checkout, plugin_cache, ignore=shutil.ignore_patterns(".git"))
+    # symlinks=True: в checkout есть git-симлинк .opencode/skills (подключение
+    # скиллов для opencode); без него copytree пытается разрешить цель симлинка
+    # относительного исходного дерева и падает на Windows (WinError 123).
+    shutil.copytree(
+        checkout,
+        plugin_cache,
+        ignore=shutil.ignore_patterns(".git"),
+        symlinks=True,
+    )
 
     harness = tmp_path / "harness"
     harness.mkdir()
