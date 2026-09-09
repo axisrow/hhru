@@ -133,7 +133,7 @@ def remindable_topic_refs(html: str) -> list[RemindableTopicRef]:
 
 
 def _require_windows_overlap(
-    prev_first_topic_id: str | None, page_refs: list, page_num: int
+    prev_first_topic_id: str | None, page_refs: list[TopicRef], page_num: int
 ) -> None:
     """Fail-closed guard стопа «ноль новых топиков» (ревью PR #1072).
 
