@@ -61,6 +61,32 @@ def test_topic_refs_keep_mapping_when_resume_id_absent():
     assert (ref.topic_id, ref.chat_id) == ("123", "456")
 
 
+def test_topic_refs_read_vacancy_name_from_ssr():
+    """#1094: SSR topicList отдаёт плоское vacancyName — резолв названия
+    вакансии в письме reply-employers идёт из карточки negotiations.
+
+    Фикстура повторяет живую форму записи (probe 2026-09-09): плоское
+    строковое поле рядом с vacancyId/resumeId. Вложенный vacancy.name
+    сознательно не парсится — этого shape в живом дампе не было (review
+    PR #1100): non-dict «vacancy» не должен ни ронять парсинг, ни
+    выдумывать название.
+    """
+    html = """
+    <template id="HH-Lux-InitialState">
+      {"applicantNegotiations":{"topicList":[
+        {"id":5503507503,"chatId":5552659058,"vacancyId":135481754,
+         "resumeId":96223331,"vacancyName":"QA Engineer FullStack"},
+        {"id":123,"chatId":456,"vacancyId":789,"vacancy":"не-словарь"}
+      ]}}
+    </template>
+    """
+    with_name, without_name = topic_refs(html)
+    assert with_name.vacancy_name == "QA Engineer FullStack"
+    assert without_name.vacancy_name is None
+    # Маппинг уцелел в обоих случаях (fail-open).
+    assert (without_name.topic_id, without_name.chat_id) == ("123", "456")
+
+
 def test_paginated_topic_refs_collects_all_pages(monkeypatch):
     class Page:
         def __init__(self):

@@ -80,14 +80,14 @@ def topic_refs(html: str) -> list[TopicRef]:
         resume_id = topic.get("resumeId")
         # #1094: название вакансии — тот же fail-open-слот, что resumeId.
         # Живой census 2026-09-09: DOM-карточка несёт title текстом
-        # negotiations-item-vacancy, а SSR topicList отдаёт vacancyName (его
-        # уже читает remindable_topic_refs). Ни то, ни другое не должно ронять
-        # маппинг — отсутствие поля просто оставляет резолв письма следующей
-        # ступени.
+        # negotiations-item-vacancy, а SSR topicList отдаёт плоское
+        # vacancyName (его уже читает remindable_topic_refs). Вложенный
+        # vacancy.name сознательно НЕ читаем: этой ветки в живом дампе не
+        # было (review PR #1100) — неподтверждённый shape остался бы
+        # мёртвой веткой, молча срабатывающей при дрейфе SSR.
+        # Отсутствие поля не роняет маппинг — резолв письма просто
+        # уходит следующей ступени (страница вакансии → отказ).
         name = topic.get("vacancyName")
-        vacancy_obj = topic.get("vacancy")
-        if name is None and isinstance(vacancy_obj, dict):
-            name = vacancy_obj.get("name")
         refs.append(
             TopicRef(
                 str(topic["id"]),
