@@ -664,7 +664,9 @@ def apply_common(page: Page, values: CommonValues) -> None:
         if page.locator(AREA).count() == 0:
             raise PageStateIndeterminate(
                 "поле «Город» не рендерится на экране common визарда черновика — "
-                "укажите город в резюме вручную или на другом экране"
+                "известное состояние (#1002/#1090), не дрейф: сабмит common проходит "
+                "и без города (обязательные поля hh.ru предзаполняет из профиля), "
+                "город задаётся дальше по визарду или вручную"
             )
         _set_tree(page, AREA, [values.area], "area")
     if values.metro is not None:
@@ -712,19 +714,27 @@ def _condition_field(page: Page, label: str):
     """Resolve a work-condition control by its visible label, honestly.
 
     #993: the draft-wizard common screen does not render these fields at all
-    (live 2026-09-05). A bare «не найдено однозначно (совпадений: 0)» left
-    the combat runs without an actionable reason — on the wizard shape the
-    refusal names the screen instead.
+    (live 2026-09-05, #1002 — census отрисованных контролов: 0; вхождения
+    строки в HTML — литералы JSON-бандлов). A bare «не найдено однозначно
+    (совпадений: 0)» left the combat runs without an actionable reason — on
+    the wizard shape the refusal names the screen instead.
+
+    #1090: известное отсутствие классифицируется ДО labelled_field — тот
+    пишет generic drift-пакет, который здесь был бы шумом про уже понятное
+    состояние. optional_labelled_field возвращает None без drift; неоднозначность
+    (>1) по-прежнему уходит в drift-диагностику.
     """
-    try:
-        return labelled_field(page, label)
-    except PageStateIndeterminate as exc:
-        if _on_wizard_common(page):
+    if _on_wizard_common(page):
+        field = optional_labelled_field(page, label)
+        if field is None:
             raise PageStateIndeterminate(
                 f"поле {label!r} не рендерится на экране common визарда черновика — "
-                "эти условия работы задаются на другом экране или вручную"
-            ) from exc
-        raise
+                "известное состояние (#1002/#1090), не дрейф: сабмит common проходит "
+                "без этого поля (обязательные поля hh.ru предзаполняет из профиля), "
+                "условия работы задаются дальше по визарду или вручную"
+            )
+        return field
+    return labelled_field(page, label)
 
 
 def _wizard_ticket_activator(page: Page):
@@ -759,17 +769,23 @@ def _work_ticket_field(page: Page):
     NO «Наличие трудовой книжки» — writing «Да/Нет» into the work-permit
     select would mutate a DIFFERENT field, so the #993 fallback is removed:
     the wizard shape refuses honestly.
+
+    #1090: известное отсутствие классифицируется ДО labelled_field (как в
+    _condition_field) — иначе тот успевает написать generic drift-пакет про
+    уже понятное состояние.
     """
-    try:
-        return labelled_field(page, WORK_TICKET)
-    except PageStateIndeterminate as exc:
-        if _wizard_ticket_activator(page) is not None or _on_wizard_common(page):
+    if _wizard_ticket_activator(page) is not None or _on_wizard_common(page):
+        field = optional_labelled_field(page, WORK_TICKET)
+        if field is None:
             raise PageStateIndeterminate(
                 "поле «Наличие трудовой книжки» не рендерится на экране common "
-                "визарда черновика (контрол work-ticket-selector — это "
-                "«Разрешение на работу», писать в него «Да/Нет» нельзя)"
-            ) from exc
-        raise
+                "визарда черновика — известное состояние (#997/#1090), не дрейф "
+                "(контрол work-ticket-selector — это «Разрешение на работу», "
+                "писать в него «Да/Нет» нельзя; сабмит common проходит без "
+                "этого поля)"
+            )
+        return field
+    return labelled_field(page, WORK_TICKET)
 
 
 def _set_control(page, field, value: str, labels: dict[str, str]) -> None:
