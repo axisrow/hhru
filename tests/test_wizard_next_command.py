@@ -99,7 +99,9 @@ def env(monkeypatch, tmp_path):
     def fake_submit(page, resume, target, *, before_click=None, skip_empty=False):
         state.submit_calls += 1
         state.skip_empty_seen.append(skip_empty)
-        if state.result.success or state.result.uncertain:
+        # как реальный submit_wizard_screen: before_click безусловно после
+        # гидрации — attempt резервируется и при отклонённом валидацией сабмите
+        if before_click is not None:
             before_click()
         return state.result
 
@@ -302,17 +304,20 @@ def test_skip_empty_on_publishing_screen_still_requires_auto_publish(env, capsys
 
 
 def test_validation_rejection_result_is_plain_failed_no_retry_barrier(env, capsys, tmp_path):
-    """#1091: сабмит, отклонённый валидацией — acted failed без uncertain:
-    строки uncertain в actions нет, повтор не заблокирован."""
+    """#1091: сабмит, отклонённый валидацией — failed БЕЗ acted (мутации нет,
+    как у #958): ApplyProgress.finish не видит acted → не пишет uncertain,
+    барьера has_unresolved_uncertain нет, повтор свободен."""
     env.result = WizardAdvanceResult(
         "educations",
         False,
-        "hh.ru отклонил сабмит экрана «educations» валидацией открытой формы (#1091)",
-        acted=True,
+        "hh.ru отклонил сабмит экрана «educations» валидацией открытой формы — "
+        "экран не закрыт, мутации нет (#1091)",
     )
     assert cmd.run(_args(tmp_path, force=True, allow_auto_publish=True)) is True
     out = capsys.readouterr().out
     assert "[FAIL]" in out and "[FAIL] (uncertain)" not in out
+    h = History(tmp_path / "h.db")
+    assert not h.has_unresolved_uncertain(RESUME_ID, "wizard_next")
     # вторая попытка проходит тот же путь без SystemExit-барьера
     env.state_queue = [
         ResumeState(status="not_finished", next_incomplete_screen_id="educations"),

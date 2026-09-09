@@ -491,10 +491,28 @@ def test_submit_timeout_with_validation_errors_is_plain_failed(monkeypatch):
         ],
     )
     result = rw.submit_wizard_screen(page, _resume(), "educations")
-    assert not result.success and result.acted and not result.uncertain
+    assert not result.success and not result.acted and not result.uncertain
     assert "#1091" in result.reason
     assert "валидацией" in result.reason
     assert dumps == ["wizard_next_failure"]
+
+
+def test_validation_rejection_on_publishing_screen_beats_readback(monkeypatch):
+    """#1091 + #1038: валидационный отказ проверяется ДО publishing-readback
+    (read_resume_state навигирует с экрана и ломает guard «непокинутый
+    маршрут»); доказанный отказ — failed без барьера, readback не зовётся."""
+    _install_nav_stubs(monkeypatch)
+    page = _WizardPage(
+        _markup(next_screen="experience"),
+        final_url=f"https://hh.ru/profile/resume/experience?resume={RESUME_ID}",
+        validation_errors=["Поле обязательное для заполнения"],
+    )
+    calls = []
+    monkeypatch.setattr(rw, "read_resume_state", lambda p, rid: calls.append(rid) or ResumeState())
+    result = rw.submit_wizard_screen(page, _resume(), "experience")
+    assert not result.success and not result.acted and not result.uncertain
+    assert "#1091" in result.reason
+    assert calls == []
 
 
 def test_uncertain_timeout_without_validation_errors_unchanged(monkeypatch):

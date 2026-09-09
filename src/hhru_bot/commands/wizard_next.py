@@ -134,7 +134,7 @@ def run(args: argparse.Namespace):
                     page,
                     resume,
                     target,
-                    before_click=None if attempt is None else attempt.before_click,
+                    before_click=attempt.before_click,
                     skip_empty=args.skip_empty,
                 )
                 if attempt is not None:

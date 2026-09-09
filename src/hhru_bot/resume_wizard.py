@@ -315,6 +315,26 @@ def submit_wizard_screen(
             dump_page_html(page, "wizard_next_failure")
         except Exception:  # noqa: BLE001 — диагностика не должна заменять исходную ошибку
             pass
+        # #1091: прежде чем записывать uncertain (retry-барьер
+        # has_unresolved_uncertain), спрашиваем сам экран: непустой
+        # form-helper-error на непокинутом маршруте — hh.ru отклонил сабмит
+        # валидацией, экран не ушёл, мутации нет.acted=False по той же
+        # логике, что у #958 (ExperienceResult отказа без acted): «клик
+        # отправлялся» и «действие на hh.ru состоялось» — разные факты, и
+        # здесь второй доказанно не случился, поэтому ApplyProgress.finish
+        # классифицирует попытку как failed, а не uncertain. Проверка стоит
+        # ДО readback #1038: read_resume_state навигирует страницу с экрана,
+        # и guard «непокинутый маршрут» после него недостижим; валидационные
+        # ошибки и публикация несовместимы, так что порядок ничего не прячет.
+        # Не читается/пусто — остаёмся на fail-closed uncertain.
+        rejection = _read_validation_rejection(page, target)
+        if rejection is not None:
+            return WizardAdvanceResult(
+                target,
+                False,
+                f"hh.ru отклонил сабмит экрана «{target}» валидацией открытой формы — "
+                f"экран не закрыт, мутации нет (#1091): {rejection}",
+            )
         # #1038: на публикующем экране (#1012: experience — последний) hh.ru
         # завершает сабмит публикацией, и финальный редирект может не
         # наступать как navigation до 'commit' в бюджете (наблюдалось дважды
@@ -338,21 +358,6 @@ def submit_wizard_screen(
                     "несмотря на таймаут навигации (#1038)",
                     acted=True,
                 )
-        # #1091: прежде чем записывать uncertain (retry-барьер
-        # has_unresolved_uncertain), спрашиваем сам экран: непустой
-        # form-helper-error на непокинутом маршруте — hh.ru отклонил сабмит
-        # валидацией, экран не ушёл, мутации нет. Это честный failed:
-        # повтор (например с --skip-empty или после edit-education) не
-        # заблокирован. Не читается/пусто — остаёмся на fail-closed uncertain.
-        rejection = _read_validation_rejection(page, target)
-        if rejection is not None:
-            return WizardAdvanceResult(
-                target,
-                False,
-                f"hh.ru отклонил сабмит экрана «{target}» валидацией открытой формы — "
-                f"экран не закрыт, мутации нет (#1091): {rejection}",
-                acted=True,
-            )
         # #990: текст падения клика сохраняется — иначе «дошёл ли клик»
         # недиагностируем (см. save_common).
         reason = f"переход с экрана «{target}» не подтверждён: {exc}"
