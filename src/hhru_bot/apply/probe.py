@@ -217,6 +217,19 @@ def probe_vacancy(
         # #350: развёрнутое предупреждение о видимости резюме — недвусмысленный
         # пропуск, без дампа (hh.ru дал определённый ответ прямо на странице).
         return ProbeResult(vacancy, False, navigation_result, skipped=True)
+    if isinstance(navigation_result, apply_steps.OneClickResponded):
+        # #1093: one-click shape — виден пост-откликный маркер, формы нет,
+        # дамплить нечего. В отличие от pipeline, probe не выполняет пре-клик
+        # check_already_responded (#247), поэтому маркер мог быть переходным
+        # SPA-состоянием ДО клика — атрибуции «это наш клик отправил отклик»
+        # здесь нет, и текст предупреждения её не заявляет.
+        logger.warning(
+            "[PROBE] %s — %s (клик по кнопке в one-click shape, возможно, "
+            "отправил отклик: атрибуция по пре-клик проверке недоступна в probe)",
+            vacancy.title,
+            navigation_result.reason,
+        )
+        return ProbeResult(vacancy, False, navigation_result.reason, skipped=True)
     if not navigation_result:
         reason = "форма отклика не отрисовалась — состояние формы не подтверждено"
         partial_ctx = ProbeContext(

@@ -518,9 +518,46 @@ def _run(ctx: ApplyContext) -> ApplyResult:
         return ctx.skip(navigation_result, skip_reason=SKIP_REASONS.RESUME_VISIBILITY)
     if isinstance(navigation_result, PostClickBlocker):
         return _finalize_blocker(ctx, navigation_result)
+    if isinstance(navigation_result, apply_steps.OneClickResponded):
+        # #1093: one-click — штатный путь hh.ru, а не сбой: клик по кнопке
+        # отклика сам отправил отклик (пост-откликный маркер отрендерился после
+        # чистой pre-click проверки #247). Локальный позитивный DOM-сигнал —
+        # тот же класс доверия, что у wait_success_confirmation (#7 успех
+        # подтверждается локальными маркерами без внешней сверки).
+        ctx.acted = True
+        if ctx.dry_run:
+            # Dry-run кликнул кнопку для предпросмотра вопросов (#373), но в
+            # one-click shape сам клик и есть submit: отклик реально ушёл на
+            # hh.ru. Success клеймить нельзя (письмо не отправлялось), а
+            # молчаливый fail — ложь: acted+uncertain, чтобы дедупликация
+            # has_applied видела запись (#176) и повторный прогон не отправил
+            # второй отклик.
+            ctx.uncertain = True
+            logger.warning(
+                "[DRY-RUN] %s — one-click: клик по кнопке отклика реально отправил "
+                "отклик без формы (исход требует сверки)",
+                ctx.vacancy.title,
+            )
+            return ctx.fail(
+                "one-click: клик по кнопке отклика в dry-run реально отправил "
+                "отклик без формы — исход неопределён"
+            )
+        logger.info(
+            "[OK] %s — one-click отклик без формы: пост-откликный маркер",
+            ctx.vacancy.title,
+        )
+        return ctx.ok(apply_steps.OneClickResponded.reason, outcome_code="one_click_success")
     if not navigation_result:
-        reason = "форма отклика не отрисовалась — состояние формы не подтверждено"
-        logger.warning("[FAIL] %s — %s", ctx.vacancy.title, reason)
+        # #1093: таймаут ожидания формы в один прогоне чаще всего one-click
+        # (8/10 вакансий 2026-09-09), а не сбой — маркер просто не успел
+        # отрисоваться к моменту гонки. Итог решает внешняя проверка #207
+        # (found → success), поэтому без ложного [FAIL]-шума в лог.
+        reason = "форма отклика не отрисовалась — возможен one-click отклик без модалки"
+        logger.info(
+            "[INFO] %s — %s; финализируем внешней проверкой /applicant/negotiations",
+            ctx.vacancy.title,
+            reason,
+        )
         return _finalize_post_click_failure(ctx, reason)
     ctx.probe("form_loaded")
 

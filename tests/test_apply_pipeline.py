@@ -856,6 +856,63 @@ def test_apply_form_indeterminate_external_not_found_keeps_early_exit():
     assert result.uncertain is False
 
 
+# --- #1093: one-click отклик без формы ---
+
+
+def _one_click_navigation(monkeypatch):
+    """Подменяет navigate_to_response_form сентинелом one-click: клик по кнопке
+    отправил отклик сам, форма не монтируется (9/9 дампов 2026-09-09)."""
+    from hhru_bot.apply import steps as apply_steps_module
+
+    monkeypatch.setattr(
+        pipeline_module.apply_steps,
+        "navigate_to_response_form",
+        lambda *_args, **_kwargs: apply_steps_module.OneClickResponded(),
+    )
+
+
+def test_apply_one_click_marker_is_success_without_external_verify(monkeypatch):
+    """#1093: видимый пост-откликный маркер после чистой pre-click проверки —
+    локальный позитивный сигнал (тот же класс доверия, что success-маркеры #7):
+    success с acted=True БЕЗ похода в /applicant/negotiations — иначе 8/10
+    вакансий прогона платили бы спасательным VERIFY за то, что уже доказано."""
+    _one_click_navigation(monkeypatch)
+    verifier = _verifier("found", "topic=1")
+    page = FakePage(apply_button=True)
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False, verifier=verifier)
+    assert result.success is True
+    assert result.acted is True
+    assert result.uncertain is False
+    assert result.outcome_code == "one_click_success"
+    assert verifier.calls == []
+
+
+def test_apply_one_click_marker_in_dry_run_is_uncertain(monkeypatch):
+    """#1093 + #373: dry-run кликает кнопку для предпросмотра вопросов, но в
+    one-click shape сам клик и есть submit — отклик реально ушёл. Success
+    клеймить нельзя (письма не было), молчаливый fail — ложь: acted+uncertain,
+    чтобы has_applied видел запись и повторный прогон не отправил дубль."""
+    _one_click_navigation(monkeypatch)
+    verifier = _verifier("found")
+    page = FakePage(apply_button=True)
+    # Сентинел достижим в dry-run только с настроенным answerer (#373: он
+    # кликает кнопку отклика для предпросмотра вопросов); без answerer dry-run
+    # возвращается с ok("dry-run") ещё ДО клика.
+    result = apply_to_vacancy(
+        page,
+        _vacancy(),
+        "RID",
+        "x",
+        dry_run=True,
+        verifier=verifier,
+        question_answerer=SimpleNamespace(),
+    )
+    assert result.success is False
+    assert result.acted is True
+    assert result.uncertain is True
+    assert verifier.calls == []
+
+
 def test_apply_submit_click_error_external_found_upgrades_to_success():
     """#176+#207: исключение в момент submit-клика при найденном отклике —
     uncertain апгрейдится до success (внешний источник точнее локальной
