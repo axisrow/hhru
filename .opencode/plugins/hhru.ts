@@ -48,7 +48,7 @@ const HH_WRITE_COMMANDS = new Set([
 ])
 
 /** Команды из правил проекта «сначала --dry-run»: боевой вызов через
- *  инструмент отклоняется, пока для той же команды+резюме не выполнялся
+ *  инструмент отклоняется, пока для той же команды+резюме+флагов не выполнялся
  *  успешный dry-run (страж в памяти плагина, fail-closed). */
 const DRY_RUN_FIRST_COMMANDS = new Set([
   "about", "apply", "bump", "clear-negotiations", "copy-resume",
@@ -111,11 +111,19 @@ function extractGlobals(tokens: string[]): { globals: string[]; rest: string[] }
   return { globals, rest }
 }
 
-/** Ключ «команда + резюме» для стража dry-run-прежде-боя. */
+/** Ключ «команда + резюме + нормализованные флаги» для стража
+ *  dry-run-прежде-боя. Флаги (отсортированные, без --dry-run/--force — те по
+ *  дизайму отличаются между dry-run и боевым запуском) входят в ключ
+ *  fail-closed: dry-run с `--limit 5` не открывает боевой `--limit 100` —
+ *  это другой план, требующий своего подтверждения. */
 function guardKey(account: string, command: string, rest: string[]): string {
   const idx = rest.indexOf("--resume")
   const resume = idx >= 0 && idx + 1 < rest.length ? rest[idx + 1] : "all"
-  return `${account}:${command}:${resume}`
+  const flags = rest
+    .filter((t) => t !== "--dry-run" && t !== "--force")
+    .sort()
+    .join(" ")
+  return `${account}:${command}:${resume}:${flags}`
 }
 
 function findBinary(root: string): string {
@@ -181,19 +189,27 @@ export const HhruPlugin: Plugin = async ({ directory, worktree, $ }) => {
     "tool.execute.before": async (input, output) => {
       if (input.tool !== "bash") return
       const command = String((output.args as Record<string, unknown>).command ?? "")
-      // Проверяем ВСЕ вхождения hhru/run.sh в строке (команда может быть
-      // цепочкой: `hhru whoami; hhru bump ...`), а наличие `--dry-run`
-      // определяем токенизацией сегмента — подстрока по строке целиком
-      // отключала бы страж значением аргумента или эхом в echo.
-      const re = /(?:\.venv\/bin\/hhru|scripts\/run\.sh|(?<![\w/.-])hhru)\s+([^\n]*)/g
-      let m: RegExpExecArray | null
-      while ((m = re.exec(command)) !== null) {
-        const tokens = tokenize(m[1])
-        const sub = firstSubcommand(tokens)
+      // Режем строку на сегменты по shell-разделителям и проверяем КАЖДЫЙ
+      // вызов hhru/run.sh отдельно: regex-матч «hhru + хвост строки» съедал
+      // второй вызов цепочки (`hhru whoami; hhru bump ...`), а подстрочный
+      // поиск `--dry-run` по строке целиком отключался эхом в echo.
+      // Хук — эвристический defence-in-depth (первичная защита — сам
+      // инструмент hhru), поэтому разрез по разделителям не учитывает
+      // закавыченные `;`/`&&` — такой текст не выглядит как вызов бота.
+      const isBinaryToken = (t: string) =>
+        t === "hhru" || t.endsWith(".venv/bin/hhru") || t.endsWith("scripts/run.sh")
+      for (const part of command.split(/\n|;|&&|\|\||\|/)) {
+        const tokens = tokenize(part)
+        const idx = tokens.findIndex(isBinaryToken)
+        if (idx < 0) continue
+        const seg = tokens.slice(idx + 1)
+        const sub = firstSubcommand(seg)
         if (!sub) continue
-        const kind = classify(sub)
+        // Хвостовая пунктуация от разделителя («bump,» / «bump;») не должна
+        // прятать WRITE-команду от классификатора.
+        const kind = classify(sub.replace(/[;,)]+$/, ""))
         const dangerous =
-          (kind === "hh_write" || kind === "local_write") && !tokens.includes("--dry-run")
+          (kind === "hh_write" || kind === "local_write") && !seg.includes("--dry-run")
         if (dangerous) {
           throw new Error(
             `hhru: команда «${sub}» меняет данные и запрещена через голый bash без --dry-run. ` +
@@ -219,7 +235,7 @@ export const HhruPlugin: Plugin = async ({ directory, worktree, $ }) => {
           "покажи план человеку; боевой запуск ТОЛЬКО после его явного «да» в чате — тогда " +
           "confirmed=true. Для apply/bump/run/publish-resume/reply-employers/clear-negotiations/" +
           "copy-resume/edit-*/about/resume-position/resume-sections боевой вызов отклонится, если " +
-          "dry-run для той же команды+резюме не выполнялся. WRITE-local (mark, clear-skipped, " +
+          "dry-run для той же команды+резюме+флагов не выполнялся. WRITE-local (mark, clear-skipped, " +
           "questionnaire, config, settings, profile, account, backup, restore, blacklist, reject, " +
           "robot-mark, " +
           "refresh-token, import-cookies, update) — тоже confirmed=true. login/login-code — " +
