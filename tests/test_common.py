@@ -1087,6 +1087,52 @@ def test_wizard_condition_chip_refuses_honestly(monkeypatch):
     assert "не рендерится на экране common визарда" in str(raised)
 
 
+def test_wizard_known_absence_is_not_drift(monkeypatch):
+    """#1090: отсутствие «Формат работы» на common-визарде черновика —
+    известное состояние (#1002, census: 0 отрисованных контролов): отказ
+    называет экран и обход, а generic drift-пакет НЕ пишется."""
+    from hhru_bot import drift
+    from hhru_bot.browser import PageStateIndeterminate
+
+    def _no_drift(*_args, **_kwargs):
+        raise AssertionError("известное состояние не должно писать drift-пакет")
+
+    monkeypatch.setattr(drift, "emit_drift_report", _no_drift)
+    page = _WizardShapePage()
+    try:
+        apply_common(page, CommonValues(work_format=["remote"]))
+        raised = None
+    except PageStateIndeterminate as exc:
+        raised = exc
+    assert raised is not None
+    message = str(raised)
+    assert "известное состояние" in message
+    assert "сабмит common проходит" in message
+
+
+def test_wizard_work_ticket_absence_is_not_drift(monkeypatch):
+    """#1090/#997: «Наличие трудовой книжки» на wizard-shape отсутствует —
+    известное состояние, отказ без drift-пакета, с предупреждением про
+    work-ticket-selector («Разрешение на работу»)."""
+    from hhru_bot import drift
+    from hhru_bot.browser import PageStateIndeterminate
+
+    def _no_drift(*_args, **_kwargs):
+        raise AssertionError("известное состояние не должно писать drift-пакет")
+
+    monkeypatch.setattr(drift, "emit_drift_report", _no_drift)
+    page = _WizardShapePage()
+    try:
+        apply_common(page, CommonValues(work_ticket="true"))
+        raised = None
+    except PageStateIndeterminate as exc:
+        raised = exc
+    assert raised is not None
+    message = str(raised)
+    assert "известное состояние" in message
+    assert "Разрешение на работу" in message
+
+
 def test_open_common_published_resume_refuses_honestly(monkeypatch):
     """#995: у опубликованного резюме hh.ru редиректит на /resume/{hash} —
     честный отказ «визанд только у черновиков» + дамп, а не «форма не
