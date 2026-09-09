@@ -509,8 +509,22 @@ def _run(ctx: ApplyContext) -> ApplyResult:
         ctx.vacancy.vacancy_id,
         allow_relocation=ctx.allow_relocation,
         run_id=ctx.run_id,
+        # #1099: в one-click shape клик по кнопке отклика = submit (#1093).
+        # Dry-run кликает кнопку только для предпросмотра вопросов (#373) —
+        # этот клик обязан быть остановлен ДО нажатия, иначе «сухой» прогон
+        # отправляет реальный отклик. Боевой путь (dry_run=False) не меняется:
+        # one-click для него легитимен (OneClickResponded ниже).
+        stop_before_one_click=ctx.dry_run,
     )
     _halt_if_antibot(ctx)
+    if isinstance(navigation_result, apply_steps.OneClickStopBeforeClick):
+        # #1099: ноль мутаций по построению — кнопка не была нажата. fail, а
+        # не skip: skip персистится record_skip в _common и навсегда похоронил
+        # бы вакансию, хотя боевой apply на ней возможен (тот же принцип, что
+        # у dry-run предпросмотра с низкой уверенностью #373 — dry-run ничего
+        # не сохраняет). acted=False: нет ни actions-строки, ни троттл-паузы.
+        logger.info("[DRY-RUN] %s — %s", ctx.vacancy.title, navigation_result.reason)
+        return ctx.fail(navigation_result.reason)
     if isinstance(navigation_result, str):
         # #350: развёрнутое предупреждение о видимости резюме — недвусмысленный,
         # неисполнимый пропуск; не форма не отрисовалась, а hh.ru дал определённый

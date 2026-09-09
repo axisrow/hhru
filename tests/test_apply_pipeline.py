@@ -33,11 +33,15 @@ class _FakeLocator:
         click_error: Exception | None = None,
         wait_for_calls: list[int] | None = None,
         wait_for_timeouts: list[float] | None = None,
+        click_sink: list[int] | None = None,
     ):
         self._present = present
         self._attrs = attrs or {}
         # #176: PlaywrightError в момент click() (клик мог уйти на hh.ru).
         self._click_error = click_error
+        # #1099: счётчик кликов (разделяется через страницу) — тесты
+        # stop-before-click проверяют, что кнопка отклика НЕ была нажата.
+        self._click_sink = click_sink if click_sink is not None else []
         # #226 cycle-review: общий счётчик wait_for-вызовов, разделяемый через
         # .or_() — проверяет, что wait_apply_button делает РОВНО один wait_for
         # на объединённом локаторе, а не последовательно кнопка-потом-маркеры
@@ -69,6 +73,7 @@ class _FakeLocator:
     def click(self, *, timeout=None, no_wait_after=None) -> None:
         if self._click_error is not None:
             raise self._click_error
+        self._click_sink.append(1)
         return None
 
     def fill(self, _value: str, *, timeout=None, no_wait_after=None, force=None) -> None:
@@ -118,11 +123,19 @@ class FakePage:
         success: bool = True,
         submit_in_form: bool = False,
         submit_click_error: Exception | None = None,
+        ssr_letter_required: bool = True,
     ):
         self.url = ""
         self.context = SimpleNamespace(
             cookies=lambda: [{"name": "hhtoken", "value": "test-session"}]
         )
+        # #1099: SSR-состояние страницы вакансии для one-click детекта
+        # (steps.one_click_shape_by_ssr). Дефолт — форма подтверждена
+        # (обязательное письмо): dry-run тесты предпросмотра вопросов
+        # проходят к клику как раньше.
+        self.ssr_letter_required = ssr_letter_required
+        # #1099: клики по кнопке отклика (VACANCY_APPLY_BUTTON).
+        self.apply_clicks: list[int] = []
         self.goto_calls: list[str] = []
         self._apply_button = apply_button
         self._already_responded = already_responded
@@ -146,13 +159,32 @@ class FakePage:
         self.goto_calls.append(url)
         self.url = url
 
+    def content(self) -> str:
+        # #1099: SSR HH-Lux-InitialState страницы вакансии (живой shape,
+        # read-only GET 2026-09-09): единственные поведенческие поля для
+        # one-click детекта — shortVacancy.@responseLetterRequired и test.hasTests.
+        import json
+
+        entry = {
+            "shortVacancy": {"@responseLetterRequired": self.ssr_letter_required},
+            "test": {"hasTests": False},
+        }
+        state = {"applicantVacancyResponseStatuses": {"1": entry}}
+        return (
+            '<template style="display:none" id="HH-Lux-InitialState">'
+            + json.dumps(state)
+            + "</template>"
+        )
+
     def locator(self, selector: str):  # noqa: ARG002
         from hhru_bot.apply import success
         from hhru_bot.selector_groups import apply_form, vacancy_page
 
         if selector == vacancy_page.VACANCY_APPLY_BUTTON:
             return _FakeLocator(
-                present=self._apply_button, wait_for_calls=self.apply_wait_for_calls
+                present=self._apply_button,
+                wait_for_calls=self.apply_wait_for_calls,
+                click_sink=self.apply_clicks,
             )
         if selector in (
             vacancy_page.VACANCY_ALREADY_RESPONDED_AGAIN,
@@ -911,6 +943,74 @@ def test_apply_one_click_marker_in_dry_run_is_uncertain(monkeypatch):
     assert result.acted is True
     assert result.uncertain is True
     assert verifier.calls == []
+
+
+# --- #1099: stop-before-click для one-click shape в dry-режимах ---
+
+
+def test_apply_dry_run_one_click_shape_stops_before_click():
+    """#1099: dry-run (с answerer, кликающим для предпросмотра #373) на
+    one-click вакансии НЕ нажимает кнопку отклика: SSR до клика показал, что
+    клик = submit. acted=False, uncertain=False, кнопка не нажата — ноль
+    мутаций на hh.ru, повторный боевой прогон возможен."""
+    page = FakePage(apply_button=True, success=True, submit_in_form=True)
+    page.ssr_letter_required = False
+
+    result = apply_to_vacancy(
+        page,
+        _vacancy(),
+        "RID",
+        "x",
+        dry_run=True,
+        question_answerer=SimpleNamespace(),
+    )
+
+    assert result.success is False
+    assert result.acted is False
+    assert result.uncertain is False
+    assert result.skipped is False  # dry-run ничего не персистит (#373 принцип)
+    assert "ДО клика" in result.reason
+    assert page.apply_clicks == []
+
+
+def test_apply_battle_mode_one_click_shape_still_clicks():
+    """Боевой путь не меняется (#1096 не деградировал): без dry-run кнопка
+    отклика нажимается даже на one-click вакансии — детект stop-before-click
+    включён только для dry-режимов."""
+    page = FakePage(apply_button=True, success=True, submit_in_form=True)
+    page.ssr_letter_required = False
+
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False)
+
+    assert page.apply_clicks == [1]
+    # Фейк моделирует «submit присутствует» — прогон доходит до submit-пути,
+    # а не останавливается сентинелом stop-before-click.
+    assert "ДО клика" not in result.reason
+
+
+def test_apply_dry_run_regular_form_clicks_as_before(monkeypatch):
+    """Обычная форма (SSR подтверждает обязательное письмо) — dry-run с
+    answerer кликает кнопку и доходит до предпросмотра вопросов как до #1099."""
+    from hhru_bot.ai.questions import AnswerProposal, Question
+
+    question = Question(0, "Готовы к переезду?", "text")
+    proposal = AnswerProposal(question, "Да", 1.0)
+    monkeypatch.setattr(
+        pipeline_module, "detect_questions", lambda _page: _question_detection(True)
+    )
+    monkeypatch.setattr(pipeline_module, "extract_questions", lambda _page: ([question], 1))
+    page = FakePage(apply_button=True, success=True, submit_in_form=True)
+    result = apply_to_vacancy(
+        page,
+        _vacancy(),
+        "RID",
+        "x",
+        dry_run=True,
+        question_answerer=_StubAnswerer({question.text: proposal}),
+    )
+    assert result.success is True
+    assert result.reason == "dry-run: предложенные ответы на вопросы показаны"
+    assert page.apply_clicks == [1]
 
 
 def test_apply_submit_click_error_external_found_upgrades_to_success():

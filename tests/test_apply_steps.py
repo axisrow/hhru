@@ -475,6 +475,117 @@ def test_navigate_form_timeout_ms_zero_is_honored_not_treated_as_falsy():
     assert page._state(apply_form.APPLY_SUBMIT_BUTTON).wait_for_timeout == 0
 
 
+def _ssr_vacancy_state_html(
+    *,
+    letter_required: bool | None = False,
+    has_tests: bool = False,
+) -> str:
+    """SSR HH-Lux-InitialState СТРАНИЦЫ ВАКАНСИИ (живой shape, read-only GET
+    2026-09-09): ``applicantVacancyResponseStatuses[<vacancy>].shortVacancy.
+    @responseLetterRequired`` + ``test.hasTests`` — единственные поведенческие
+    поля до клика. letter_required=None — вовсе без shortVacancy.
+    """
+    entry: dict = {"test": {"hasTests": has_tests}}
+    if letter_required is not None:
+        entry["shortVacancy"] = {"@responseLetterRequired": letter_required}
+    state = {"applicantVacancyResponseStatuses": {"136173988": entry}}
+    return (
+        '<template style="display:none" id="HH-Lux-InitialState">'
+        + json.dumps(state)
+        + "</template>"
+    )
+
+
+# --- #1099: pre-click детект one-click shape по SSR ---
+
+
+def test_one_click_ssr_no_required_fields_is_one_click():
+    # Живой факт (42/42 one-click вакансий 2026-09-09): письмо не обязательное,
+    # тестов нет — клик по кнопке отклика отправляет отклик сам (#1093).
+    page = FakeStepsPage()
+    page.content_html = _ssr_vacancy_state_html(letter_required=False)
+
+    assert steps.one_click_shape_by_ssr(page) is True
+
+
+def test_one_click_ssr_letter_required_is_form():
+    # Единственная form-вакансия того же дня (обязательное письмо) — форма.
+    page = FakeStepsPage()
+    page.content_html = _ssr_vacancy_state_html(letter_required=True)
+
+    assert steps.one_click_shape_by_ssr(page) is False
+
+
+def test_one_click_ssr_has_tests_is_form():
+    page = FakeStepsPage()
+    page.content_html = _ssr_vacancy_state_html(letter_required=False, has_tests=True)
+
+    assert steps.one_click_shape_by_ssr(page) is False
+
+
+def test_one_click_ssr_unreadable_is_indeterminate():
+    # Дефолтный content_html фейка — страница без SSR-шаблона: детект обязан
+    # вернуть None («форма не подтверждена»), а не False.
+    assert steps.one_click_shape_by_ssr(FakeStepsPage()) is None
+
+
+def test_navigate_stop_before_one_click_does_not_click():
+    # #1099: dry-режим на one-click вакансии — кнопка НЕ нажимается вовсе:
+    # в этом shape клик = submit (#1093), «безбоевой» предпросмотр невозможен.
+    page = FakeStepsPage()
+    page.content_html = _ssr_vacancy_state_html(letter_required=False)
+    page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
+
+    result = steps.navigate_to_response_form(page, stop_before_one_click=True)
+
+    assert isinstance(result, steps.OneClickStopBeforeClick)
+    assert result.reason is not None
+    # Кнопка не была нажата: навигация не начиналась, и кликов по кнопке нет.
+    assert page.navigation_entered == 0
+    assert page._state(vacancy_page.VACANCY_APPLY_BUTTON).clicks == 0
+
+
+def test_navigate_stop_before_one_click_ssr_unreadable_stops_fail_closed():
+    # SSR не подтверждает форму (шаблон отсутствует/битый) — fail-closed для
+    # dry-режимов: «не доказано, что клик безопасен» == не кликать.
+    page = FakeStepsPage()
+    page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
+
+    result = steps.navigate_to_response_form(page, stop_before_one_click=True)
+
+    assert isinstance(result, steps.OneClickStopBeforeClick)
+    assert "SSR" in result.reason
+    assert page.navigation_entered == 0
+
+
+def test_navigate_stop_before_one_click_form_confirmed_still_clicks():
+    # Форма подтверждена SSR (обязательное письмо) — dry-режим кликает кнопку
+    # как раньше: stop-before-click не должен остановить обычную форму.
+    page = FakeStepsPage()
+    page.content_html = _ssr_vacancy_state_html(letter_required=True)
+    page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    result = steps.navigate_to_response_form(page, stop_before_one_click=True)
+
+    assert result is True
+    assert page._state(vacancy_page.VACANCY_APPLY_BUTTON).clicks == 1
+
+
+def test_navigate_without_stop_flag_clicks_one_click_vacancy():
+    # Боевой путь (flag не передан) на one-click вакансии кликает кнопку как
+    # раньше — поведение #1096 не меняется.
+    page = FakeStepsPage()
+    page.content_html = _ssr_vacancy_state_html(letter_required=False)
+    page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
+    page.set_visible(vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT, True)
+
+    result = steps.navigate_to_response_form(page)
+
+    assert isinstance(result, steps.OneClickResponded)
+    assert page._state(vacancy_page.VACANCY_APPLY_BUTTON).clicks == 1
+
+
 def test_navigate_one_click_marker_wins_race_returns_sentinel():
     # #1093: one-click shape — после клика по кнопке отклика форма не
     # монтируется никогда, а пост-откликный маркер («уже откликались»)
