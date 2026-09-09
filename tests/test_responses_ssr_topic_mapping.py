@@ -53,6 +53,10 @@ class _SSRPage:
     def goto_page(self, page_num: int) -> None:
         self._page_num = page_num
 
+    def goto(self, url: str) -> None:
+        """Pagerless-обход (#1074): dispatch по URL — ``?page=N`` -> страница N."""
+        self.goto_page(int(url.partition("page=")[2]) if "page=" in url else 0)
+
     def locator(self, selector: str):
         if selector == LOGIN_FORM:
             return _CardsLocator([])
@@ -77,13 +81,12 @@ def test_ssr_topic_recovery_propagates_resume_id(monkeypatch):
         '{"id":999,"chatId":888,"vacancyId":200,"resumeId":321}'
         "]}}</template>"
     )
-    page = _SSRPage([[item]], [html])
-    monkeypatch.setattr(responses, "goto_hh", lambda page, _url: page.goto_page(0))
+    page = _SSRPage([[item], []], [html, ""])
+    monkeypatch.setattr(responses, "goto_hh", lambda page, url: page.goto(url))
     monkeypatch.setattr(responses, "has_auth_cookie", lambda _page: True)
     monkeypatch.setattr(responses, "parse_response_card", lambda card: card)
-    monkeypatch.setattr(responses, "_has_next_page", lambda *_: False)
 
-    result = responses.fetch_responses(page, max_pages=1)[0]
+    result = responses.fetch_responses(page, max_pages=2)[0]
 
     assert (result.vacancy_id, result.topic, result.resume_id) == ("200", "999", "321")
 
@@ -98,13 +101,12 @@ def test_ssr_mapping_enriches_resume_when_dom_already_has_topic(monkeypatch):
         '{"id":999,"chatId":888,"vacancyId":200,"resumeId":321}'
         "]}}</template>"
     )
-    page = _SSRPage([[item]], [html])
-    monkeypatch.setattr(responses, "goto_hh", lambda page, _url: page.goto_page(0))
+    page = _SSRPage([[item], []], [html, ""])
+    monkeypatch.setattr(responses, "goto_hh", lambda page, url: page.goto(url))
     monkeypatch.setattr(responses, "has_auth_cookie", lambda _page: True)
     monkeypatch.setattr(responses, "parse_response_card", lambda card: card)
-    monkeypatch.setattr(responses, "_has_next_page", lambda *_: False)
 
-    result = responses.fetch_responses(page, max_pages=1)[0]
+    result = responses.fetch_responses(page, max_pages=2)[0]
 
     assert result.resume_id == "321"
 
@@ -143,21 +145,22 @@ def test_ssr_topic_recovery_does_not_leak_into_previous_page_when_page_skips_a_c
         pages_cards=[
             [page0_item],
             [None, page1_item],  # first card fails to parse (vacancy_id missing)
+            [],
         ],
         pages_html=[
             _ssr_html([]),  # page 0's own SSR state has nothing for vacancy 100
             # page 1's SSR state offers topics for BOTH vacancy 100 and 200 —
             # only reachable by a card actually rendered on this page load.
             _ssr_html([("111", "777", "100"), ("999", "888", "200")]),
+            "",
         ],
     )
 
     monkeypatch.setattr(responses, "goto_hh", goto)
     monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
     monkeypatch.setattr(responses, "parse_response_card", parse_card)
-    monkeypatch.setattr(responses, "_has_next_page", lambda _page, page_num: page_num == 0)
 
-    results = responses.fetch_responses(page, max_pages=2)
+    results = responses.fetch_responses(page, max_pages=3)
 
     assert [r.vacancy_id for r in results] == ["100", "200"]
     # Page 0's item must stay untouched by page 1's SSR state, even though
@@ -196,22 +199,22 @@ def test_ssr_topic_recovery_fails_closed_when_multiple_topics_share_one_vacancy(
     item_b = responses.ResponseItem(vacancy_id="700", status=responses.ResponseStatus.READ)
 
     page = _SSRPage(
-        pages_cards=[[item_a, item_b]],
+        pages_cards=[[item_a, item_b], []],
         pages_html=[
             # Two negotiations for the SAME vacancy_id=700 — reversed order vs
             # DOM (topic 222 listed first in SSR, but nothing pins it to item_a
             # specifically) is exactly the ambiguity the guard must reject.
             _ssr_html([("222", "333", "700"), ("444", "555", "700")]),
+            "",
         ],
     )
 
     monkeypatch.setattr(responses, "goto_hh", goto)
     monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
     monkeypatch.setattr(responses, "parse_response_card", parse_card)
-    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
 
     with caplog.at_level("WARNING", logger="hhru_bot.responses"):
-        results = responses.fetch_responses(page, max_pages=1)
+        results = responses.fetch_responses(page, max_pages=2)
 
     assert len(results) == 2
     # Neither card was guessed at — both stay unresolved rather than risking a
@@ -255,7 +258,6 @@ def test_ssr_topic_recovery_leaves_topic_ambiguous_false_for_genuinely_chatless_
     monkeypatch.setattr(responses, "goto_hh", goto)
     monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
     monkeypatch.setattr(responses, "parse_response_card", parse_card)
-    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
 
     results = responses.fetch_responses(page, max_pages=1)
 
@@ -295,20 +297,20 @@ def test_ssr_topic_recovery_flags_all_cards_when_candidate_pool_is_smaller_than_
     item_b = responses.ResponseItem(vacancy_id="800", status=responses.ResponseStatus.READ)
 
     page = _SSRPage(
-        pages_cards=[[item_a, item_b]],
+        pages_cards=[[item_a, item_b], []],
         pages_html=[
             # Only ONE SSR topic for vacancy_id=800, but TWO cards need pairing.
             _ssr_html([("111", "222", "800")]),
+            "",
         ],
     )
 
     monkeypatch.setattr(responses, "goto_hh", goto)
     monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
     monkeypatch.setattr(responses, "parse_response_card", parse_card)
-    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
 
     with caplog.at_level("WARNING", logger="hhru_bot.responses"):
-        results = responses.fetch_responses(page, max_pages=1)
+        results = responses.fetch_responses(page, max_pages=2)
 
     assert len(results) == 2
     # Neither card was guessed at — the mismatch (2 cards, 1 candidate) means
@@ -335,7 +337,6 @@ def test_strict_sync_rejects_unmatched_ssr_topic(monkeypatch):
     monkeypatch.setattr(responses, "goto_hh", lambda page, url: page.goto_page(0))
     monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
     monkeypatch.setattr(responses, "parse_response_card", lambda card: card)
-    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
 
     with pytest.raises(responses.ResponsesIndeterminate, match="полного однозначного"):
         responses.fetch_responses(page, max_pages=1, strict_empty=True)
@@ -351,7 +352,6 @@ def test_strict_scrape_rejects_partial_dom_against_ssr_topics(monkeypatch):
     monkeypatch.setattr(responses, "goto_hh", lambda page, url: page.goto_page(0))
     monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
     monkeypatch.setattr(responses, "parse_response_card", lambda card: card)
-    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
 
     with pytest.raises(responses.ResponsesIndeterminate, match="не покрывает SSR topicList"):
         responses.fetch_responses(page, max_pages=1, strict_scrape=True)
@@ -370,7 +370,6 @@ def test_strict_scrape_matches_ssr_topics_to_dom_vacancies(monkeypatch):
     monkeypatch.setattr(responses, "goto_hh", lambda page, url: page.goto_page(0))
     monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
     monkeypatch.setattr(responses, "parse_response_card", lambda card: card)
-    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
 
     with pytest.raises(responses.ResponsesIndeterminate, match="не покрывает SSR topicList"):
         responses.fetch_responses(page, max_pages=1, strict_scrape=True)
@@ -395,7 +394,6 @@ def test_strict_scrape_rejects_two_ssr_topics_for_one_rendered_card(monkeypatch)
     monkeypatch.setattr(responses, "goto_hh", lambda page, url: page.goto_page(0))
     monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
     monkeypatch.setattr(responses, "parse_response_card", lambda card: card)
-    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
 
     with pytest.raises(responses.ResponsesIndeterminate, match="не покрывает SSR topicList"):
         responses.fetch_responses(page, max_pages=1, strict_scrape=True)
@@ -408,7 +406,6 @@ def test_strict_sync_rejects_unattributed_dom_card(monkeypatch):
     monkeypatch.setattr(responses, "goto_hh", lambda page, url: page.goto_page(0))
     monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
     monkeypatch.setattr(responses, "parse_response_card", lambda card: card)
-    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
 
     with pytest.raises(responses.ResponsesIndeterminate, match="полного однозначного"):
         responses.fetch_responses(page, max_pages=1, strict_empty=True)
@@ -433,7 +430,6 @@ def test_strict_scrape_accepts_confirmed_empty_ssr_topic_list(monkeypatch):
     monkeypatch.setattr(responses, "goto_hh", lambda page, url: page.goto_page(0))
     monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
     monkeypatch.setattr(responses, "parse_response_card", lambda card: card)
-    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
 
     results = responses.fetch_responses(page, max_pages=1, strict_scrape=True)
 
@@ -448,7 +444,6 @@ def test_strict_scrape_rejects_missing_ssr_state(monkeypatch):
     monkeypatch.setattr(responses, "goto_hh", lambda page, url: page.goto_page(0))
     monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
     monkeypatch.setattr(responses, "parse_response_card", lambda card: card)
-    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
 
     with pytest.raises(responses.ResponsesIndeterminate, match="SSR topic/resume mapping"):
         responses.fetch_responses(page, max_pages=1, strict_scrape=True)
@@ -462,7 +457,6 @@ def test_strict_scrape_rejects_malformed_ssr_json(monkeypatch):
     monkeypatch.setattr(responses, "goto_hh", lambda page, url: page.goto_page(0))
     monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
     monkeypatch.setattr(responses, "parse_response_card", lambda card: card)
-    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
 
     with pytest.raises(responses.ResponsesIndeterminate, match="SSR topic/resume mapping"):
         responses.fetch_responses(page, max_pages=1, strict_scrape=True)
@@ -487,7 +481,6 @@ def test_strict_scrape_rejects_incomplete_topic_dropped_by_topic_refs(monkeypatc
     monkeypatch.setattr(responses, "goto_hh", lambda page, url: page.goto_page(0))
     monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
     monkeypatch.setattr(responses, "parse_response_card", lambda card: card)
-    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
 
     with pytest.raises(responses.ResponsesIndeterminate, match="неполную запись"):
         responses.fetch_responses(page, max_pages=1, strict_scrape=True)
@@ -511,7 +504,6 @@ def test_strict_scrape_rejects_null_applicant_negotiations(monkeypatch):
     monkeypatch.setattr(responses, "goto_hh", lambda page, url: page.goto_page(0))
     monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
     monkeypatch.setattr(responses, "parse_response_card", lambda card: card)
-    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
 
     with pytest.raises(responses.ResponsesIndeterminate, match="SSR topic/resume mapping"):
         responses.fetch_responses(page, max_pages=1, strict_scrape=True)
@@ -529,7 +521,6 @@ def test_strict_scrape_rejects_non_dict_topic_entry(monkeypatch):
     monkeypatch.setattr(responses, "goto_hh", lambda page, url: page.goto_page(0))
     monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
     monkeypatch.setattr(responses, "parse_response_card", lambda card: card)
-    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
 
     with pytest.raises(responses.ResponsesIndeterminate, match="SSR topic/resume mapping"):
         responses.fetch_responses(page, max_pages=1, strict_scrape=True)
@@ -548,15 +539,14 @@ def test_strict_scrape_preserves_chatless_card_allowance(monkeypatch):
         responses.ResponseItem(vacancy_id="900", status=responses.ResponseStatus.DISCARD),
     ]
     page = _SSRPage(
-        pages_cards=[items],
-        pages_html=[_ssr_html([("222", "333", "700")])],
+        pages_cards=[items, []],
+        pages_html=[_ssr_html([("222", "333", "700")]), ""],
     )
-    monkeypatch.setattr(responses, "goto_hh", lambda page, url: page.goto_page(0))
+    monkeypatch.setattr(responses, "goto_hh", lambda page, url: page.goto(url))
     monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
     monkeypatch.setattr(responses, "parse_response_card", lambda card: card)
-    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
 
-    results = responses.fetch_responses(page, max_pages=1, strict_scrape=True)
+    results = responses.fetch_responses(page, max_pages=2, strict_scrape=True)
 
     assert len(results) == 2
     chatless = next(r for r in results if r.vacancy_id == "900")

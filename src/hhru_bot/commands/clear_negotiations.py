@@ -326,15 +326,16 @@ def _run_account_wide(args, config, history, throttle, progress: ApplyProgress) 
     ) as context:
         page = context.new_page()
         # Полнота списка для необратимого отзыва подтверждается нулём новых
-        # топиков (pagerless-режим fetch_responses), а не UI-пейджером:
-        # hh.ru удалил пейджер из /applicant/negotiations (дрейф 2026-09-09,
-        # PR #1066), и прежний guard на _has_next_page молча перестал
-        # срабатывать — clear отозвал бы первые 20 тем и отчитался успехом
-        # при невидимом остатке. ResponsesIndeterminate = список не дочитан
-        # до конца (потолок --max-pages при непустом продолжении, нечитаемый
-        # SSR) — отказ до любого клика, инвариант PR #196 сохранён (#1067).
+        # топиков (pagerless-семантика fetch_responses, #1067/#1074), а не
+        # UI-пейджером: hh.ru удалил пейджер из /applicant/negotiations
+        # (дрейф 2026-09-09, PR #1066), и прежний guard на _has_next_page
+        # молча перестал срабатывать — clear отозвал бы первые 20 тем и
+        # отчитался успехом при невидимом остатке. ResponsesIndeterminate =
+        # список не дочитан до конца (потолок --max-pages при непустом
+        # продолжении, нечитаемый SSR) — отказ до любого клика, инвариант
+        # PR #196 сохранён (#1067).
         try:
-            cards = fetch_responses(page, max_pages=args.max_pages, pagerless=True)
+            cards = fetch_responses(page, max_pages=args.max_pages)
         except ResponsesIndeterminate as exc:
             _fail(
                 f"Список откликов не дочитан до конца: {exc}. Увеличьте "

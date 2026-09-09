@@ -372,8 +372,7 @@ def test_account_wide_rejects_when_max_pages_truncated(tmp_path, monkeypatch):
 
     from hhru_bot.responses import ResponsesIndeterminate
 
-    def _indeterminate_truncation(page, max_pages, *, pagerless=False):
-        assert pagerless is True  # полнота списка подтверждается без пейджера
+    def _indeterminate_truncation(page, max_pages):
         raise ResponsesIndeterminate(
             f"обход достиг --max-pages={max_pages} при непустой странице 1 — "
             "продолжение списка не опровергнуто"
@@ -434,7 +433,7 @@ def test_account_wide_empty_discovery_warns_but_does_not_hard_fail(tmp_path, mon
     )
     monkeypatch.setattr("hhru_bot.history.History", lambda *args, **kwargs: history)
     monkeypatch.setattr("hhru_bot.throttle.Throttle", lambda *args, **kwargs: None)
-    monkeypatch.setattr(command, "fetch_responses", lambda page, max_pages, *, pagerless=False: [])
+    monkeypatch.setattr(command, "fetch_responses", lambda page, max_pages: [])
 
     failed = command.run(_args(account_wide=True, force=True))
     assert failed is False  # no false refusal for a legitimately empty account
@@ -492,9 +491,7 @@ def test_account_wide_skipped_cards_flip_exit_status(tmp_path, monkeypatch):
     )
     monkeypatch.setattr("hhru_bot.history.History", lambda *args, **kwargs: history)
     monkeypatch.setattr("hhru_bot.throttle.Throttle", lambda *args, **kwargs: Throttle())
-    monkeypatch.setattr(
-        command, "fetch_responses", lambda page, max_pages, *, pagerless=False: cards
-    )
+    monkeypatch.setattr(command, "fetch_responses", lambda page, max_pages: cards)
 
     failed = command.run(_args(account_wide=True, force=True))
     assert failed is True  # a skipped card is an incomplete account-wide run
@@ -550,9 +547,7 @@ def test_account_wide_skips_cards_without_topic(tmp_path, monkeypatch):
     )
     monkeypatch.setattr("hhru_bot.history.History", lambda *args, **kwargs: history)
     monkeypatch.setattr("hhru_bot.throttle.Throttle", lambda *args, **kwargs: Throttle())
-    monkeypatch.setattr(
-        command, "fetch_responses", lambda page, max_pages, *, pagerless=False: cards
-    )
+    monkeypatch.setattr(command, "fetch_responses", lambda page, max_pages: cards)
 
     import contextlib
     import io

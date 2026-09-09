@@ -89,7 +89,6 @@ def test_paginated_topic_refs_collects_all_pages(monkeypatch):
     monkeypatch.setattr("hhru_bot.browser.goto_hh", goto)
     monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda _page: True)
     monkeypatch.setattr("hhru_bot.browser.has_login_form", lambda _page: False)
-    monkeypatch.setattr("hhru_bot.responses._has_next_page", lambda _page, n: n < 2)
 
     refs = paginated_topic_refs(page, max_pages=3)
 
