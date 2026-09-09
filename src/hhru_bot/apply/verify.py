@@ -49,13 +49,7 @@ from playwright.sync_api import Page
 
 from ..browser import goto_hh, has_auth_cookie, has_login_form
 from ..negotiations_probe import parse_initial_state
-from ..responses import (
-    NEGOTIATIONS_URL,
-    RENDER_TIMEOUT_MS,
-    ResponsesIndeterminate,
-    _has_next_page,
-    parse_response_card,
-)
+from ..responses import NEGOTIATIONS_URL, RENDER_TIMEOUT_MS, parse_response_card
 from ..selector_groups import negotiations as ns
 from .antibot import raise_for_antibot
 from .steps import _dump_navigation_diagnostics
@@ -76,15 +70,15 @@ logger = logging.getLogger("hhru_bot.apply.verify")
 #: отваливающиеся под DDoS-Guard загрузки списка (goto_hh внутри тоже ретраит).
 NEGOTIATIONS_VERIFY_ATTEMPTS = 2
 NEGOTIATIONS_VERIFY_POLL_INTERVAL_MS = 10_000
-#: Сканируем страницу 0 и, если пагинатор подтверждает продолжение, страницу 1:
+#: Сканируем страницу 0 и, если она принесла новые карточки, страницу 1:
 #: список отсортирован по свежести, только что отправленный отклик был бы на
-#: странице 0 — глубокий скан не нужен. Достижение потолка при подтверждённой
-#: пагинации — indeterminate, а не not_found (см. _scan_negotiations).
+#: странице 0 — глубокий скан не нужен. Конец списка доказывается нулём новых
+#: vacancy_id (дрейф 2026-09-09: пейджер из UI удалён, PR #1066/#1067), а не
+#: пейджером; достижение потолка при непустом продолжении — indeterminate, а
+#: не not_found (см. _scan_negotiations).
 #: Инвариант «свежий отклик на странице 0» проверен живой пробой 2026-08-16
 #: (#210): все 14 тем аккаунта строго по creationTime по убыванию, свежайшая —
-#: на странице 0. Решение по напряжению 1 #210: документировать инвариант,
-#: НЕ переводя неподтверждённый пагинатор на fail-closed (0 случаев
-#: ResponsesIndeterminate в логах на ту дату — эвристика не стреляет).
+#: на странице 0.
 NEGOTIATIONS_VERIFY_MAX_PAGES = 2
 #: Окно стабилизации DOM-списка в fallback-пути: карточки могут догружаться
 #: (отложенный/виртуализированный рендер), и чтение count до стабилизации
@@ -262,6 +256,14 @@ def _scan_negotiations(
     confirmed_incomplete = False
     attribution_incomparable = False
     reads: list[PageRead] = []
+    # Ноль новых записей — stop-условие этого скана, поэтому набор ключей
+    # обязан быть ЛОКАЛЬНЫМ для попытки (внешний seen_vacancy_ids — аудит
+    # «прочитано: ...», копится между всеми NEGOTIATIONS_VERIFY_ATTEMPTS).
+    # Ключ — идентификатор ТЕМЫ (SSR) или карточки (DOM-fallback), не
+    # vacancy_id: у одной вакансии может быть несколько тем (разные резюме),
+    # и вторая тема V на странице 1 не «новая вакансия» — diff по vacancy_id
+    # остановил бы скан до её чтения (ревью PR #1068, вторая находка).
+    attempt_keys: set[str] = set()
     for page_num in range(NEGOTIATIONS_VERIFY_MAX_PAGES):
         if page_num > 0:
             try:
@@ -270,17 +272,20 @@ def _scan_negotiations(
                 # Inspect a page rendered before the navigation timeout before
                 # treating it as an ordinary incomplete scan.
                 raise_for_antibot(page)
-                # Пагинация была подтверждена на странице 0 (мы сюда дошли) —
-                # страница 1 не дочитана: целевая вакансия могла быть на ней.
+                # На страницу 1 нас привели НОВЫЕ топики страницы 0 — список
+                # продолжается, и страница 1 не дочитана: целевая вакансия
+                # могла быть на ней.
                 problem = f"goto страницы {page_num} списка не прошёл ({exc})"
                 confirmed_incomplete = True
                 reads.append(PageRead(PageSource.SSR, (), Partial(problem)))
                 break
             else:
                 raise_for_antibot(page)
-        found_detail, page_clean, page_problem, page_attribution_incomparable = _scan_single_page(
-            page, wanted, resume_id, account_resume_ids, seen_vacancy_ids
+        found_detail, page_clean, page_problem, page_attribution_incomparable, page_keys = (
+            _scan_single_page(page, wanted, resume_id, account_resume_ids, seen_vacancy_ids)
         )
+        new_keys = page_keys - attempt_keys
+        attempt_keys |= page_keys
         attribution_incomparable = attribution_incomparable or page_attribution_incomparable
         if page_attribution_incomparable:
             reads.append(
@@ -303,13 +308,20 @@ def _scan_negotiations(
         if found_detail is not None:
             return found_detail, True, None, False, False
         clean = clean or page_clean
-        if not _has_next_page_confirmed(page, page_num):
+        # Конец списка доказывается данными (дрейф 2026-09-09, PR #1066/#1067):
+        # hh.ru удалил пейджер из UI, и «пейджер не отрисован» больше не
+        # доказывает «страница одна» — иначе отклик на хвосте списка получал
+        # ложный not_found с clean=True (нарушение fail-closed серой зоны
+        # #207). Страница без НОВЫХ записей (пустая или повтор предыдущей —
+        # сервер, игнорирующий ?page, возвращает те же темы) — конец.
+        if not new_keys:
             break
         if page_num == NEGOTIATIONS_VERIFY_MAX_PAGES - 1:
-            # Достигли потолка скана, но пагинатор подтверждает продолжение —
-            # целевая вакансия могла быть на непросканированной странице 2+.
+            # Достигли потолка скана, а последняя страница принесла новые
+            # карточки — продолжение списка не опровергнуто, целевая вакансия
+            # могла быть на непросканированной странице 2+.
             # Fail-closed: indeterminate, а не ложный not_found (#207).
-            problem = "достигнут потолок скана при подтверждённой пагинации"
+            problem = "достигнут потолок скана при непустом продолжении списка"
             confirmed_incomplete = True
             reads.append(PageRead(PageSource.SSR, (), Partial(problem)))
             break
@@ -329,15 +341,21 @@ def _scan_single_page(
     resume_id: str | None,
     account_resume_ids: set[str] | None,
     seen_vacancy_ids: set[str],
-) -> tuple[str | None, bool, str | None, bool]:
+) -> tuple[str | None, bool, str | None, bool, set[str]]:
+    """Пятый элемент — ключи прочитанной страницы (идентичность для
+    pagerless-стопа «ноль новых», см. _scan_negotiations): SSR — ключ темы
+    (id/chatId), DOM-fallback — ключ вакансии карточки (DOM не различает
+    несколько тем одной вакансии — его потолок и так fail-closed по
+    атрибуции)."""
     try:
         html = page.content()
     except PlaywrightError as exc:
-        return None, False, f"page.content() упал ({exc})", False
+        return None, False, f"page.content() упал ({exc})", False, set()
     topics = _ssr_topic_list(html)
     if topics is not None:
         # SSR — серверная истина; DOM читает те же данные, fallback не нужен.
         seen_vacancy_ids.update(str(t.get("vacancyId")) for t in topics if t.get("vacancyId"))
+        page_keys = {f"t{t.get('id', t.get('chatId'))}" for t in topics}
         attribution_problem: str | None = None
         for topic in topics:
             if str(topic.get("vacancyId", "")) != wanted:
@@ -373,15 +391,17 @@ def _scan_single_page(
                     f"быть создана предыдущим откликом"
                 )
                 continue
-            return _describe_topic(topic), True, None, False
+            return _describe_topic(topic), True, None, False, page_keys
         return (
             None,
             attribution_problem is None,
             attribution_problem,
             attribution_problem is not None,
+            page_keys,
         )
     dom_ids, cards_seen = _read_dom_vacancy_ids(page)
     seen_vacancy_ids.update(dom_ids)
+    dom_keys = {f"v{v}" for v in dom_ids}
     if wanted in dom_ids:
         if resume_id is not None:
             # DOM-карточка не несёт resumeId — не можем атрибутировать отклик
@@ -390,11 +410,17 @@ def _scan_single_page(
             # attribution_incomparable=True: находка вакансии без атрибуции
             # обязана перевесить чистое чтение ДРУГОЙ попытки (иначе ложный
             # not_found — тот же false negative, что #212 устраняет).
-            return None, False, "DOM-карточка без атрибуции резюме — исход неопределён", True
-        return "DOM-карточка списка (SSR-состояние недоступно)", True, None, False
+            return (
+                None,
+                False,
+                "DOM-карточка без атрибуции резюме — исход неопределён",
+                True,
+                dom_keys,
+            )
+        return "DOM-карточка списка (SSR-состояние недоступно)", True, None, False, dom_keys
     if cards_seen:
-        return None, True, None, False
-    return None, False, "список не отрендерился (нет ни SSR-состояния, ни карточек)", False
+        return None, True, None, False, dom_keys
+    return None, False, "список не отрендерился (нет ни SSR-состояния, ни карточек)", False, set()
 
 
 def _resume_attribution(
@@ -532,18 +558,4 @@ def _dom_list_stable(page: Page, initial_ids: set[str]) -> bool:
         fresh = _read_dom_ids(page)
         return fresh is not None and fresh == initial_ids
     except PlaywrightError:
-        return False
-
-
-def _has_next_page_confirmed(page: Page, page_num: int) -> bool:
-    try:
-        return _has_next_page(page, page_num)
-    except ResponsesIndeterminate:
-        # Неподтверждённый пагинатор — не причина indeterminate-вердикта:
-        # свежий отклик был бы на странице 0. Инвариант сортировки по
-        # свежести проверен живой пробой 2026-08-16 (#210): 14/14 тем строго
-        # по creationTime по убыванию; 0 случаев ResponsesIndeterminate в
-        # логах на ту дату — оставляем as-is (документированное решение по
-        # напряжению 1 #210, не fail-closed).
-        logger.warning("[VERIFY] пагинация не подтверждена — сканирую только прочитанное")
         return False

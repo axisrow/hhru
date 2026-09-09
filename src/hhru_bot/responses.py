@@ -314,6 +314,7 @@ def fetch_responses(
     *,
     strict_empty: bool = False,
     strict_scrape: bool = False,
+    pagerless: bool = False,
 ) -> list[ResponseItem]:
     """Собирает ответы работодателей с /applicant/negotiations.
 
@@ -322,6 +323,13 @@ def fetch_responses(
     подтверждённой последней странице. Неподтверждённая пагинация поднимает
     :class:`ResponsesIndeterminate`, а не выдаёт неопределённость за последнюю
     страницу.
+
+    ``pagerless=True`` (для clear-negotiations, #1067): конец списка
+    определяется нулём НОВЫХ SSR-топиков на странице, а не UI-пейджером —
+    hh.ru убрал пейджер из /applicant/negotiations (дрейф 2026-09-09, PR
+    #1066), и «пейджер не отрисован» больше не доказывает «страница одна».
+    Достижение ``max_pages`` при непустой последней странице поднимает
+    :class:`ResponsesIndeterminate`: полнота списка не подтверждена.
 
     Read-only по hh.ru: только goto + чтение, никаких кликов действий.
 
@@ -345,6 +353,7 @@ def fetch_responses(
     успешного парсинга) остаётся легитимным и не блокирует чекпоинт.
     """
     results: list[ResponseItem] = []
+    seen_topic_ids: set[str] = set()
 
     if max_pages <= 0:
         raise ValueError("max_pages must be positive")
@@ -425,6 +434,7 @@ def fetch_responses(
         # overcounts and a `-count:` slice would reach into the previous
         # page's already-resolved results and risk assigning them this
         # page's SSR topics.
+        page_topic_ids: set[str] = set()
         try:
             from .negotiations_probe import chat_url, parse_initial_state, topic_refs
 
@@ -433,6 +443,7 @@ def fetch_responses(
             html = page.content()
             try:
                 refs = topic_refs(html)
+                page_topic_ids = {ref.topic_id for ref in refs}
             except AttributeError as exc:
                 # #742 round 2 (Codex review): topic_refs() runs before the
                 # raw_topics shape validation below and assumes
@@ -570,6 +581,14 @@ def fetch_responses(
         except ResponsesIndeterminate:
             raise
         except (TypeError, ValueError, KeyError, json.JSONDecodeError, PlaywrightError):
+            if pagerless:
+                # Ноль новых топиков — единственное доказательство конца списка
+                # в pagerless-режиме; без прочитанного SSR topicList его нечем
+                # подтвердить — fail-closed, а не «дочитано».
+                raise ResponsesIndeterminate(
+                    f"страница {page_num}: SSR topicList не прочитан — полнота "
+                    "списка без пейджера не подтверждается (#1067)"
+                ) from None
             if strict_empty or strict_scrape:
                 # #742: отсутствующий/битый HH-Lux-InitialState — тот же
                 # неопределённый page-state, что и не появившиеся карточки
@@ -582,6 +601,29 @@ def fetch_responses(
                 ) from None
             logger.warning("SSR topic mapping unavailable; keeping parsed chat URLs")
 
+        if pagerless:
+            # Дрейф 2026-09-09 (PR #1066): пейджер из UI удалён, серверный
+            # GET-контракт ?page=N жив — конец списка доказывается данными:
+            # страница без НОВЫХ топиков (пустая или повтор предыдущей) —
+            # конец. Дедуп по topic_id страхует и от сервера, игнорирующего
+            # ?page (он вернёт те же темы -> ноль новых -> стоп).
+            if page_num > 0 and not (page_topic_ids - seen_topic_ids):
+                logger.info(
+                    "Страница %d без новых топиков — достигнут конец списка откликов",
+                    page_num,
+                )
+                break
+            if page_num == max_pages - 1 and page_topic_ids:
+                # Последняя страница бюджета непуста, а пейджера, который
+                # доказал бы «дальше пусто», больше не существует — полнота
+                # списка не подтверждена. Для необратимого clear-negotiations
+                # это отказ до любого клика (инвариант PR #196, #1067).
+                raise ResponsesIndeterminate(
+                    f"обход достиг --max-pages={max_pages} при непустой странице "
+                    f"{page_num} — продолжение списка не опровергнуто"
+                )
+            seen_topic_ids |= page_topic_ids
+            continue
         has_next = _has_next_page(page, page_num)
         if not has_next:
             logger.info("Достигнута последняя страница откликов (%d)", page_num)
