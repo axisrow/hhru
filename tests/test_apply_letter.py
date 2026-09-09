@@ -87,6 +87,26 @@ def test_template_provider_logs_letter_match_score(caplog):
     assert "letter-match 1 'Dev': 100.0/100" in caplog.text
 
 
+def test_render_cover_letter_no_vacancy_text_skips_letter_match_log(caplog):
+    """Карточка без vacancy_text (reply-employers собирает её из чата):
+    наблюдение letter-match «нет данных» не несет содержания — тишина, а не
+    строка 0.0/100 по каждому чату (#493 stage 1: распределение строится на
+    карточках, где скоринг реально считал)."""
+    with caplog.at_level("INFO", logger="hhru_bot.apply.letter"):
+        render_cover_letter("Пишу по {vacancy_title}", _card("Dev", "Acme"))
+
+    assert "letter-match" not in caplog.text
+
+
+def test_template_provider_no_vacancy_text_skips_letter_match_log(caplog):
+    provider = TemplateCoverLetterProvider("Пишу по {vacancy_title}")
+
+    with caplog.at_level("INFO", logger="hhru_bot.apply.letter"):
+        provider.render(_card("Dev", "Acme"))
+
+    assert "letter-match" not in caplog.text
+
+
 # --- AI-провайдер через мок LLMClient (#16 контракт: chat()->NormalizedResponse) ---
 
 

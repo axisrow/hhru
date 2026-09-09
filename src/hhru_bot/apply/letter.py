@@ -143,6 +143,7 @@ def render_cover_letter(
 def _log_letter_match(vacancy: VacancyCard, letter: str) -> None:
     """Log observation-only letter↔vacancy keyword score (#493, stage 1)."""
     from ..scoring import letter_match_score
+    from ..scoring.resume_match import NO_DATA_RATIONALE
 
     try:
         outcome = letter_match_score(vacancy, letter)
@@ -150,6 +151,12 @@ def _log_letter_match(vacancy: VacancyCard, letter: str) -> None:
         logger.warning(
             "letter-match failed for %s '%s': %s", vacancy.vacancy_id, vacancy.title, exc
         )
+        return
+    if outcome.rationale == NO_DATA_RATIONALE:
+        # «Считать было нечего»: карточка без vacancy_text (reply-employers
+        # собирает её из чата, без текста вакансии). Наблюдение без содержания:
+        # по замыслу #493 stage 1 распределение для калибровки порога строится
+        # на карточках, где скоринг реально считал, — пустышки не пишем и в лог.
         return
     logger.info(
         "letter-match %s '%s': %.1f/100 (%s)",
