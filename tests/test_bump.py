@@ -18,6 +18,7 @@ import hhru_bot.bump as bump_module
 from hhru_bot.bump import bump_resume
 from hhru_bot.config import ResumeConfig, SearchFilters
 from hhru_bot.selector_groups import resume_page
+from hhru_bot.selector_groups.resume_list import RESUME_LIST_CARD_LINK_PREFIX
 
 pytestmark = pytest.mark.integration
 
@@ -122,7 +123,13 @@ class _FakeCardLink:
         return self
 
     def wait_for(self, *, state: str = "visible", timeout: float = 0) -> None:  # noqa: ARG002
-        if not self._page._card_present:
+        # #1076: wait_for — единственный «ход времени» фейка: render_after_waits
+        # = N означает, что список/карточка отрисовываются В ТЕЧЕНИЕ N-го
+        # ожидания (оно всё равно таймаутится — ожидающий успел проверить до
+        # рендера); последующие ожидания видят элемент. count() время НЕ
+        # двигает — снимок DOM на момент вызова.
+        self._page._wait_calls += 1
+        if not self._page._card_visible:
             raise PlaywrightTimeoutError("resume card not visible")
 
     def locator(self, selector: str):
@@ -131,11 +138,35 @@ class _FakeCardLink:
         return _FakeCard(self._page)
 
 
+class _FakeAnyCardLink:
+    """Префиксный локатор «хоть какая-то карточка списка» (#1076)."""
+
+    def __init__(self, page: FakeBumpPage):
+        self._page = page
+
+    @property
+    def first(self) -> _FakeAnyCardLink:
+        return self
+
+    def count(self) -> int:
+        return 1 if self._page._list_visible else 0
+
+    def wait_for(self, *, state: str = "visible", timeout: float = 0) -> None:  # noqa: ARG002
+        self._page._wait_calls += 1
+        if not self._page._list_visible:
+            raise PlaywrightTimeoutError("resume list not rendered")
+
+
 class FakeBumpPage:
     """Имитация Page для bump_resume (поток 2026-09-08: список резюме).
 
     Навигация идёт на /applicant/resumes; карточка резюме резолвится якорем
     resume-card-link-<id>, hint/кнопка — внутри карточки.
+
+    #1076: ``render_after_waits`` — сколько wait_for должны пройти «впустую»
+    (таймаут), прежде чем список/карточка «отрисуются» (моделирует lazy-render
+    позже первого бюджета ожидания). ``other_cards_present`` — есть ли в
+    списке ЧУЖИЕ карточки, когда нашей нет (гидрация vs реальное отсутствие).
     """
 
     def __init__(
@@ -147,22 +178,43 @@ class FakeBumpPage:
         hint_render_delayed: bool = False,
         hint_wait_error: bool = False,
         button_click_error: bool = False,
+        render_after_waits: int = 0,
+        other_cards_present: bool = True,
     ):
         self.goto_calls: list[str] = []
         self.click_log: list[str] = []
+        self.card_link_selectors: list[str] = []
         self._card_present = card_present
         self._hint_present = hint_present
         self._button_present = button_present
         self._hint_render_delayed = hint_render_delayed
         self._hint_wait_error = hint_wait_error
         self._button_click_error = button_click_error
+        self._render_after_waits = render_after_waits
+        self._other_cards_present = other_cards_present
+        self._wait_calls = 0
+
+    @property
+    def _rendered(self) -> bool:
+        return self._wait_calls >= self._render_after_waits
+
+    @property
+    def _list_visible(self) -> bool:
+        return self._rendered and (self._card_present or self._other_cards_present)
+
+    @property
+    def _card_visible(self) -> bool:
+        return self._rendered and self._card_present
 
     def goto(self, url: str, *, wait_until: str = "") -> None:  # noqa: ARG002
         self.goto_calls.append(url)
 
     def locator(self, selector: str):
         if selector.startswith("a[data-qa='resume-card-link-"):
+            self.card_link_selectors.append(selector)
             return _FakeCardLink(self)
+        if selector == RESUME_LIST_CARD_LINK_PREFIX:
+            return _FakeAnyCardLink(self)
         return _FakeLocator(False)
 
 
@@ -325,4 +377,86 @@ def test_bump_card_missing_refuses_without_click():
     assert result.success is False
     assert "не найдено в списке" in result.reason
     assert page.click_log == []
+    assert result.acted is False
+
+
+# --- #1076: query-суффикс в resume_url и медленная гидрация списка ----------
+
+
+def test_bump_query_suffix_in_resume_url_still_finds_card():
+    """#1076 (живой прогон 2026-09-09): resume_url, скопированный из браузера
+    с query-суффиксом (?source=…), раньше давал resume_id вида ``<hash>?…``,
+    точный матч data-qa не совпадал и живое резюме вечно репортилось
+    «удалено». Сравнение — по path-идентификатору: суффикс отрезается."""
+    page = FakeBumpPage(hint_present=False, button_present=True)
+    resume = ResumeConfig(
+        id="r1",
+        resume_url="https://hh.ru/resume/abc123?source=employer_page",
+        search=SearchFilters(text="python", area=1),
+    )
+
+    result = bump_resume(page, resume, dry_run=True)
+
+    assert result.success is True
+    # Селектор построен по чистому идентификатору, без query.
+    assert page.card_link_selectors == ["a[data-qa='resume-card-link-abc123']"]
+
+
+def test_bump_fragment_suffix_in_resume_url_is_stripped():
+    """#1076: fragment-суффикс (#…) в resume_url отрезается так же, как query."""
+    page = FakeBumpPage(hint_present=False, button_present=True)
+    resume = ResumeConfig(
+        id="r1",
+        resume_url="https://hh.ru/resume/abc123#experience",
+        search=SearchFilters(text="python", area=1),
+    )
+
+    result = bump_resume(page, resume, dry_run=True)
+
+    assert result.success is True
+    assert page.card_link_selectors == ["a[data-qa='resume-card-link-abc123']"]
+
+
+def test_bump_slow_hydration_late_card_still_bumps():
+    """#1076: карточка отрисовывается ПОЗЖЕ первого бюджета ожидания
+    (lazy-render, #858) — раньше это «удалено», теперь гидрация-гейт даёт
+    списку второй бюджет, карточка дожидается и bump идёт дальше."""
+    # render_after_waits=2: 1-й wait (карточка) таймаутится; 2-й wait
+    # (появление списка) застывает отрисовку; повторный wait карточки — ок.
+    page = FakeBumpPage(hint_present=False, button_present=True, render_after_waits=2)
+
+    result = bump_resume(page, _resume(), dry_run=True)
+
+    assert result.success is True
+    assert "удалено" not in result.reason
+
+
+def test_bump_list_never_renders_is_indeterminate_not_deleted():
+    """#1076: список так и не отрисовался (сеть/анти-бот) — честное «наличие
+    резюме не подтверждено», НЕ ложное «удалено»; acted=False (#163)."""
+    # render_after_waits=10: оба бюджета ожидания истекают впустую.
+    page = FakeBumpPage(
+        hint_present=False, button_present=True, card_present=False, render_after_waits=10
+    )
+
+    result = bump_resume(page, _resume(), dry_run=False)
+
+    assert result.success is False
+    assert "не подтверждено" in result.reason
+    assert "удалено" not in result.reason
+    assert result.acted is False
+    assert page.click_log == []
+
+
+def test_bump_real_absence_with_other_cards_is_refusal():
+    """#1076: список отрисован (чужие карточки есть), нашей нет —
+    подтверждённое отсутствие → отказ «не найдено в списке (удалено…)»."""
+    page = FakeBumpPage(
+        hint_present=False, button_present=True, card_present=False, other_cards_present=True
+    )
+
+    result = bump_resume(page, _resume(), dry_run=False)
+
+    assert result.success is False
+    assert "не найдено в списке" in result.reason
     assert result.acted is False

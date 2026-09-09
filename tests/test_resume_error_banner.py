@@ -35,6 +35,7 @@ from hhru_bot.config import ResumeConfig, SearchFilters
 from hhru_bot.resume_education import EducationPlan, edit_education_on_hh
 from hhru_bot.resume_position import open_position_form
 from hhru_bot.resume_sections import apply_plan as apply_sections_plan
+from hhru_bot.selector_groups.resume_list import RESUME_LIST_CARD_LINK_PREFIX
 from hhru_bot.skills import edit_skills_on_hh
 
 pytestmark = pytest.mark.integration
@@ -116,6 +117,19 @@ class _FakeContext:
         return [{"name": "hhtoken", "value": "fake"}]
 
 
+class _OtherCardsLocator:
+    """«В списке есть чужие карточки» для префиксного селектора списка (#1076).
+
+    bump после таймаута якоря карточки проверяет: отрисовался ли список
+    вообще (гидрация-гейт). На экране этого фейка список отрисован, карточки
+    недоступного резюме в нём нет — подтверждённое отсутствие, count()>0
+    достаточен для вердикта «не найдено в списке».
+    """
+
+    def count(self) -> int:
+        return 1
+
+
 class FakeBannerPage:
     """Page сбойного экрана: goto, пустая форма входа, баннер по селектору #972."""
 
@@ -146,6 +160,8 @@ class FakeBannerPage:
         # (легитимное отсутствие), а не AttributeError на незнакомом локаторе.
         if selector.startswith("a[data-qa='resume-card-link-"):
             return _MissingCardLinkLocator()
+        if selector == RESUME_LIST_CARD_LINK_PREFIX:
+            return _OtherCardsLocator()
         return _ClassTextLocator([])
 
 
