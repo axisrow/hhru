@@ -229,7 +229,20 @@ def navigate_to_response_form(
     обрывая цикл apply по остальным вакансиям/резюме (иначе один сбойный клик
     на первой же вакансии останавливает весь прогон — регрессия #163/#176).
     """
+    # #1069: шаг пайплайна в контекст дрейфа — ожидаемые селекторы формы
+    # отклика из реестра; при провале ниже по цепочке пакет дрейфа знает,
+    # что ожидалось, даже если сам селектор не передан в точку отказа.
+    from ..drift import note_drift_step
     from ..selector_groups import apply_form
+
+    note_drift_step(
+        "navigate_to_response_form",
+        expected=(
+            apply_form.APPLY_COVER_LETTER_TEXTAREA_FORM,
+            apply_form.APPLY_SUBMIT_BUTTON,
+        ),
+        screen="vacancy_response",
+    )
 
     apply_button = page.locator(vacancy_page.VACANCY_APPLY_BUTTON).first
     # #80/#179: потолок навигации на форму отклика — GOTO_TIMEOUT_MS (как у всех

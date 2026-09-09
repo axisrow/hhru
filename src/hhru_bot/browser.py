@@ -278,7 +278,16 @@ def labelled_field(page: Page, label: str) -> Locator:
     field = page.get_by_label(label, exact=True)
     count = field.count()
     if count != 1:
-        raise PageStateIndeterminate(f"поле {label!r} не найдено однозначно (совпадений: {count})")
+        # #1069: провал привязки по подписи — та же точка дрейфа DOM, что и
+        # data-qa; печатаем диагностический пакет ПЕРЕД пробросом (обёртка
+        # над fail-closed, семантика отказа не меняется).
+        from .drift import emit_drift_report
+
+        error = PageStateIndeterminate(
+            f"поле {label!r} не найдено однозначно (совпадений: {count})"
+        )
+        emit_drift_report(page, error, step=f"labelled_field({label!r})")
+        raise error
     return field
 
 
@@ -294,7 +303,14 @@ def optional_labelled_field(page: Page, label: str) -> Locator | None:
     if count == 0:
         return None
     if count != 1:
-        raise PageStateIndeterminate(f"поле {label!r} не найдено однозначно (совпадений: {count})")
+        # #1069: как в labelled_field — дрейф-диагностика перед пробросом.
+        from .drift import emit_drift_report
+
+        error = PageStateIndeterminate(
+            f"поле {label!r} не найдено однозначно (совпадений: {count})"
+        )
+        emit_drift_report(page, error, step=f"optional_labelled_field({label!r})")
+        raise error
     return field
 
 
@@ -347,12 +363,20 @@ def goto_hh(page: Page, url: str, *, ready_selector: str | None = None) -> None:
     сеть активной, networkidle может не сработать).
     """
     last_error: Exception | None = None
+    # #1069: провал именно ready_selector (не самого goto) — дрейф селектора
+    # на живой странице, кандидат на диагностический пакет дрейфа.
+    ready_selector_error: PlaywrightError | None = None
     for attempt in range(1, _GOTO_MAX_ATTEMPTS + 1):
         # #749: слушаем response ТОЛЬКО чтобы отличить "сервер ответил, но
         # тело не докачалось" (throttled-канал) от "goto не увидел ответ
         # вообще" (анти-бот/дрейф селектора/сеть недоступна) — сигнал уже
         # идущего page.goto(), НЕ отдельный сетевой запрос (запрет CLAUDE.md/#747).
         response_observed = False
+        # #1069 (review): сбрасываем на каждой итерации, иначе stale-ошибка
+        # ready_selector с ранней попытки описывала бы пакет дрейфа, когда
+        # финальная попытка провалилась уже в самом goto — диагностика и
+        # проброшенное исключение разошлись бы.
+        ready_selector_error = None
 
         def _on_response(response, _url=url) -> None:
             nonlocal response_observed
@@ -399,7 +423,16 @@ def goto_hh(page: Page, url: str, *, ready_selector: str | None = None) -> None:
                         raise ThrottledChannelDetected(str(exc)) from exc
                     raise
                 if ready_selector:
-                    page.locator(ready_selector).wait_for(timeout=GOTO_TIMEOUT_MS)
+                    try:
+                        page.locator(ready_selector).wait_for(timeout=GOTO_TIMEOUT_MS)
+                    except PlaywrightError as exc:
+                        # #1069: готовность страницы НЕ подтверждена на уже
+                        # докачанной странице — это дрейф селектора или
+                        # анти-бот (см. комментарий классификации выше).
+                        # Диагностика печатается один раз, после последней
+                        # попытки (ниже), а не на каждом retry.
+                        ready_selector_error = exc
+                        raise
                 return
             except (PlaywrightTimeoutError, PlaywrightError) as exc:
                 last_error = exc
@@ -421,6 +454,19 @@ def goto_hh(page: Page, url: str, *, ready_selector: str | None = None) -> None:
                     pass
     # Последняя попытка провалилась — пробрасываем, как обычный goto.
     assert last_error is not None
+    if ready_selector_error is not None:
+        # #1069: goto прошёл, страница живая, а её маркер готовности не
+        # найден — печатаем пакет дрейфа (селектор из реестра, census
+        # кандидатов, замаскированный фрагмент) перед пробросом. Семантика
+        # отказа не меняется: тот же тип, то же сообщение.
+        from .drift import emit_drift_report
+
+        emit_drift_report(
+            page,
+            ready_selector_error,
+            step=f"goto_hh(ready_selector={ready_selector!r})",
+            expected_selectors=(ready_selector,) if ready_selector else (),
+        )
     raise last_error
 
 
