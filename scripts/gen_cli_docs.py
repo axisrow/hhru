@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Генератор справочника CLI-команд в README из argparse.
+"""Генератор справочника CLI-команд в docs/cli-reference.md из argparse.
 
 Источник правды — код (cli.build_parser + команды/). Скрипт обходит дерево
 парсера и рендерит markdown-блок, который вставляется между маркерами::
@@ -8,9 +8,9 @@
     ...
     <!-- END CLI REF -->
 
-в README.md. CI гоняет ``gen_cli_docs.py --check`` и падает (``git diff``-стиль),
-если кто-то добавил флаг/команду, но забыл перегенерить доку — авто-синхронизация
-кода и документации по модели FastAPI/OpenAPI.
+в docs/cli-reference.md. CI гоняет ``gen_cli_docs.py --check`` и падает
+(``git diff``-стиль), если кто-то добавил флаг/команду, но забыл перегенерить
+доку — авто-синхронизация кода и документации по модели FastAPI/OpenAPI.
 
 Ноль внешних зависимостей — только stdlib. Импорт build_parser идёт через src/
 в sys.path (работает и из checkout без `pip install`).
@@ -23,7 +23,7 @@ import sys
 from pathlib import Path, PurePath
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-README = REPO_ROOT / "README.md"
+TARGET = REPO_ROOT / "docs" / "cli-reference.md"
 BEGIN = "<!-- BEGIN CLI REF -->"
 END = "<!-- END CLI REF -->"
 
@@ -124,37 +124,37 @@ def render() -> str:
     return "\n".join(lines)
 
 
-def _splice(readme: str, block: str) -> str:
-    start = readme.find(BEGIN)
-    end = readme.find(END)
+def _splice(target: str, block: str) -> str:
+    start = target.find(BEGIN)
+    end = target.find(END)
     if start == -1 or end == -1 or end < start:
-        raise SystemExit(f"README: маркеры {BEGIN}/{END} не найдены или перепутаны")
-    return readme[:start] + block + readme[end + len(END) :]
+        raise SystemExit(f"docs/cli-reference.md: маркеры {BEGIN}/{END} не найдены или перепутаны")
+    return target[:start] + block + target[end + len(END) :]
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Генератор CLI-справочника в README")
+    ap = argparse.ArgumentParser(description="Генератор CLI-справочника в docs/cli-reference.md")
     ap.add_argument(
         "--check",
         action="store_true",
-        help="Сравнить с README, выйти ненулём при рассинхроне",
+        help="Сравнить с docs/cli-reference.md, выйти ненулём при рассинхроне",
     )
-    ap.add_argument("--readme", default=str(README), help="Путь к README.md")
+    ap.add_argument("--target", default=str(TARGET), help="Путь к целевому .md")
     args = ap.parse_args(argv)
 
-    readme_path = Path(args.readme)
-    readme = readme_path.read_text(encoding="utf-8")
+    target_path = Path(args.target)
+    target = target_path.read_text(encoding="utf-8")
     block = render()
-    updated = _splice(readme, block)
+    updated = _splice(target, block)
     if args.check:
-        if updated != readme:
+        if updated != target:
             print("CLI REF рассинхронизирован с argparse. Перезапустите:", file=sys.stderr)
             print("  python3 scripts/gen_cli_docs.py", file=sys.stderr)
             return 1
         print("CLI REF синхронизирован.")
         return 0
-    readme_path.write_text(updated, encoding="utf-8")
-    print(f"CLI REF обновлён в {readme_path}")
+    target_path.write_text(updated, encoding="utf-8")
+    print(f"CLI REF обновлён в {target_path}")
     return 0
 
 
