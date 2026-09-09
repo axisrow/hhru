@@ -663,6 +663,40 @@ def test_fill_form_missing_submit_returns_reason_no_click():
     assert "кнопка отправки отклика не найдена" in result
 
 
+def test_fill_form_hidden_resume_warning_names_the_gate():
+    """Гейт «компаний-клиентов HeadHunter» (живой дамп
+    probe_137014905_form.html, 2026-09-09): форма отрисована (триггер
+    резюме, письмо, submit на месте), но опций резюме нет — вместо дропдауна
+    свёрнутое hidden-resume-warning. Причина отказа обязана называть гейт,
+    а не прятать его за безликим «не удалось однозначно выбрать резюме»."""
+    page = FakeStepsPage()
+    page.set_visible(apply_form.APPLY_RESUME_SELECT, True)  # опций нет: option_resume_ids=[]
+    page.set_visible(vacancy_page.VACANCY_HIDDEN_RESUME_WARNING, True)
+    page.set_visible(apply_form.APPLY_COVER_LETTER_TEXTAREA, True)
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    result = steps.fill_response_form(page, "RID", "письмо")
+
+    assert result is not None
+    assert "компании-клиента HeadHunter" in result
+    assert "hidden-resume-warning" in result
+    # Отказ ДО submit: отклик не отправлялся.
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 0
+
+
+def test_fill_form_resume_missing_without_warning_keeps_generic_reason():
+    """Опций резюме нет И предупреждения нет — прежний безликий отказ:
+    детект гейта не должен переименовывать неизвестные причины."""
+    page = FakeStepsPage()
+    page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
+    page.set_visible(apply_form.APPLY_COVER_LETTER_TEXTAREA, True)
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    result = steps.fill_response_form(page, "RID", "письмо")
+
+    assert result == "не удалось однозначно выбрать резюме 'RID' в форме отклика"
+
+
 def test_fill_form_submit_click_error_raises_uncertain_marker():
     """#176: Playwright упал в момент submit-клика (navigation timeout после
     POST, target closed) — POST отклика МОГ уйти. Это принципиально не обычный

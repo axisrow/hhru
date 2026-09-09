@@ -194,6 +194,25 @@ def _open_visibility_screen(page: Page, resume_id: str) -> str:
     return ""
 
 
+def read_current_visibility_mode(page: Page, resume) -> ResumeVisibilityResult:  # noqa: ANN001
+    """Read-only: активный режим видимости резюме, без кликов и Save.
+
+    Диагностический путь команды `resume-visibility` без флагов действия:
+    открыть экран и прочитать checked radio (`read_active_mode`, #901).
+    Ничего не мутирует — secure-portal wait не нужен, форма не трогается.
+    """
+    resume_id = resume.resume_id
+    reason = _open_visibility_screen(page, resume_id)
+    if reason:
+        return ResumeVisibilityResult(resume_id, False, reason)
+    mode = read_active_mode(page)
+    if mode is None:
+        return ResumeVisibilityResult(
+            resume_id, False, "активный режим не прочитан (checked radio не определён)"
+        )
+    return ResumeVisibilityResult(resume_id, True, mode)
+
+
 def _read_employer_search_results(page: Page) -> list[EmployerCandidate]:
     items = page.locator(RESUME_VISIBILITY_EMPLOYER_SEARCH_RESULT_ITEM_PREFIX)
     candidates: list[EmployerCandidate] = []
