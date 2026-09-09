@@ -508,7 +508,15 @@ def edit_skills_on_hh(
         # uncertain row here would only raise a has_unresolved_uncertain
         # retry barrier for edit_skills.
         try:
-            page.locator(resume_page.RESUME_PARTIAL_EDIT_CANCEL).click()
+            cancel = page.locator(resume_page.RESUME_PARTIAL_EDIT_CANCEL)
+            cancel.click()
+            # Review #1098: a bare cancel click is not proof the editor closed
+            # (hydration can silently swallow it, CLAUDE.md: "commit не значит
+            # отрисовано"). Without this wait the reason below would claim the
+            # form is closed while it may still be on screen. A timeout here
+            # changes nothing about the verdict — cancel does not mutate — but
+            # keeps the wording honest.
+            editor.wait_for(state="hidden", timeout=EDITOR_MOUNT_TIMEOUT_MS)
         except PlaywrightError as exc:
             return SkillsResult(
                 False,
