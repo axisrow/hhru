@@ -46,7 +46,11 @@ from .browser import (
 )
 from .config import ResumeConfig
 from .resume_state import ResumeState, is_published, parse_resume_state
-from .selector_groups.resume_page import RESUME_CREATION_NEXT
+from .selector_groups.resume_page import (
+    RESUME_CREATION_NEXT,
+    RESUME_WIZARD_SKIP_LATER,
+    RESUME_WIZARD_VALIDATION_ERRORS,
+)
 
 WIZARD_BASE_PATH = "/profile/resume"
 
@@ -190,16 +194,59 @@ def _open_screen(page: Page, resume_id: str, target: str) -> None:
         )
 
 
-def inspect_wizard_screen(page: Page, resume_id: str, target: str) -> str:
-    """Read-only сверка экрана для --dry-run: identity + ровно один NEXT."""
+def _screen_button_selector(target_action: str) -> str:
+    """Селектор мутирующей кнопки экрана: NEXT или skip-кнопка (#1091)."""
+    return RESUME_WIZARD_SKIP_LATER if target_action == "skip_empty" else RESUME_CREATION_NEXT
+
+
+def _read_validation_rejection(page: Page, target: str) -> str | None:
+    """Непустые form-helper-error на НЕпокинутом экране — доказанный отказ
+    валидации (#1091, тот же magritte-namespace и приём, что #958 в
+    experience.py: пустые контейнеры есть и на валидной форме, читается
+    именно непустой text). Отказ валидацией — определённая НЕмутация: экран
+    открыт, сабмит hh.ru не принял. None — читать нечего, вызывающий код
+    остаётся на fail-closed uncertain.
+
+    Граница допущения (ревью PR #1097): проверка не различает ошибки,
+    отрендеренные ЭТИМ отклонённым кликом, и ошибки, которые hh.ru мог
+    отдать SSR до клика (например, после неудачной попытки в другой
+    сессии). Допущение держится, потому что _open_screen делает свежий
+    goto перед каждым сабмитом, а пустая форма получила бы те же ошибки
+    повторно; если кейс проявится — симптом «честный failed» при реально
+    ушедшем клике, и тогда нужен маркер «ошибка свежая» (сравнение до/
+    после клика), не расширение селектора."""
+    try:
+        if urlsplit(page.url).path != _screen_route_path(target):
+            return None
+        helpers = page.locator(RESUME_WIZARD_VALIDATION_ERRORS)
+        count = helpers.count()
+        texts = []
+        for i in range(count):
+            text = helpers.nth(i).inner_text().strip()
+            if text:
+                texts.append(text)
+        if not texts:
+            return None
+        distinct = sorted(set(texts))
+        return f"{'; '.join(distinct)} (полей с ошибкой: {len(texts)})"
+    except PlaywrightError:
+        return None
+
+
+def inspect_wizard_screen(
+    page: Page, resume_id: str, target: str, *, skip_empty: bool = False
+) -> str:
+    """Read-only сверка экрана для --dry-run: identity + ровно одна кнопка."""
     _open_screen(page, resume_id, target)
-    button = page.locator(RESUME_CREATION_NEXT)
+    action = "skip_empty" if skip_empty else "next"
+    label_default = "Добавлю потом" if skip_empty else "Сохранить и продолжить"
+    button = page.locator(_screen_button_selector(action))
     count = button.count()
     if count != 1:
         raise WizardScreenRefused(
-            f"кнопка «Сохранить и продолжить» найдена {count} раз — экран не опознан"
+            f"кнопка «{label_default}» найдена {count} раз — экран не опознан"
         )
-    return (button.first.inner_text() or "").strip() or "Сохранить и продолжить"
+    return (button.first.inner_text() or "").strip() or label_default
 
 
 def submit_wizard_screen(
@@ -208,29 +255,40 @@ def submit_wizard_screen(
     target: str,
     *,
     before_click: Callable[[], None] | None = None,
+    skip_empty: bool = False,
 ) -> WizardAdvanceResult:
-    """Сабмит одного экрана кликом «Сохранить и продолжить».
+    """Сабмит одного экрана кликом «Сохранить и продолжить» — или, при
+    ``skip_empty=True``, кликом tertiary-кнопки «Добавлю потом» (#1091):
+    единственный способ закрыть ПУСТОЙ экран (hh.ru отклоняет NEXT валидацией
+    обязательных полей открытой пустой формы, census 2026-09-09). Пустоту
+    экрана код не угадывает — путь выбирает пользователь флагом
+    ``--skip-empty``, отсутствие кнопки = честный отказ до клика.
 
     Гидрационный гейт #991 стоит ДО ``before_click``: пока React не привязан
     (#858), клик теряется молча, и это честный failed («клик не отправлялся»),
     а не uncertain. Исход самого клика решает ``wait_for_url`` (уход с пути
     экрана): падение click() при состоявшемся переходе — не ошибка (#913),
-    а непереход в пределах бюджета — uncertain (#176). Для skill_levels
-    переход — необходимое, но не достаточное условие: успех дополнительно
-    доказывается identity-bound readback'ом флага (#1016: Save редактора
-    /resume/edit/{id}/skillsLevels флаг не двигает — сабмитом считается
-    только NEXT на dynamic_screen).
+    а непереход в пределах бюджета — uncertain (#176)… если экран сам не
+    объяснил отказ: непустой form-helper-error на непокинутом экране —
+    доказанный отказ валидации, честный failed без retry-барьера (#1091,
+    приём #958). Для skill_levels переход — необходимое, но не достаточное
+    условие: успех дополнительно доказывается identity-bound readback'ом
+    флага (#1016: Save редактора /resume/edit/{id}/skillsLevels флаг не
+    двигает — сабмитом считается только NEXT на dynamic_screen).
     """
     _open_screen(page, resume.resume_id, target)
-    button = page.locator(RESUME_CREATION_NEXT)
+    action = "skip_empty" if skip_empty else "next"
+    button_selector = _screen_button_selector(action)
+    label = "Добавлю потом" if skip_empty else "Сохранить и продолжить"
+    button = page.locator(button_selector)
     if button.count() != 1:
         raise WizardScreenRefused(
-            f"кнопка «Сохранить и продолжить» найдена {button.count()} раз — экран не опознан"
+            f"кнопка «{label}» найдена {button.count()} раз — экран не опознан"
         )
     dismiss_cookie_banner(page)
     hydrated = False
     for _attempt in range(2):
-        if wait_for_react_hydration(page, RESUME_CREATION_NEXT, timeout_ms=_HYDRATION_TIMEOUT_MS):
+        if wait_for_react_hydration(page, button_selector, timeout_ms=_HYDRATION_TIMEOUT_MS):
             hydrated = True
             break
     if not hydrated:
@@ -243,7 +301,7 @@ def submit_wizard_screen(
         return WizardAdvanceResult(
             target,
             False,
-            f"NEXT не гидратирован за {2 * _HYDRATION_TIMEOUT_MS // 1000}с — "
+            f"«{label}» не гидратирована за {2 * _HYDRATION_TIMEOUT_MS // 1000}с — "
             "клик не отправлялся (мутации нет)",
         )
     if before_click is not None:
@@ -266,6 +324,26 @@ def submit_wizard_screen(
             dump_page_html(page, "wizard_next_failure")
         except Exception:  # noqa: BLE001 — диагностика не должна заменять исходную ошибку
             pass
+        # #1091: прежде чем записывать uncertain (retry-барьер
+        # has_unresolved_uncertain), спрашиваем сам экран: непустой
+        # form-helper-error на непокинутом маршруте — hh.ru отклонил сабмит
+        # валидацией, экран не ушёл, мутации нет.acted=False по той же
+        # логике, что у #958 (ExperienceResult отказа без acted): «клик
+        # отправлялся» и «действие на hh.ru состоялось» — разные факты, и
+        # здесь второй доказанно не случился, поэтому ApplyProgress.finish
+        # классифицирует попытку как failed, а не uncertain. Проверка стоит
+        # ДО readback #1038: read_resume_state навигирует страницу с экрана,
+        # и guard «непокинутый маршрут» после него недостижим; валидационные
+        # ошибки и публикация несовместимы, так что порядок ничего не прячет.
+        # Не читается/пусто — остаёмся на fail-closed uncertain.
+        rejection = _read_validation_rejection(page, target)
+        if rejection is not None:
+            return WizardAdvanceResult(
+                target,
+                False,
+                f"hh.ru отклонил сабмит экрана «{target}» валидацией открытой формы — "
+                f"экран не закрыт, мутации нет (#1091): {rejection}",
+            )
         # #1038: на публикующем экране (#1012: experience — последний) hh.ru
         # завершает сабмит публикацией, и финальный редирект может не
         # наступать как navigation до 'commit' в бюджете (наблюдалось дважды

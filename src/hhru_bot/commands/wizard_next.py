@@ -38,6 +38,15 @@ def register(subparsers) -> None:
     p.add_argument("--dry-run", action="store_true", help="Проверить экран без клика")
     p.add_argument("--force", action="store_true", help="Разрешить боевой UI-клик")
     p.add_argument(
+        "--skip-empty",
+        action="store_true",
+        help=(
+            "Кликнуть «Добавлю потом» вместо «Сохранить и продолжить» — единственный "
+            "способ закрыть ПУСТОЙ экран: hh.ru отклоняет NEXT валидацией обязательных "
+            "полей открытой пустой формы (#1091)"
+        ),
+    )
+    p.add_argument(
         "--allow-auto-publish",
         action="store_true",
         help=(
@@ -116,11 +125,17 @@ def run(args: argparse.Namespace):
                     )
                     return True
                 if args.dry_run:
-                    label = resume_wizard.inspect_wizard_screen(page, resume.resume_id, target)
+                    label = resume_wizard.inspect_wizard_screen(
+                        page, resume.resume_id, target, skip_empty=args.skip_empty
+                    )
                     print(f"[DRY-RUN] Экран «{target}» открыт, «{label}» на месте; клика не было")
                     return False
                 result = resume_wizard.submit_wizard_screen(
-                    page, resume, target, before_click=attempt.before_click
+                    page,
+                    resume,
+                    target,
+                    before_click=attempt.before_click,
+                    skip_empty=args.skip_empty,
                 )
                 if attempt is not None:
                     attempt.finish(result)
