@@ -386,7 +386,13 @@ def _preselected_resume_confirmed_by_ssr(page: Page, resume_id: str) -> bool:
     ``responseImpossible`` не true — это не «доверие дефолту» (#33), а чтение
     фактического выбора из состояния страницы (паттерн verify_wizard_save).
     Ровно одна запись в statuses: страница формы описывает одну вакансию;
-    иное — дрейф, не подтверждение.
+    иное — дрейф, не подтверждение. Ровно ОДНО резюме в ``resumes`` с нашим
+    hash: ``resumes`` — реестр доступности аккаунта для вакансии (рядом в SSR
+    живут usedResumeIds/unusedResumeIds/hiddenResumeIds, т.е. записей может
+    быть несколько), а какое из них предвыбрано формой состояние не сообщает.
+    Принять «наш hash есть среди многих» — submit с резюме, выбранным hh.ru,
+    а не нашим (#33); multi-resume-запись — дрейф относительно наблюдавшегося
+    single-resume shape, не подтверждение.
     """
     from ..negotiations_probe import parse_initial_state
 
@@ -401,13 +407,13 @@ def _preselected_resume_confirmed_by_ssr(page: Page, resume_id: str) -> bool:
     if not isinstance(entry, dict) or entry.get("responseImpossible") is True:
         return False
     resumes = entry.get("resumes")
-    if not isinstance(resumes, dict) or not resumes:
+    if not isinstance(resumes, dict) or len(resumes) != 1:
         return False
-    return any(
-        isinstance(item, dict)
-        and item.get("hash") == resume_id
-        and item.get("isIncomplete") is not True
-        for item in resumes.values()
+    only = next(iter(resumes.values()))
+    return (
+        isinstance(only, dict)
+        and only.get("hash") == resume_id
+        and only.get("isIncomplete") is not True
     )
 
 

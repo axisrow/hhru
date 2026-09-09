@@ -668,21 +668,31 @@ def test_fill_form_missing_submit_returns_reason_no_click():
     assert "кнопка отправки отклика не найдена" in result
 
 
-def _ssr_form_state_html(resume_hash: str | None) -> str:
+def _ssr_form_state_html(resume_hash: str | None, *, multi_resume: bool = False) -> str:
     """SSR HH-Lux-InitialState формы отклика с предвыбранным резюме.
 
     Живой shape (дамп probe_137014905_form.html, 2026-09-09):
     applicantVacancyResponseStatuses[<vacancy>].resumes[<id>].hash +
     responseImpossible. resume_hash=None — состояние без нашего резюме.
+    multi_resume=True — наш hash среди ДВУХ резюме (реестр доступности
+    multi-resume аккаунта, не предвыбор). Числовые ключи резюме — очевидно
+    подставные: реальные id аккаунта в фикстурах запрещены (hex-страж
+    числовой id не ловит).
     """
+    resumes: dict
+    if multi_resume:
+        resumes = {
+            "111111111": {"hash": resume_hash, "isIncomplete": False},
+            "222222222": {"hash": "e" * 38, "isIncomplete": False},
+        }
+    elif resume_hash:
+        resumes = {"111111111": {"hash": resume_hash, "isIncomplete": False}}
+    else:
+        resumes = {"111111111": {"hash": "f" * 38, "isIncomplete": False}}
     entry: dict = {
         "hiddenResumeIds": [],
         "responseImpossible": False,
-        "resumes": (
-            {"286449044": {"hash": resume_hash, "isIncomplete": False}}
-            if resume_hash
-            else {"286449044": {"hash": "f" * 38, "isIncomplete": False}}
-        ),
+        "resumes": resumes,
     }
     state = {"applicantVacancyResponseStatuses": {"136173988": entry}}
     return (
@@ -718,6 +728,25 @@ def test_fill_form_rejects_preselection_of_foreign_resume():
     page = FakeStepsPage()
     page.content_html = _ssr_form_state_html("OTHER")
     page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
+    page.set_visible(apply_form.APPLY_COVER_LETTER_TEXTAREA, True)
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    result = steps.fill_response_form(page, "RID", "письмо")
+
+    assert result is not None
+    assert "не удалось однозначно выбрать резюме 'RID'" in result
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 0
+
+
+def test_fill_form_rejects_multi_resume_ssr_registry():
+    """``resumes`` в SSR — реестр доступности, не предвыбор: на multi-resume
+    аккаунте наш hash среди ДВУХ записей не доказывает, что форма предвыбрала
+    именно наше (рядом в SSR живут usedResumeIds/unusedResumeIds). Принять
+    такой реестр — submit с резюме, выбранным hh.ru (#33); ровно одна запись
+    с нашим hash — единственный принимаемый shape."""
+    page = FakeStepsPage()
+    page.content_html = _ssr_form_state_html("RID", multi_resume=True)
+    page.set_visible(apply_form.APPLY_RESUME_SELECT, True)  # опций нет: option_resume_ids=[]
     page.set_visible(apply_form.APPLY_COVER_LETTER_TEXTAREA, True)
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
 
