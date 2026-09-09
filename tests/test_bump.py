@@ -149,6 +149,8 @@ class _FakeAnyCardLink:
         return self
 
     def count(self) -> int:
+        if self._page._ssr_anchors:
+            return 1
         return 1 if self._page._list_visible else 0
 
     def wait_for(self, *, state: str = "visible", timeout: float = 0) -> None:  # noqa: ARG002
@@ -180,6 +182,7 @@ class FakeBumpPage:
         button_click_error: bool = False,
         render_after_waits: int = 0,
         other_cards_present: bool = True,
+        ssr_anchors: bool = False,
     ):
         self.goto_calls: list[str] = []
         self.click_log: list[str] = []
@@ -192,6 +195,9 @@ class FakeBumpPage:
         self._button_click_error = button_click_error
         self._render_after_waits = render_after_waits
         self._other_cards_present = other_cards_present
+        # #1076 (ревью PR #1079): SSR-якоря списка есть в DOM ещё до
+        # гидрации — count() > 0 при не-видимом списке.
+        self._ssr_anchors = ssr_anchors
         self._wait_calls = 0
 
     @property
@@ -387,7 +393,8 @@ def test_bump_query_suffix_in_resume_url_still_finds_card():
     """#1076 (живой прогон 2026-09-09): resume_url, скопированный из браузера
     с query-суффиксом (?source=…), раньше давал resume_id вида ``<hash>?…``,
     точный матч data-qa не совпадал и живое резюме вечно репортилось
-    «удалено». Сравнение — по path-идентификатору: суффикс отрезается."""
+    «удалено». Нормализация — в config._resume_id_from_url (единый источник
+    для селекторов/истории/edit-роутов), bump видит уже чистый id."""
     page = FakeBumpPage(hint_present=False, button_present=True)
     resume = ResumeConfig(
         id="r1",
@@ -460,3 +467,21 @@ def test_bump_real_absence_with_other_cards_is_refusal():
     assert result.success is False
     assert "не найдено в списке" in result.reason
     assert result.acted is False
+
+
+def test_bump_ssr_anchors_pre_hydration_do_not_falsely_delete():
+    """#1076 (ревью PR #1079): SSR-разметка содержит чужие якоря списка ещё
+    до гидрации (count() > 0 при не-видимом списке), наш якорь появляется
+    только после клиентского рендера. Вердикт по count() дал бы ложное
+    «удалено» в окне SSR→гидрация; вердикт — только по ВИДИМОМУ списку и
+    повторному поиску карточки."""
+    # SSR-якоря в DOM сразу; карточка нашего резюме отрисовывается на
+    # 2-м ожидании (в течение ожидания видимости списка).
+    page = FakeBumpPage(
+        hint_present=False, button_present=True, render_after_waits=2, ssr_anchors=True
+    )
+
+    result = bump_resume(page, _resume(), dry_run=True)
+
+    assert result.success is True
+    assert "удалено" not in result.reason

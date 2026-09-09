@@ -29,22 +29,6 @@ BUMP_HINT_TIMEOUT_MS = 1_500
 RESUMES_LIST_URL = f"{HH_BASE_URL}/applicant/resumes"
 
 
-def _normalized_resume_id(resume_id: str) -> str:
-    """resume_id без query/fragment — идентификатор для матчинга карточки.
-
-    #1076: hh.ru навешивает на URL резюме query-суффиксы (``?hhtmFrom=…``,
-    ``?source=…`` — живой факт, лог 2026-09-03 в experience.py:1640).
-    Скопированный из браузера ``resume_url`` с суффиксом даёт
-    ``ResumeConfig.resume_id`` вида ``<hash>?source=…``, и точный матч
-    ``data-qa='resume-card-link-<id>'`` никогда не совпадает — вечный ложный
-    «резюме не найдено (удалено)» для живого резюме (подтверждено живым
-    read-only прогоном 2026-09-09: сухой ``?source=`` в resume_url живого
-    резюме → ``[FAIL] … (удалено или недоступно)``, без суффикса → ``[OK]``).
-    Сравнение идёт по path-идентификатору: query и fragment отрезаются.
-    """
-    return resume_id.split("?", 1)[0].split("#", 1)[0]
-
-
 def _classify_card_timeout(page: Page, card_link: Locator) -> str:
     """Вердикт после таймаута ожидания якоря карточки; ``""`` — карточка нашлась.
 
@@ -58,12 +42,18 @@ def _classify_card_timeout(page: Page, card_link: Locator) -> str:
     какую сторону, ранний выход до действия: acted=False по #163).
     """
     any_card = page.locator(RESUME_LIST_CARD_LINK_PREFIX)
-    if any_card.count() > 0:
-        return "резюме не найдено в списке /applicant/resumes (удалено или недоступно)"
     try:
+        # Гидрация-гейт (#858, ревью PR #1079): count() — срез DOM, а не
+        # видимости: SSR-разметка содержит якоря resume-card-link-* ещё ДО
+        # гидрации, при этом якорь НАШЕГО резюме может появиться только после
+        # клиентского рендера. Поэтому вердикт «удалено» выносится не по
+        # count(), а после подтверждённо ВИДИМОГО списка и повторного поиска
+        # карточки — тот же приём, что ниже для не отрисовавшегося списка.
         any_card.first.wait_for(state="visible", timeout=BUMP_TIMEOUT_MS)
         card_link.first.wait_for(state="visible", timeout=BUMP_TIMEOUT_MS)
     except PlaywrightTimeoutError:
+        if any_card.count() > 0:
+            return "резюме не найдено в списке /applicant/resumes (удалено или недоступно)"
         return (
             "список резюме не отрисовался за "
             f"{BUMP_TIMEOUT_MS // 1000} с (гидрация/медленная загрузка) — наличие "
@@ -112,9 +102,10 @@ def bump_resume(page: Page, resume: ResumeConfig, dry_run: bool) -> BumpResult:
             False,
             "Сессия недействительна: страница содержит форму входа. Выполните login.",
         )
-    card_link = page.locator(
-        RESUME_CARD_LINK_TEMPLATE.format(resume_id=_normalized_resume_id(resume.resume_id))
-    )
+    # resume_id уже нормализован на уровне ResumeConfig (#1076: query/fragment
+    # отрезает config._resume_id_from_url) — единый источник для селекторов,
+    # истории и edit-роутов, здесь локального разбора нет.
+    card_link = page.locator(RESUME_CARD_LINK_TEMPLATE.format(resume_id=resume.resume_id))
     try:
         card_link.first.wait_for(state="visible", timeout=BUMP_TIMEOUT_MS)
     except PlaywrightTimeoutError:
