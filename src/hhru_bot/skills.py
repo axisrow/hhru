@@ -59,12 +59,25 @@ def _display_level_label(level: str) -> str | None:
 # #801: the skill chip input is an autocomplete combobox. A blind fill+commit
 # for the next skill can race the browser's handling of the previous one and
 # concatenate two skill names into a single chip instead of creating two
-# separate chips. CHIP_COMMIT_TIMEOUT_MS bounds how long each iteration waits
-# for a positive signal (an exact-text chip appeared AND the input cleared)
-# before moving on; CHIP_COMMIT_POLL_MS is the poll interval, matching the
-# poll-loop pattern already used for a similar input-clear wait in
-# resume_position.py. #826: "commit" here is a click on the autocomplete
-# option, not Enter — see RESUME_SKILLS_SUGGEST_USER_INPUT below.
+# separate chips. The positive signal is a chip whose text exactly equals this
+# skill's name AND the input cleared back to empty. #826: "commit" here is a
+# click on the autocomplete option, not Enter — see
+# RESUME_SKILLS_SUGGEST_USER_INPUT below.
+#
+# #1092: the chip appearing is a React screen render, not an instant DOM
+# effect of the click — on a freshly-copied draft resume the first chip
+# regularly took longer than the old flat 5s poll budget, which aborted input
+# on the very first skill. Following the CLAUDE.md pattern "commit не значит
+# отрисовано", the chip is now awaited with an explicit
+# wait_for(state="visible") at a screen-calibrated budget (same scale as
+# SKILLS_LEVELS_STEP_TIMEOUT_MS above, and confirmed by a live census of the
+# draft's keySkills editor: its DOM is identical to the published resume's
+# form — chips-trigger-input/chips-trigger-chip-*/resume-partial-edit-* — so
+# the draft-vs-published shape hypothesis from the issue is NOT confirmed and
+# the failure is a hydration/timing race, not a selector mismatch).
+CHIP_RENDER_TIMEOUT_MS = 15_000
+# The input clearing after the chip lands is a local combobox state change
+# (no server round-trip observed); a short bounded poll is enough for it.
 CHIP_COMMIT_TIMEOUT_MS = 5_000
 CHIP_COMMIT_POLL_MS = 100
 
@@ -421,6 +434,7 @@ def edit_skills_on_hh(
             False, existing, skills, reason="поле ввода навыка не найдено однозначно"
         )
     chips = page.locator(resume_page.RESUME_SKILLS_CHIP)
+    stalled_reason: str | None = None
     for skill in additions:
         input_.fill(skill.name)
         # #826: pressing Enter never commits a chip in this combobox — confirmed
@@ -443,37 +457,71 @@ def edit_skills_on_hh(
             .first
         )
         try:
-            suggestion.wait_for(state="visible", timeout=CHIP_COMMIT_TIMEOUT_MS)
+            suggestion.wait_for(state="visible", timeout=CHIP_RENDER_TIMEOUT_MS)
             suggestion.click()
         except PlaywrightError:
             # No positive signal that the click landed — do not retry blindly.
-            # The poll below still runs and, finding no chip, breaks and lets
-            # the existing post-save Counter check fail-closed on the result
-            # (same principle as the timeout branch below).
+            # The chip wait below then times out, stops further input and
+            # cancels the form before save (fail-closed, zero mutation).
             pass
-        # #801: wait for a positive commit signal before the next iteration's
-        # fill() — a blind fill+click pair for consecutive skills can race the
-        # combobox's autocomplete handling and concatenate two names into one
-        # chip (e.g. "FastAPI" + "LangChain" -> "FastAPILangChain"). Checking
-        # only that the chip count grew would not catch this: a merged chip
-        # still increments the count by one. The positive signal is a chip
-        # whose text exactly equals this skill's name AND the input cleared
-        # back to empty — a timeout does not roll back (the click may already
-        # have reached hh.ru), so it stops issuing further input and lets the
-        # existing post-save Counter check fail-closed on the resulting
-        # mismatch (same principle as "commit не значит отрисовано" elsewhere
-        # in this codebase).
+        # #801/#1092: wait for a positive commit signal before the next
+        # iteration's fill() — a blind fill+click pair for consecutive skills
+        # can race the combobox's autocomplete handling and concatenate two
+        # names into one chip (e.g. "FastAPI" + "LangChain" ->
+        # "FastAPILangChain"). Checking only that the chip count grew would
+        # not catch this: a merged chip still increments the count by one.
+        # The positive signal is a chip whose text exactly equals this
+        # skill's name AND the input cleared back to empty. The chip is a
+        # React render that can lag the click (CLAUDE.md: "commit не значит
+        # отрисовано"), so it gets an explicit wait_for(visible) at the
+        # calibrated screen budget instead of the old flat 5s poll.
         expected_chip = chips.filter(has_text=re.compile(rf"^{re.escape(skill.name)}$"))
-        deadline = time.monotonic() + CHIP_COMMIT_TIMEOUT_MS / 1000
-        while time.monotonic() < deadline and (expected_chip.count() == 0 or input_.input_value()):
-            page.wait_for_timeout(CHIP_COMMIT_POLL_MS)
-        if expected_chip.count() == 0 or input_.input_value():
-            logger.warning(
-                "чип навыка %r не подтверждён за %dмс, дальнейший ввод остановлен",
-                skill.name,
-                CHIP_COMMIT_TIMEOUT_MS,
+        try:
+            expected_chip.first.wait_for(state="visible", timeout=CHIP_RENDER_TIMEOUT_MS)
+        except PlaywrightError:
+            stalled_reason = (
+                f"ввод навыков остановлен: чип {skill.name!r} не подтверждён за "
+                f"{CHIP_RENDER_TIMEOUT_MS}мс"
             )
+            logger.warning("%s, дальнейший ввод остановлен", stalled_reason)
             break
+        # The input clearing is a local combobox state change — a short
+        # bounded poll suffices (#801: a blind fill for the next skill can
+        # otherwise race the previous chip's handling and merge two names).
+        deadline = time.monotonic() + CHIP_COMMIT_TIMEOUT_MS / 1000
+        while time.monotonic() < deadline and input_.input_value():
+            page.wait_for_timeout(CHIP_COMMIT_POLL_MS)
+        if input_.input_value():
+            stalled_reason = (
+                f"ввод навыков остановлен: поле ввода не очистилось после чипа "
+                f"{skill.name!r} за {CHIP_COMMIT_TIMEOUT_MS}мс"
+            )
+            logger.warning("%s", stalled_reason)
+            break
+    if stalled_reason is not None:
+        # #1092: input stopped BEFORE the save click, so nothing reached
+        # hh.ru — the partially typed chips exist only in the editor's local
+        # state. Close the form with the cancel button (the same interaction
+        # dry-run already performs, no mutation on hh.ru) and report a plain
+        # failed result with acted=False, NOT uncertain: save was never
+        # clicked, so there is no mutation to be uncertain about, and an
+        # uncertain row here would only raise a has_unresolved_uncertain
+        # retry barrier for edit_skills.
+        try:
+            page.locator(resume_page.RESUME_PARTIAL_EDIT_CANCEL).click()
+        except PlaywrightError as exc:
+            return SkillsResult(
+                False,
+                existing,
+                skills,
+                reason=f"{stalled_reason}; отмена формы без сохранения не подтверждена: {exc}",
+            )
+        return SkillsResult(
+            False,
+            existing,
+            skills,
+            reason=f"{stalled_reason}; форма закрыта без сохранения (мутации не было)",
+        )
     save = page.locator(resume_page.RESUME_PARTIAL_EDIT_SAVE)
     if save.count() != 1:
         return SkillsResult(
