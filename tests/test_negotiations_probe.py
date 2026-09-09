@@ -341,3 +341,40 @@ def test_paginated_topic_refs_raises_not_authenticated_on_login_form(monkeypatch
 def test_chat_url_matches_hh_open_chat_route():
     assert chat_url("456") == "https://chatik.hh.ru/chat/456"
     assert chat_url("456", "https://chatik.example/") == "https://chatik.example/chat/456"
+
+
+def test_paginated_topic_refs_collects_discard_vacancy_ids(monkeypatch):
+    """#1104, слой 2: out-параметр собирает vacancy_id карточек с бейджем
+    «Отказ» из того же page.content(), что и SSR topicList, — ни одного
+    дополнительного перехода. None (по умолчанию) — прежнее поведение
+    пробников/robot_reply.
+    """
+    html = """
+    <template id="HH-Lux-InitialState">
+      {"applicantNegotiations":{"topicList":[
+        {"id":123,"chatId":456,"vacancyId":111},
+        {"id":124,"chatId":457,"vacancyId":222}
+      ]}}
+    </template>
+    <div data-qa="negotiations-item">
+      <span data-qa="negotiations-tag negotiations-item-discard">Отказ</span>
+      <a href="/vacancy/111?hhtmFrom=negotiation_list">Dev</a>
+    </div>
+    <div data-qa="negotiations-item">
+      <span data-qa="negotiations-tag">Просмотрен</span>
+      <a href="/vacancy/222?hhtmFrom=negotiation_list">PM</a>
+    </div>
+    """
+
+    class Page:
+        def content(self):
+            return html
+
+    monkeypatch.setattr("hhru_bot.browser.goto_hh", lambda page, url: None)
+    monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr("hhru_bot.browser.has_login_form", lambda _page: False)
+
+    discards: set[str] = set()
+    refs = paginated_topic_refs(Page(), max_pages=1, discard_vacancy_ids=discards)
+    assert [(r.topic_id, r.chat_id) for r in refs] == [("123", "456"), ("124", "457")]
+    assert discards == {"111"}

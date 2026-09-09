@@ -21,6 +21,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
+from html import unescape
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
@@ -38,6 +39,16 @@ from .selector_groups import negotiations as ns
 logger = logging.getLogger("hhru_bot.responses")
 
 NEGOTIATIONS_URL = f"{HH_BASE_URL}/applicant/negotiations"
+
+# Карточка переписки в SSR/отрисованном html списка: границы среза задает
+# ТОЧНОЕ data-qa контейнера (якорь с закрывающей кавычкой — иначе матчился бы
+# и negotiations-item-vacancy). Внутри среза: бейдж статуса (префикс
+# negotiations-tag) и ссылка /vacancy/<id> — census #1104 подтвердил порядок
+# и границы на живом html (бейдж и ссылка внутри одного среза, 20 карточек).
+_NEGOTIATION_CARD_RE = re.compile(r'data-qa=["\']negotiations-item["\']')
+_CARD_VACANCY_HREF_RE = re.compile(r'href=["\'][^"\']*?/vacancy/(\d+)')
+_CARD_BADGE_RE = re.compile(r'data-qa=["\']negotiations-tag[^"\']*["\'][^>]*>(.*?)</span>', re.DOTALL)
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 # Ждём появления карточек на JS-рендеренной странице. Достаточно для типичного
 # рендера hh.ru; если за это время карточек нет — считаем страницу пустой/селектор
@@ -306,6 +317,66 @@ def parse_response_card(item) -> ResponseItem | None:
         date=date,
         raw_status=raw_status,
     )
+
+
+def discard_vacancy_ids_from_html(html: str) -> set[str]:
+    """Vacancy ids, чья карточка переговоров несёт бейдж «Отказ» (``discard``).
+
+    Слой 2 гейта «не отвечать отказавшим» (#1104): после отказа hh.ru
+    закрывает переписку — композер ответа не отрисуется никогда, а попытка
+    письма отказавшему недопустима. Карточки серверно отрисованы в том же
+    html страницы ``?page=N``, который paginated-обход negotiations_probe и
+    так читает ради SSR ``topicList``, поэтому сбор отказов не стоит ни
+    одного дополнительного перехода.
+
+    Ключ — vacancy_id из ссылки карточки: кандидаты reply-employers keyed
+    by vacancy_id, чат-привязки в карточке нет (census #1104 — chatik-ссылок
+    и select-чекбоксов в карточке нет). Одна вакансия с несколькими
+    переписками при отказе в одной блокируется целиком — консервативно и
+    допустимо: писать в чат отказавшей вакансии всё равно нечего.
+
+    Бейдж читается ТЕКСТОМ через :func:`normalize_status` — тот же источник
+    правды, что и у fetch_responses; data-qa-суффикс
+    ``negotiations-item-discard`` на живом DOM сегодня совпадает с текстом,
+    но контракт держим на тексте (data-qa-имя ≠ подпись на экране).
+
+    Fail-open: дрейф разметки даёт пустой/частичный set и
+    ``logger.warning``, никогда не исключение — парсер не должен ломать
+    walk; страховка пропущенного отказа — слой 3
+    (:func:`negotiations_chat.is_dialogue_closed` перед отправкой).
+    """
+    matches = list(_NEGOTIATION_CARD_RE.finditer(html))
+    if not matches:
+        # Тихо выходим на страницах, где карточек и не должно быть: пустой
+        # хвост пагинации (одна/несколько тем, SSR topicList пуст) всё равно
+        # рендерит блок «Вам подойдут эти вакансии» с /vacancy/-ссылками —
+        # потому отсутствие КАРТОЧЕК само по себе не дрейф. Warning только
+        # когда SSR утверждает непустой список, а ни одной карточки не
+        # отрисовано (дрейф разметки; #1104, ложный Positive на пустом хвосте
+        # первого прогона 2026-09-10).
+        if "applicantNegotiations" in html and '"topicList":[{' in html:
+            logger.warning(
+                "negotiations: SSR topicList непуст, но карточки переписок "
+                "не распознаны в html — гейт бейджей отказов деградировал "
+                "(дрейф разметки?)"
+            )
+        return set()
+
+    discards: set[str] = set()
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(html)
+        card = html[match.end() : end]
+        vacancy_match = _CARD_VACANCY_HREF_RE.search(card)
+        if not vacancy_match:
+            continue
+        badge_match = _CARD_BADGE_RE.search(card)
+        if not badge_match:
+            continue
+        badge_text = _HTML_TAG_RE.sub(" ", badge_match.group(1))
+        badge_text = unescape(re.sub(r"\s+", " ", badge_text)).strip()
+        if normalize_status(badge_text) == ResponseStatus.DISCARD:
+            discards.add(vacancy_match.group(1))
+    return discards
 
 
 def _confirmed_no_new_topics(page: Page, seen_topic_ids: set[str], *, strict: bool) -> bool:

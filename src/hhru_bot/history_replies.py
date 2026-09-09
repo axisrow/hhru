@@ -348,6 +348,15 @@ class RepliesMixin:
     def reply_candidates(self, limit: int | None = None) -> list[dict]:
         """Return account-wide chat candidates using only local history.
 
+        Чаты с бейджем «Отказ» (``responses.status == 'discard'``) исключаются
+        здесь же (#1104): после отказа hh.ru закрывает переписку — композер
+        ответа не отрисуется никогда, а попытка письма отказавшему
+        недопустима. Тот же принцип, что в :meth:`follow_up_candidates`
+        («invitation/discard сюда не попадают»); свежесть статуса здесь не
+        критична — отказ, случившийся после последнего responses-обхода,
+        перехватывают гейт бейджей при планировании и
+        :func:`negotiations_chat.is_dialogue_closed` перед отправкой.
+
         The live message marker is intentionally not available here.  It is
         read only after a candidate chat is opened, where ``has_replied`` can
         perform the final duplicate check.
@@ -358,6 +367,7 @@ class RepliesMixin:
               FROM responses AS r
               LEFT JOIN vacancies_seen AS v ON v.vacancy_id = r.vacancy_id
              WHERE r.topic IS NOT NULL
+               AND r.status != 'discard'
              GROUP BY r.vacancy_id, r.topic
              ORDER BY MAX(r.last_seen_at) DESC, r.id DESC
         """

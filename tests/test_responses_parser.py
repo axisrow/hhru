@@ -18,6 +18,7 @@ from hhru_bot.responses import (
     ResponseStatus,
     _extract_topic,
     _extract_vacancy_id,
+    discard_vacancy_ids_from_html,
     normalize_status,
     parse_response_card,
 )
@@ -413,3 +414,48 @@ def test_response_item_dataclass_fields():
     assert item.topic is None
     assert item.date == ""
     assert item.raw_status == ""
+
+
+# --- гейт «не отвечать отказавшим», слой 2 (#1104) ---------------------------
+
+
+def test_discard_vacancy_ids_from_html_parses_badge_cards():
+    """Карточка с бейджем «Отказ» даёт vacancy_id; остальные статусы — нет.
+
+    Границы среза — точное data-qa="negotiations-item" (якорь с кавычкой, чтобы
+    negotiations-item-vacancy не матчился как контейнер). Бейдж читается
+    текстом через normalize_status — тот же источник правды, что и
+    fetch_responses; suффикс negotiations-item-discard в живом DOM сегодня
+    совпадает с текстом, но контрактом не является.
+    """
+    html = """
+    <li>
+      <div data-qa="negotiations-item">
+        <span data-qa="negotiations-tag negotiations-item-discard">Отказ</span>
+        <a href="/vacancy/111?hhtmFrom=negotiation_list">Dev</a>
+      </div>
+      <div data-qa="negotiations-item">
+        <span data-qa="negotiations-tag">Просмотрен</span>
+        <a href="/vacancy/222?hhtmFrom=negotiation_list">PM</a>
+      </div>
+      <div data-qa="negotiations-item">
+        <span data-qa="negotiations-tag">Приглашение</span>
+        <a href="/vacancy/333?hhtmFrom=negotiation_list">AIDev</a>
+      </div>
+      <div data-qa="negotiations-item">
+        <span data-qa="negotiations-tag">Отказ</span>
+      </div>
+    </li>
+    """
+    discards = discard_vacancy_ids_from_html(html)
+    assert discards == {"111"}
+
+
+def test_discard_vacancy_ids_from_html_fail_open_on_drift():
+    """Дрейф разметки (карточек нет) — пустой set, не исключение.
+
+    Гейт не должен ломать walk; страховка пропущенного отказа — слой 3
+    (is_dialogue_closed перед отправкой).
+    """
+    assert discard_vacancy_ids_from_html("<html><body>no cards</body></html>") == set()
+    assert discard_vacancy_ids_from_html("") == set()

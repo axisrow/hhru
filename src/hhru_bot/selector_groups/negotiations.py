@@ -109,3 +109,12 @@ QUICK_REPLY_BUTTON = "button[class*='magritte-button_mode-secondary']"
 # прежний плоский chatik-chat-message-input на живом DOM не совпадает.
 CHAT_MESSAGE_INPUT = _selector("negotiations.CHAT_MESSAGE_INPUT")
 CHAT_MESSAGE_SEND = _selector("negotiations.CHAT_MESSAGE_SEND")
+
+# Маркер закрытого диалога (#1104, census живых чатов 2026-09-09/10): после
+# отказа работодателя hh.ru скрывает композер и рендерит предупреждение
+# «Переписка будет доступна после приглашения работодателя». data-qa у
+# предупреждения нет — маркер ПРЕФИКС имени CSS-модуля
+# not-allowed-warning--<hash> (тот же паттерн, что QUICK_REPLY_*). Живой
+# контроль: закрытый чат — 1, живой чат с композером (Интайм Девелоп) — 0.
+# Элемент живёт внутри контейнера сообщений диалога, не в списке чатов.
+DIALOGUE_CLOSED_NOTICE = "div[class*='not-allowed-warning--']"

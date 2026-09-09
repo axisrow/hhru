@@ -117,6 +117,10 @@ def _patch_common(
     # #710: pre-click message count for wait_reply_confirmation's min_count
     # guard (--follow-up only) — the lightweight _Page fake has no locator().
     monkeypatch.setattr("hhru_bot.negotiations_chat.count_visible_messages", lambda page: 0)
+    # #1104: слой 3 гейта «не отвечать отказавшим» — маркер закрытого диалога
+    # читается locator'ом с той же страницы чата; по умолчанию диалог открыт
+    # (кейсы с закрытым диалогом перекрывают заглушку явно).
+    monkeypatch.setattr("hhru_bot.negotiations_chat.is_dialogue_closed", lambda page: False)
     monkeypatch.setattr(
         "hhru_bot.negotiations_chat.wait_reply_confirmation", lambda page, **k: confirmation
     )
@@ -234,7 +238,7 @@ def test_indeterminate_pagination_exits_cleanly(tmp_path, monkeypatch, capsys):
     _seed_response(history, vacancy_id="1", topic="tp1")
     _patch_common(monkeypatch, history)
 
-    def _boom(page, max_pages=5):
+    def _boom(page, max_pages=5, discard_vacancy_ids=None):
         raise ResponsesIndeterminate("пагинация не подтверждена")
 
     monkeypatch.setattr("hhru_bot.negotiations_probe.paginated_topic_refs", _boom)
@@ -1256,3 +1260,104 @@ def test_follow_up_successful_send_records_reply_and_action(tmp_path, monkeypatc
     assert reply_row["status"] == "success"
     assert reply_row["inbound_marker"].startswith("follow_up:")
     assert tuple(action_row) == ("reply", "success")
+
+
+# --- гейт «не отвечать отказавшим» (#1104) -----------------------------------
+
+
+def test_reply_candidates_exclude_discard_status(tmp_path):
+    """Слой 1: чаты с бейджем «Отказ» не попадают в очередь писем.
+
+    После отказа hh.ru закрывает переписку (композер не отрисуется никогда),
+    поэтому attempt в принципе недопустим — фильтр в SQL, тот же принцип, что
+    у follow_up_candidates («invitation/discard сюда не попадают»).
+    """
+    history = History(tmp_path / "history.db")
+    _seed_response(history, vacancy_id="1", topic="tp1")
+    history.upsert_response("2", "Acme", "discard", None, topic="tp2")
+    history.upsert_vacancy_seen("2", "q", title="Discarded dev")
+
+    candidates = history.reply_candidates()
+
+    assert [c["vacancy_id"] for c in candidates] == ["1"]
+
+
+def _discard_card_html(vacancy_id: str) -> str:
+    return (
+        "<li><div data-qa=\"negotiations-item\">"
+        "<header><span data-qa=\"negotiations-tag negotiations-item-discard\">Отказ</span></header>"
+        f"<a href=\"/vacancy/{vacancy_id}?hhtmFrom=negotiation_list\">"
+        "<span data-qa=\"negotiations-item-vacancy\">Python dev</span></a>"
+        "</div></li>"
+    )
+
+
+class _CardPage:
+    """Page stub: content() отдаёт html списка с одной discard-карточкой."""
+
+    def __init__(self, html: str):
+        self._html = html
+
+    def content(self):
+        return self._html
+
+
+def test_discard_badge_from_walk_skips_candidate_before_chat_read(tmp_path, monkeypatch, capsys):
+    """Слой 2: бейдж «Отказ», собранный из того же SSR-прохода, скипает
+    кандидата ДО read_chat — заведомо закрытый чат не стоит ни одного
+    браузерного чтения."""
+    history = History(tmp_path / "history.db")
+    _seed_response(history, vacancy_id="1", topic="tp1")
+
+    def _reader(page, topic, refs):
+        raise AssertionError("read_chat must not be called for a discarded vacancy")
+
+    _patch_common(
+        monkeypatch,
+        history,
+        page=_CardPage(_discard_card_html("1")),
+        refs=[TopicRef("tp1", "c1", None, "96223331")],
+        reader=_reader,
+    )
+
+    command.run(_args(force=True))
+    out = capsys.readouterr().out
+    assert "[skip]" in out and "работодатель отказал" in out
+    with history._connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM replies").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM actions").fetchone()[0] == 0
+
+
+def test_dialogue_closed_marker_skips_before_send(tmp_path, monkeypatch, capsys):
+    """Слой 3: маркер закрытого диалога на открытом чате — skip без failed-строки.
+
+    hh.ru после отказа скрывает композер; это не дрейф селектора (который
+    должен остаться громким NoReplyForm-failed), а честное состояние диалога,
+    поэтому попытки письма не должно быть вовсе и в журнал оно идёт как skip.
+    """
+    history = History(tmp_path / "history.db")
+    _seed_response(history, vacancy_id="1", topic="tp1")
+
+    chat = ChatMessage(author="employer", inbound_marker="m1")
+    sent = {"called": False}
+
+    def _send(page, text):
+        sent["called"] = True
+
+    _patch_common(
+        monkeypatch,
+        history,
+        refs=[TopicRef("tp1", "c1", None, "96223331")],
+        reader=lambda page, topic, refs: chat,
+        send=_send,
+    )
+    # После _patch_common: перекрываем дефолтную заглушку (диалог открыт).
+    monkeypatch.setattr("hhru_bot.negotiations_chat.is_dialogue_closed", lambda page: True)
+
+    command.run(_args(force=True))
+    out = capsys.readouterr().out
+    assert "[skip]" in out and "закрыл диалог" in out
+    assert sent["called"] is False
+    with history._connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM replies").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM actions").fetchone()[0] == 0
