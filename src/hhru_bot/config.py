@@ -20,10 +20,28 @@ _RESUME_PLACEHOLDER_RE = re.compile(r"^(?:X{8,}|Y{8,})$")
 _RESUME_URL_PREFIX = "https://hh.ru/resume/"
 
 
+def _resume_id_from_url(resume_url: str) -> str:
+    """resume_id = path-хвост ``resume_url`` БЕЗ query/fragment (#1076).
+
+    hh.ru навешивает на URL резюме query-суффиксы (``?hhtmFrom=…``,
+    ``?source=…``; живой факт — experience.py:1640, лог 2026-09-03), и
+    скопированный из браузера URL несёт суффикс. Хвост с суффиксом,
+    прошедший в ``ResumeConfig.resume_id`` — мусорный ключ: точный матч
+    ``data-qa='resume-card-link-<id>'``, ключи истории (``actions.resume_id``,
+    кулдаун bump), edit-роуты (``/resume/edit/{id}/…``) и readback-матчинг
+    других команд расходятся с каноническим hex (подтверждено живым
+    read-only прогоном 2026-09-09: resume_url с ``?source=`` → вечный ложный
+    «резюме удалено» в bump; ``list-resumes --status`` с суффиксом терял
+    последний bump живого резюме). Нормализация — здесь, в единственном
+    месте разбора хвоста, а не в каждом потребителе.
+    """
+    tail = resume_url.rstrip("/").rsplit("/", 1)[-1]
+    return tail.split("?", 1)[0].split("#", 1)[0]
+
+
 def is_resume_url_placeholder(resume_url: str) -> bool:
     """Return whether ``resume_url`` contains the example-config placeholder."""
-    resume_id = resume_url.rstrip("/").rsplit("/", 1)[-1]
-    return bool(_RESUME_PLACEHOLDER_RE.fullmatch(resume_id))
+    return bool(_RESUME_PLACEHOLDER_RE.fullmatch(_resume_id_from_url(resume_url)))
 
 
 if TYPE_CHECKING:
@@ -95,7 +113,9 @@ class ResumeConfig:
 
     @property
     def resume_id(self) -> str:
-        return self.resume_url.rstrip("/").split("/")[-1]
+        # Нормализованный path-хвост без query/fragment (#1076) — единый
+        # источник для всех потребителей (селекторы, история, edit-роуты).
+        return _resume_id_from_url(self.resume_url)
 
 
 def bare_resume(resume_id: str) -> ResumeConfig:

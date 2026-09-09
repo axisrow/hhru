@@ -81,6 +81,39 @@ def test_real_resume_url_is_not_placeholder(resume_url):
     assert not is_resume_url_placeholder(resume_url)
 
 
+# --- #1076: нормализация resume_id — query/fragment хвоста URL -------------
+
+
+@pytest.mark.parametrize(
+    ("resume_url", "expected"),
+    [
+        ("https://hh.ru/resume/abc123", "abc123"),
+        # hh.ru вешает query-суффиксы (?hhtmFrom=…, ?source=… — живой факт,
+        # experience.py:1640); скопированный из браузера URL несёт суффикс.
+        ("https://hh.ru/resume/abc123?source=employer_page", "abc123"),
+        ("https://hh.ru/resume/abc123?hhtmFrom=profile_experience", "abc123"),
+        ("https://hh.ru/resume/abc123#experience", "abc123"),
+        ("https://hh.ru/resume/abc123/", "abc123"),
+    ],
+)
+def test_resume_id_strips_query_and_fragment(resume_url, expected):
+    """#1076: resume_id — path-хвост без query/fragment, единый источник для
+    селекторов/ключей истории/edit-роутов. Суффикс в хвосте раньше давал
+    мусорный ключ (живой прогон 2026-09-09: ложный «резюме удалено» в bump,
+    потеря истории последнего bump в list-resumes --status)."""
+    resume = ResumeConfig(
+        id="r1",
+        resume_url=resume_url,
+        search=SearchFilters(text="python", area=1),
+    )
+    assert resume.resume_id == expected
+
+
+def test_placeholder_with_query_suffix_is_still_placeholder():
+    """#1076: плейсхолдер с query-суффиксом тоже распознаётся плейсхолдером."""
+    assert is_resume_url_placeholder("https://hh.ru/resume/XXXXXXXXXXXXXXXXXXXXXXXX?source=x")
+
+
 def test_load_config_full_search_filters(tmp_path):
     path = _write_config(
         tmp_path,

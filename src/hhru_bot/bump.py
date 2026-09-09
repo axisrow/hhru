@@ -4,12 +4,13 @@ import logging
 from dataclasses import dataclass
 
 from playwright.sync_api import Error as PlaywrightError
-from playwright.sync_api import Page
+from playwright.sync_api import Locator, Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from . import selectors as sel
 from .browser import HH_BASE_URL, goto_hh, has_login_form
 from .config import ResumeConfig, is_resume_url_placeholder
+from .selector_groups.resume_list import RESUME_LIST_CARD_LINK_PREFIX
 from .selector_groups.resume_page import RESUME_CARD_LINK_TEMPLATE
 
 logger = logging.getLogger("hhru_bot.bump")
@@ -26,6 +27,46 @@ BUMP_HINT_TIMEOUT_MS = 1_500
 # (div[data-qa='resume'] > a[data-qa='resume-card-link-<id>']). Прежний поток
 # открывал /resume/<id> и не находил кнопку вовсе (healthcheck NOT_FOUND).
 RESUMES_LIST_URL = f"{HH_BASE_URL}/applicant/resumes"
+
+
+def _classify_card_timeout(page: Page, card_link: Locator) -> str:
+    """Вердикт после таймаута ожидания якоря карточки; ``""`` — карточка нашлась.
+
+    #1076: таймаут ожидания якоря — НЕ доказательство «резюме удалено».
+    Список /applicant/resumes рендерится лениво (гидрация React, #858):
+    карточка может появиться позже ``BUMP_TIMEOUT_MS``. Доказательство
+    отсутствия — отрисованный список (другие карточки есть) БЕЗ нашей
+    карточки. Не отрисовавшийся список — состояние страницы не подтверждено:
+    даём списку второй бюджет ожидания и повторяем поиск карточки; если и
+    тогда пусто — честное «не подтверждено», не «удалено» (uncertain ни в
+    какую сторону, ранний выход до действия: acted=False по #163).
+    """
+    any_card = page.locator(RESUME_LIST_CARD_LINK_PREFIX)
+    # Гидрация-гейт (#858, ревью PR #1079): count() — срез DOM, а не
+    # видимости: SSR-разметка содержит якоря resume-card-link-* ещё ДО
+    # гидрации, при этом якорь НАШЕГО резюме может появиться только после
+    # клиентского рендера. Ожидания разделены (nit-ревью PR #1079): таймаут
+    # ВИДИМОСТИ списка — состояние страницы не подтверждено независимо от
+    # count() (SSR-якоря в DOM ≠ отрисованный список, fail-closed #5);
+    # «удалено» — только когда список подтверждённо видим, а повторный
+    # поиск карточки в нём таймаутнул.
+    try:
+        any_card.first.wait_for(state="visible", timeout=BUMP_TIMEOUT_MS)
+    except PlaywrightTimeoutError:
+        return (
+            "список резюме не отрисовался за "
+            f"{BUMP_TIMEOUT_MS // 1000} с (гидрация/медленная загрузка) — наличие "
+            "резюме не подтверждено; повторите запуск позже"
+        )
+    except PlaywrightError:
+        return "ошибка при поиске карточки резюме в списке — поднятие отменено"
+    try:
+        card_link.first.wait_for(state="visible", timeout=BUMP_TIMEOUT_MS)
+    except PlaywrightTimeoutError:
+        return "резюме не найдено в списке /applicant/resumes (удалено или недоступно)"
+    except PlaywrightError:
+        return "ошибка при поиске карточки резюме в списке — поднятие отменено"
+    return ""
 
 
 @dataclass
@@ -66,18 +107,21 @@ def bump_resume(page: Page, resume: ResumeConfig, dry_run: bool) -> BumpResult:
             False,
             "Сессия недействительна: страница содержит форму входа. Выполните login.",
         )
+    # resume_id уже нормализован на уровне ResumeConfig (#1076: query/fragment
+    # отрезает config._resume_id_from_url) — единый источник для селекторов,
+    # истории и edit-роутов, здесь локального разбора нет.
     card_link = page.locator(RESUME_CARD_LINK_TEMPLATE.format(resume_id=resume.resume_id))
     try:
         card_link.first.wait_for(state="visible", timeout=BUMP_TIMEOUT_MS)
     except PlaywrightTimeoutError:
         # Раньше этот случай ловил banner-чек на странице резюме (#972); на
         # списке недоступное/удалённое резюме — просто отсутствие карточки.
+        # #1076: таймаут — два разных состояния (медленная гидрация списка
+        # против реального отсутствия), классифицирует _classify_card_timeout.
         # Ранний выход до действия: acted=False (#163), failed/retry.
-        return BumpResult(
-            resume.id,
-            False,
-            "резюме не найдено в списке /applicant/resumes (удалено или недоступно)",
-        )
+        reason = _classify_card_timeout(page, card_link)
+        if reason:
+            return BumpResult(resume.id, False, reason)
     except PlaywrightError:
         # cycle-review #139-паттерн: не-timeout аномалия — fail-closed отказ,
         # а не traceback и не тихий переход к кнопке.
