@@ -76,6 +76,9 @@ class ApplyRunParams:
     approved: int | None = None
     permit: str | None = None
     learn_questionnaires: bool = False
+    # Точечный отклик (#1085): вакансия задана явно, поэтому причины её
+    # отсева фильтрами печатаются в консоль, а не только в debug-лог.
+    vacancy_id: str | None = None
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> ApplyRunParams:
@@ -87,6 +90,7 @@ class ApplyRunParams:
             approved=getattr(args, "approved", None),
             permit=getattr(args, "permit", None),
             learn_questionnaires=bool(getattr(args, "learn_questionnaires", False)),
+            vacancy_id=getattr(args, "vacancy_id", None),
         )
 
 
@@ -812,7 +816,13 @@ def _execute_apply_wave(
         )
 
     for card, reason in plan.skipped:
-        logger.debug("Пропуск вакансии %s: %s", card.title, reason)
+        # #1089 review: для точечного отклика (--vacancy-id) причина отсева
+        # печатается в консоль — юзер явно назвал вакансию, молчаливый
+        # «Итого откликов: 0» без объяснения заметнее, чем в поисковой выдаче.
+        if params.vacancy_id:
+            print(f"  [skip] {card.title} — {reason}")
+        else:
+            logger.debug("Пропуск вакансии %s: %s", card.title, reason)
 
     cover_letter_template = config.cover_letter_for(resume)
     if providers is not None:

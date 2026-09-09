@@ -190,3 +190,60 @@ def test_vacancy_id_dedup_skips_already_applied(tmp_path, monkeypatch, capsys):
     )
     assert failed is False
     assert applied_calls == []
+    # #1089 review: для точечного отклика причина отсева печатается, а не
+    # молчит в debug-логе.
+    assert "[skip]" in capsys.readouterr().out
+
+
+class _FetchLocator:
+    """Минимальный локатор для fetch_vacancy_card: wait/inner_text/count."""
+
+    def __init__(self, text=""):
+        self._text = text
+
+    @property
+    def first(self):
+        return self
+
+    def wait_for(self, *, state, timeout):  # noqa: ANN001, ARG002
+        return None
+
+    def inner_text(self) -> str:
+        return self._text
+
+    def count(self) -> int:
+        return 0
+
+
+class _FetchPage:
+    def __init__(self, url, title_text=""):
+        self.url = url
+        self._title_text = title_text
+
+    def locator(self, selector):  # noqa: ANN001
+        return _FetchLocator(self._title_text)
+
+
+def test_fetch_vacancy_card_reports_closed_when_no_title(monkeypatch):
+    import hhru_bot.search
+
+    monkeypatch.setattr(hhru_bot.search, "goto_hh", lambda page, url: None)
+    page = _FetchPage("https://hh.ru/vacancy/132283257", title_text="   ")
+
+    with pytest.raises(hhru_bot.search.VacancyPageUnavailable) as exc_info:
+        hhru_bot.search.fetch_vacancy_card(page, "132283257")
+    assert exc_info.value.state == "confirmed"
+
+
+def test_fetch_vacancy_card_checks_antibot_before_closed_verdict(monkeypatch):
+    """Челлендж рендерится без селекторов вакансии — «вакансия закрыта» при
+    анти-бот состоянии был бы неверным диагнозом (review PR #1089)."""
+    import hhru_bot.search
+    from hhru_bot.apply.antibot import AntiBotChallengeDetected
+
+    monkeypatch.setattr(hhru_bot.search, "goto_hh", lambda page, url: None)
+    # Челлендж-страница: заголовка вакансии нет, URL — checkpoint-сегмент.
+    page = _FetchPage("https://hh.ru/checkpoint?backurl=%2Fvacancy%2F132283257", title_text="")
+
+    with pytest.raises(AntiBotChallengeDetected):
+        hhru_bot.search.fetch_vacancy_card(page, "132283257")

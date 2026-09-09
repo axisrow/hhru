@@ -823,6 +823,19 @@ class VacancyPageUnavailable(RuntimeError):
         super().__init__(message)
 
 
+def _raise_for_antibot_if_challenged(page: Page) -> None:
+    """Терминальный анти-бот сигнал до вердикта «вакансия закрыта» (PR #1089).
+
+    Челлендж DDoS-Guard рендерится без селекторов вакансии, поэтому без этой
+    проверки «confirmed: вакансия закрыта» выдавался бы за сетевое/анти-бот
+    состояние. Ленивый импорт — search.py не тянет пакет apply на уровень
+    своего импорта.
+    """
+    from .apply.antibot import raise_for_antibot
+
+    raise_for_antibot(page)
+
+
 def fetch_vacancy_card(page: Page, vacancy_id: str) -> VacancyCard:
     """Строит VacancyCard прямо со страницы вакансии ``/vacancy/{id}`` (#1085).
 
@@ -842,6 +855,7 @@ def fetch_vacancy_card(page: Page, vacancy_id: str) -> VacancyCard:
         # Страница не загрузилась/не отрисовалась — состояние не подтверждено,
         # «вакансии нет» из этого не следует (DDoS-Guard, сетевой сбой, дрейф
         # селектора). Команда печатает внятный [FAIL], прогон не падает.
+        _raise_for_antibot_if_challenged(page)
         raise VacancyPageUnavailable(
             vacancy_id, PAGE_STATE["indeterminate"], type(exc).__name__
         ) from exc
@@ -849,7 +863,10 @@ def fetch_vacancy_card(page: Page, vacancy_id: str) -> VacancyCard:
     if not title:
         # Страница загрузилась, но заголовка нет — hh.ru так рендерит закрытую
         # или несуществующую вакансию. Это подтверждённое состояние, а не
-        # неопределённость.
+        # неопределённость. Но сначала исключаем анти-бот челлендж: он тоже
+        # рендерится без селекторов вакансии, и диагноз «вакансия закрыта»
+        # при живой вакансии был бы неверным (review PR #1089).
+        _raise_for_antibot_if_challenged(page)
         raise VacancyPageUnavailable(vacancy_id, PAGE_STATE["confirmed"])
     company_loc = page.locator(sel.VACANCY_COMPANY_NAME)
     company = (company_loc.first.inner_text() or "").strip() if company_loc.count() else ""
