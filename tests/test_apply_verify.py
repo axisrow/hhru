@@ -122,6 +122,11 @@ class FakeNegotiationsPage:
         goto_error: Exception | None = None,
     ):
         self._pages = {} if pages is None else dict(pages)
+        # Живой контракт конца списка (дрейф 2026-09-09, PR #1066/#1067):
+        # одностраничный аккаунт на ?page=1 получает подтверждённо пустой
+        # topicList — «нулевых новых» достаточно для конца скана. Фикстуры
+        # с ЯВНЫМ ?page=1 (многостраничные сценарии) дефолт не затирает.
+        self._pages.setdefault(f"{NEGOTIATIONS_URL}?page=1", _ssr_html([]))
         self._authed = authed
         self._goto_error = goto_error
         self._html = ""
@@ -384,14 +389,45 @@ def test_not_found_on_clean_ssr_read():
     result = verify_response_in_negotiations(page, _V2)
     assert result.status == "not_found"
     # Polling: обе попытки с интервалом (отклик мог появиться с задержкой).
-    # Попытка 2 не ходит на ?page=1 повторно: seen_vacancy_ids накапливается
-    # между попытками, и страница 0 без новых вакансий уже доказывает конец.
+    # Каждая попытка проходит страницы заново (ноль новых vacancy_id —
+    # stop-условие внутри ОДНОЙ попытки, набор локален): между поллами
+    # хвост мог измениться, поэтому ?page=1 читается и в повторе.
     assert page.goto_calls == [
         NEGOTIATIONS_URL,
         f"{NEGOTIATIONS_URL}?page=1",
         NEGOTIATIONS_URL,
+        f"{NEGOTIATIONS_URL}?page=1",
     ]
     assert page.wait_for_timeout_calls == [10_000]
+
+
+class _DelayedTailPage(FakeNegotiationsPage):
+    """Попытка 1: страница 0 без цели, страница 1 пуста. Попытка 2: страница 0
+    НЕИЗМЕННА, а опоздавший отклик появился на странице 1 (между поллами)."""
+
+    def __init__(self, page0: str, page1_delayed: str):
+        super().__init__({NEGOTIATIONS_URL: page0, f"{NEGOTIATIONS_URL}?page=1": _ssr_html([])})
+        self._page1_delayed = page1_delayed
+        self._page1_gotos = 0
+
+    def goto(self, url: str, *, wait_until: str = "") -> None:  # noqa: ARG002
+        if url == f"{NEGOTIATIONS_URL}?page=1":
+            self._page1_gotos += 1
+            self.goto_calls.append(url)
+            self._html = self._page1_delayed if self._page1_gotos > 1 else self._pages[url]
+            return
+        super().goto(url, wait_until=wait_until)
+
+
+def test_found_on_delayed_tail_of_second_attempt():
+    # Ревью PR #1068: seen_vacancy_ids не должен накапливаться между
+    # попытками — иначе неизменная страница 0 повторного полла дала бы ноль
+    # «новых» ещё до захода на ?page=1, и опоздавший отклик на хвосте
+    # получил бы ложный not_found. Каждая попытка ходит по страницам заново.
+    page = _DelayedTailPage(_ssr_html([_topic(7, "999999")]), _ssr_html([_topic(9, _V2)]))
+    result = verify_response_in_negotiations(page, _V2)
+    assert result.found
+    assert page.goto_calls.count(f"{NEGOTIATIONS_URL}?page=1") == 2
 
 
 def test_not_found_on_server_rendered_empty_list():

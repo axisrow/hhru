@@ -256,6 +256,14 @@ def _scan_negotiations(
     confirmed_incomplete = False
     attribution_incomparable = False
     reads: list[PageRead] = []
+    # Ноль новых vacancy_id — stop-условие этого скана, поэтому набор обязан
+    # быть ЛОКАЛЬНЫМ для попытки: внешний seen_vacancy_ids накапливается
+    # между NEGOTIATIONS_VERIFY_ATTEMPTS (аудит not_found «прочитано: ...»),
+    # и с ним неизменная страница 0 повторной попытки дала бы ноль «новых»
+    # ещё ДО захода на ?page=1 — опоздавший отклик на хвосте получил бы
+    # ложный not_found (ревью PR #1068). Каждая попытка проходит страницы
+    # заново; накопленный аудит мерджится в конце.
+    attempt_seen: set[str] = set()
     for page_num in range(NEGOTIATIONS_VERIFY_MAX_PAGES):
         if page_num > 0:
             try:
@@ -273,11 +281,11 @@ def _scan_negotiations(
                 break
             else:
                 raise_for_antibot(page)
-        ids_before = set(seen_vacancy_ids)
+        ids_before = set(attempt_seen)
         found_detail, page_clean, page_problem, page_attribution_incomparable = _scan_single_page(
-            page, wanted, resume_id, account_resume_ids, seen_vacancy_ids
+            page, wanted, resume_id, account_resume_ids, attempt_seen
         )
-        new_ids = seen_vacancy_ids - ids_before
+        new_ids = attempt_seen - ids_before
         attribution_incomparable = attribution_incomparable or page_attribution_incomparable
         if page_attribution_incomparable:
             reads.append(
@@ -321,6 +329,7 @@ def _scan_negotiations(
             break
     # Keep the legacy tuple for the browser reader, but let the typed decision
     # table own the final absence/uncertainty policy (#213).
+    seen_vacancy_ids.update(attempt_seen)
     composed = compose(reads, wanted)
     if composed == "not_found":
         clean = True
