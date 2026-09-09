@@ -118,6 +118,99 @@ def test_hhru_account_env_missing_account_fails_explicitly(tmp_path, monkeypatch
         _resolve_paths(args)
 
 
+def _make_account(root: Path, name: str) -> Path:
+    account = root / "data" / "accounts" / name
+    account.mkdir(parents=True, exist_ok=True)
+    (account / "config.yaml").touch()
+    return account
+
+
+def _write_root_config(root: Path, text: str) -> None:
+    (root / "data").mkdir(parents=True, exist_ok=True)
+    (root / "data" / "config.yaml").write_text(text, encoding="utf-8")
+
+
+def test_default_account_from_config_resolves_paths(tmp_path, monkeypatch):
+    """#1086: без флага и env дефолтный аккаунт берётся из data/config.yaml."""
+    account = _make_account(tmp_path, "marketing")
+    _write_root_config(tmp_path, "default_account: marketing\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HHRU_ACCOUNT", raising=False)
+
+    args = _build().parse_args(["whoami"])
+    _resolve_paths(args)
+    assert Path(args.config).resolve() == account / "config.yaml"
+    assert Path(args.history).resolve() == account / "history.db"
+    assert Path(args.account_dir).resolve() == account
+
+
+def test_account_flag_and_env_beat_default_account(tmp_path, monkeypatch):
+    flag_account = _make_account(tmp_path, "flag")
+    env_account = _make_account(tmp_path, "env")
+    _write_root_config(tmp_path, "default_account: marketing\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HHRU_ACCOUNT", "env")
+
+    args = _build().parse_args(["whoami"])
+    _resolve_paths(args)
+    assert Path(args.config).resolve() == env_account / "config.yaml"
+
+    args = _build().parse_args(["--account", "flag", "whoami"])
+    _resolve_paths(args)
+    assert Path(args.config).resolve() == flag_account / "config.yaml"
+
+
+def test_default_account_missing_key_keeps_global_defaults(tmp_path, monkeypatch):
+    """Обратная совместимость (#1086): без поля default_account в корневом
+    конфиге поведение байт-в-байт прежнее — корневые data/config.yaml и
+    data/history.db."""
+    _write_root_config(tmp_path, "resumes: []\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HHRU_ACCOUNT", raising=False)
+
+    args = _build().parse_args(["whoami"])
+    _resolve_paths(args)
+    assert args.config == str(DEFAULT_CONFIG_PATH)
+    assert args.history == str(DEFAULT_HISTORY_PATH)
+    assert args.account_dir is None
+
+
+def test_default_account_missing_account_fails_explicitly(tmp_path, monkeypatch):
+    _write_root_config(tmp_path, "default_account: ghost\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HHRU_ACCOUNT", raising=False)
+
+    args = _build().parse_args(["whoami"])
+    with pytest.raises(AccountError):
+        _resolve_paths(args)
+
+
+def test_default_account_non_string_value_fails_explicitly(tmp_path, monkeypatch):
+    _write_root_config(tmp_path, "default_account:\n  - marketing\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HHRU_ACCOUNT", raising=False)
+
+    args = _build().parse_args(["whoami"])
+    with pytest.raises(AccountError):
+        _resolve_paths(args)
+
+
+def test_default_account_ignored_when_explicit_paths_given(tmp_path, monkeypatch):
+    """Явный --config/--history — осознанное указание путей: default_account
+    не подмешивается (иначе config одного аккаунта получил бы history.db
+    другого)."""
+    _make_account(tmp_path, "marketing")
+    _write_root_config(tmp_path, "default_account: marketing\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HHRU_ACCOUNT", raising=False)
+
+    args = _build().parse_args(["--config", str(tmp_path / "custom.yaml"), "whoami"])
+    _resolve_paths(args)
+    assert Path(args.config) == tmp_path / "custom.yaml"
+    assert Path(args.history) == DEFAULT_HISTORY_PATH
+    assert args.account_dir is None
+
+
 def _subparser_actions(parser):
     # единственный subparsers action
     for action in parser._actions:

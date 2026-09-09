@@ -166,7 +166,22 @@ Crashpad/Mach-port сбоя, если среда не была распозна�
 пути `--config`/`--history` на `data/accounts/<name>/{config.yaml,history.db}`,
 если они не заданы явно. Переменная окружения `HHRU_ACCOUNT` (#281) — дефолт
 флага на уровне `cli.py` для любой команды; явный `--account` в аргументах
-побеждает. `scripts/scheduled_run.sh` транслирует ту же переменную в
+побеждает. Третье звено цепочки — `default_account` в корневом
+`data/config.yaml` (#1086): строки
+
+```yaml
+default_account: "marketing"
+```
+
+хватает, чтобы команды без флага и env шли с `data/accounts/marketing/`;
+последнее звено — прежние корневые дефолты `data/config.yaml` +
+`data/history.db`. Полная цепочка приоритета:
+`--account` > `HHRU_ACCOUNT` > `default_account` > корневой конфиг.
+Настройка применяется только к полностью дефолтному вызову — любой явный
+`--config`/`--history` отменяет её (смешивать пути разных аккаунтов нельзя).
+`default_account`, указывающий на несуществующий аккаунт или не-строку, —
+`[FAIL]` при запуске любой команды (fail-closed, не молчаливый fallback).
+`scripts/scheduled_run.sh` транслирует ту же переменную в
 `--account` для плановых задач. Из этого вытекают три инварианта, зафиксированные тестами
 `test_multi_account_isolation.py` и `test_account_write_lock_isolation.py`:
 
