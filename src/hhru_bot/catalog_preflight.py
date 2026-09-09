@@ -81,10 +81,10 @@ class PreflightOutcome:
     message: str
 
 
-def preflight_area(
+def preflight_profession(
     page: Page, area: str, *, allow_unresolved_area: bool = False
 ) -> PreflightOutcome:
-    """Read-only сверка ``--area`` с live-каталогом поиска вакансий до визарда.
+    """Read-only сверка ``--profession`` с live-каталогом поиска вакансий до визарда.
 
     Открывает фильтр профессий ``/search/vacancy`` (goto + ввод в поисковую
     строку модалки, ничего не выбирается и не сохраняется — граница

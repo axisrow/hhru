@@ -814,6 +814,15 @@ def current_employer_hit(company: str, current_employers: list[str]) -> str | No
     return next((e for e in current_employers if e.casefold() in company_lower), None)
 
 
+# M1 (ревью issue-city-search-gaps): salary_to — рублёвый порог, а суммы в других
+# валютах (₸/$/€/тг...) с ним несопоставимы: ложный отсев писал бы вакансию в кэш
+# skipped навсегда (is_skipped не различает причин) и молча блокировал apply-путь.
+# None = карточка без маркера валюты: hh.ru всегда явно показывает нерублёвые
+# символы, а парсер валюту по хвосту не угадывает (_detect_currency), поэтому
+# немаркированная сумма считается рублевой по конвенции источника.
+_RUB_SALARY_CURRENCIES = frozenset({"RUB", "RUR", None})
+
+
 def filter_candidates(
     cards: list[VacancyCard],
     filters: SearchFilters,
@@ -825,8 +834,10 @@ def filter_candidates(
 ) -> tuple[list[VacancyCard], list[tuple[VacancyCard, str]]]:
     """
     Разделяет карточки на (подходящие, исключённые с причиной).
-    Причины исключения: уже откликались ранее, попадание в стоп-лист, ИЛИ
-    (опц.) непрохождение эвристического pre-LLM фильтра работодателя (#85).
+    Причины исключения: уже откликались ранее, попадание в стоп-листы
+    (exclude_employers/exclude_keywords) или вне списка интереса
+    (include_employers), зарплата выше лимита (salary_to), ИЛИ (опц.)
+    непрохождение эвристического pre-LLM фильтра работодателя (#85).
 
     prefilter_thresholds (issue #85): опциональный PrefilterConfig. Если передан
     и enabled — после дедупа/стоп-листов применяется employer_passes_prefilter
@@ -898,11 +909,46 @@ def filter_candidates(
             history.record_skip(resume_id, card.vacancy_id, SKIP_REASONS.STOPWORD_EMPLOYER)
             continue
 
+        # Include-фильтр (issue-city-search-gaps D2): зеркало exclude_employers.
+        # Непустой список = «только работодатели интереса» — карточка проходит,
+        # если ХОТЯ БЫ ОДИН элемент совпал как casefold substring. Пустой список
+        # (дефолт) = без ограничений.
+        if filters.include_employers and not any(
+            e.casefold() in company_lower for e in filters.include_employers
+        ):
+            skipped.append((card, f"работодатель не совпал со списком интереса: {card.company}"))
+            if card.company:
+                # Пустая company (""): скип на прогон БЕЗ записи — решение принято
+                # по временным данным (дрейф селектора/частичный рендер), зеркало
+                # CURRENT_EMPLOYER выше: при восстановлении company вакансия должна
+                # пересматриваться заново, а не оставаться потерянной навсегда.
+                history.record_skip(resume_id, card.vacancy_id, SKIP_REASONS.INCLUDE_EMPLOYER_MISS)
+            continue
+
         title_lower = card.title.lower()
         keyword_hit = next((k for k in filters.exclude_keywords if k.lower() in title_lower), None)
         if keyword_hit is not None:
             skipped.append((card, f"стоп-слово в названии: {keyword_hit}"))
             history.record_skip(resume_id, card.vacancy_id, SKIP_REASONS.STOPWORD_TITLE)
+            continue
+
+        # Потолок зарплаты (issue-city-search-gaps D2): отсекаем карточки, чей
+        # salary_from ВЫШЕ filters.salary_to («не выше N»). Неизвестная зарплата
+        # (salary=None или «до N» без salary_from) — НЕ доказательство превышения,
+        # такие карточки проходят (fail-closed наоборот: нет данных — нет отсева).
+        # M1: сравнение только в рублёвых валютах — см. _RUB_SALARY_CURRENCIES.
+        salary = card.salary
+        if (
+            filters.salary_to is not None
+            and salary is not None
+            and salary.salary_from is not None
+            and salary.currency in _RUB_SALARY_CURRENCIES
+            and salary.salary_from > filters.salary_to
+        ):
+            currency = salary.currency or "руб."
+            reason = f"зарплата выше лимита: {salary.salary_from} {currency} > {filters.salary_to}"
+            skipped.append((card, reason))
+            history.record_skip(resume_id, card.vacancy_id, SKIP_REASONS.SALARY_OVER_LIMIT)
             continue
 
         # Pre-LLM фильтр работодателя (#85): отсев «слепых откликов» ДО скоринга.

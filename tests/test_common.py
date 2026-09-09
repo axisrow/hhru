@@ -268,7 +268,7 @@ def _args(tmp_path, **overrides):
         birthday=None,
         gender=None,
         phone=None,
-        area=None,
+        city=None,
         metro=None,
         citizenship=None,
         work_ticket=None,
@@ -1058,7 +1058,7 @@ def test_birthday_selected_activators_read_as_values():
 
 
 def test_wizard_area_refuses_honestly(monkeypatch):
-    """Город на wizard-shape не рендерится: --area — внятный отказ, а не
+    """Город на wizard-shape не рендерится: --city — внятный отказ, а не
     «не подтверждено однозначно» (#993, боевой прогон RUN db3ae70b)."""
     from hhru_bot.browser import PageStateIndeterminate
 
@@ -1268,3 +1268,69 @@ def test_set_many_lost_click_on_unwanted_option_fails_honestly():
     ]
     with pytest.raises(RuntimeError, match="лишний вариант остался выбранным.*'Офис'"):
         _run_set_many(_SetManyPage(options), ["remote"])
+
+
+# --- E2 (issue-city-search-gaps): --city основной, --area скрытый алиас ------
+# Нейминг-ловушка (факт 6): --area значил три разных вещи в CLI (id города в
+# config/search, профессия в create-resume, город-строка здесь). Основной флаг
+# команды common теперь --city; --area сохранён как скрытый алиас (тот же
+# паттерн argparse.SUPPRESS, что в create-resume E1). Общий dest "city": обе
+# записи пишут одно поле, при обоих флагах побеждает последний в argv —
+# штатная argparse-семантика, осознанно не конфликт (то же решение, что в E1).
+
+
+def _common_parser():
+    """ArgumentParser только с зарегистрированной командой common (как в cli.py)."""
+    import argparse
+
+    from hhru_bot.commands import common as command
+
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    command.register(subparsers)
+    return parser, subparsers
+
+
+def test_register_city_flag_is_primary():
+    parser, _subparsers = _common_parser()
+    ns = parser.parse_args(["common", "--resume", "00001", "--city", "Москва"])
+    assert ns.city == "Москва"
+
+
+def test_register_area_alias_still_accepted():
+    parser, _subparsers = _common_parser()
+    ns = parser.parse_args(["common", "--resume", "00001", "--area", "Москва"])
+    assert ns.city == "Москва"
+
+
+def test_register_area_hidden_from_help():
+    _parser, subparsers = _common_parser()
+    help_text = subparsers.choices["common"].format_help()
+    assert "--city" in help_text
+    assert "--area" not in help_text
+
+
+def test_register_both_flags_last_wins():
+    parser, _subparsers = _common_parser()
+    ns = parser.parse_args(["common", "--resume", "00001", "--city", "Казань", "--area", "Москва"])
+    assert ns.city == "Москва"
+
+
+def test_run_city_reaches_plan_output(monkeypatch, tmp_path, capsys):
+    """--city доезжает до CommonValues.area (имя поля браузерного слоя сохранено
+    намеренно) и виден в плане заполнения dry-run."""
+    current = CommonValues(
+        first_name="Иван",
+        last_name="Иванов",
+        birthday="01.01.1990",
+        gender="male",
+        phone="+7999",
+        citizenship=["Россия"],
+    )
+    command, _resume = _command_harness(monkeypatch, tmp_path, current=current)
+
+    result = command._run(_args(tmp_path, city="Москва", dry_run=True), MagicMock())
+    assert result is False
+    out = capsys.readouterr().out
+    assert "area: Москва" in out
+    assert "[DRY-RUN]" in out

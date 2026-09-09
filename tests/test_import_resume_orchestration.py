@@ -99,8 +99,8 @@ def _run_import(monkeypatch, tmp_path: Path, payload: dict, *, impls: dict | Non
     calls: dict[str, list] = {"uploads": [], "sections": []}
     default_impls = {
         "hhru_bot.browser.launch_context": _fake_launch,
-        "hhru_bot.catalog_preflight.preflight_area": lambda page, title, allow_unresolved_area: NS(
-            ok=True, message=""
+        "hhru_bot.catalog_preflight.preflight_profession": lambda page, title, allow_unresolved_area: (
+            NS(ok=True, message="")
         ),
         "hhru_bot.create_resume.create_resume_on_hh": lambda *a, **k: _ok_create_result(),
         "hhru_bot.create_resume.apply_draft_readback": lambda page, result: NS(

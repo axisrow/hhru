@@ -28,9 +28,18 @@ def register(subparsers) -> None:
             "--force или интерактивного подтверждения."
         ),
     )
+    # E1 (issue-city-search-gaps, факт 6): "--area" здесь исторически означал
+    # ПРОФЕССИЮ (#304) и конфликтовал со словарём area-id у search/config/hh.ru.
+    # Основной флаг теперь --profession; --area сохранён СКРЫТЫМ алиасом
+    # (argparse.SUPPRESS) для совместимости со старыми вызовами — не виден в
+    # --help и генерируемых README/cli-spec. Общий dest="profession": при обоих
+    # флагах побеждает последний (argparse-семантика общего dest, осознанно
+    # вместо конфликта). Обязательность проверяется вручную в run(): argparse не
+    # умеет «один из двух required» со скрытым алиасом — required=True на
+    # --profession отверг бы legacy-вызов с одним --area.
     p.add_argument(
-        "--area",
-        required=True,
+        "--profession",
+        dest="profession",
         help=(
             "Профессия для выбора в визарде создания резюме. Если hh.ru "
             "показывает ровно одну подсказку автодополнения с однозначной "
@@ -40,6 +49,7 @@ def register(subparsers) -> None:
             "выбираются — перезапустите с точным именем одной из них"
         ),
     )
+    p.add_argument("--area", dest="profession", help=argparse.SUPPRESS)
     p.add_argument("--title", required=True, help="Одна основная профессия резюме")
     p.add_argument(
         "--allow-unresolved-area",
@@ -73,6 +83,18 @@ def run(args: argparse.Namespace):
     from ..config import load_config_or_exit
     from ..create_resume import create_resume_on_hh
     from ..history import History
+
+    # E1: обязательность --profession проверяется здесь, а не в argparse —
+    # скрытый алиас --area (SUPPRESS) не позволяет выразить «один из двух
+    # required». Exit 2 — конвенция argparse для ошибок обязательных аргументов.
+    # Пустая строка profession="" намеренно проходит дальше: как и прежний
+    # --area "", она отсеивается fail-closed логикой каталога (не меняем).
+    if getattr(args, "profession", None) is None:
+        print(
+            "[FAIL] create-resume: обязателен --profession <профессия> "
+            "(устаревший скрытый алиас --area тоже принимается)"
+        )
+        raise SystemExit(2)
 
     config = load_config_or_exit(args.config)
     history = History(args.history)
@@ -116,11 +138,11 @@ def run(args: argparse.Namespace):
                 # визард — отказ наступает до любого клика (первый NEXT может
                 # материализовать фантом-черновик, #936) и перечисляет листы,
                 # которые фильтр реально предлагает. Чтение read-only.
-                from ..catalog_preflight import preflight_area
+                from ..catalog_preflight import preflight_profession
 
-                outcome = preflight_area(
+                outcome = preflight_profession(
                     page,
-                    args.area,
+                    args.profession,
                     allow_unresolved_area=getattr(args, "allow_unresolved_area", False),
                 )
                 if not outcome.ok:
@@ -129,7 +151,9 @@ def run(args: argparse.Namespace):
                 if outcome.message:
                     print(f"[WARN] {outcome.message}")
                 create_kwargs = {
-                    "area": args.area,
+                    # Граница словарей: CLI говорит "profession" (E1), браузерный
+                    # модуль create_resume_on_hh сохраняет свой параметр "area".
+                    "area": args.profession,
                     "title": args.title,
                     "dry_run": dry_run,
                     "before_click": attempt.before_click if attempt is not None else None,
@@ -197,7 +221,7 @@ def run(args: argparse.Namespace):
             print(f"{prefix} {result.reason}")
             return True
         if dry_run:
-            print(f"[DRY-RUN] Создание резюме: area={args.area}, title={args.title}")
+            print(f"[DRY-RUN] Создание резюме: profession={args.profession}, title={args.title}")
             print(f"[INFO] {result.reason}")
             if getattr(args, "fill_common", False):
                 print(

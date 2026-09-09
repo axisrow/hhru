@@ -15,6 +15,10 @@ from ..browser import HH_BASE_URL
 
 ALLOWED_HOSTS = frozenset({"hh.ru", "api.hh.ru"})
 API_BASE_URL = "https://api.hh.ru"
+# Сколько символов тела ошибки показывать в [FAIL]: ответ api.hh.ru на ошибку
+# короток и структурен ({"errors":[...],"request_id":...}), а аномально длинное
+# тело (HTML-страница) диагностической ценности не несёт.
+_FAIL_BODY_LIMIT = 300
 
 
 class CallApiError(ValueError):
@@ -78,14 +82,24 @@ def _endpoint_url(endpoint: str, params: list[str]) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, query, ""))
 
 
-def run(args: argparse.Namespace) -> None:
+def run(args: argparse.Namespace) -> bool | None:
+    # Fail-closed контракт cli.py: возвращённый True -> exit code 1. Ожидаемые
+    # ошибки (не-GET, невалидный endpoint/параметр, не-2xx ответ) печатаются как
+    # [FAIL] здесь, а не уходят в generic except Exception -> сырой traceback.
     if args.method != "GET":  # defensive guard if called without argparse
-        raise CallApiError("call-api поддерживает только GET")
+        print("[FAIL] call-api поддерживает только GET")
+        return True
 
     from ..browser import goto_hh, launch_context, require_authenticated_page
     from ..config import load_config_or_exit
 
-    url = _endpoint_url(args.endpoint, args.params)
+    try:
+        url = _endpoint_url(args.endpoint, args.params)
+    except CallApiError as exc:
+        # До load_config и launch_context: невалидный endpoint/параметр — не
+        # повод запускать Chromium и нести туда сохранённую сессию.
+        print(f"[FAIL] {exc}")
+        return True
     config = load_config_or_exit(args.config)
     with launch_context(
         config.storage_state_file, headless=args.headless, user_agent=config.user_agent
@@ -102,5 +116,11 @@ def run(args: argparse.Namespace) -> None:
         api_request = context.request
         response = api_request.get(url)
         if not response.ok:
-            raise RuntimeError(f"GET {url} вернул HTTP {response.status}")
+            # Тело схлопывается в одну строку и усекается: [FAIL] обязан
+            # оставаться читаемой однострочной диагностикой.
+            body = " ".join(response.text().split())
+            detail = f": {body[:_FAIL_BODY_LIMIT]}" if body else ""
+            print(f"[FAIL] GET {url} вернул HTTP {response.status}{detail}")
+            return True
         print(response.text())
+        return None

@@ -295,7 +295,7 @@ def run_import(progress, history, params: ImportRunParams) -> bool:  # noqa: ANN
     """Боевой импорт; каждая секция — отдельная durable-попытка и вердикт."""
     from ..apply.antibot import AntiBotChallengeDetected
     from ..browser import launch_context
-    from ..catalog_preflight import preflight_area
+    from ..catalog_preflight import preflight_profession
     from ..config import bare_resume
     from ..create_resume import apply_draft_readback, create_resume_on_hh
     from .copy_resume import format_config_snippet
@@ -313,7 +313,9 @@ def run_import(progress, history, params: ImportRunParams) -> bool:  # noqa: ANN
         page = context.new_page()
         try:
             # Read-only сверка area с live-каталогом ДО любого клика (#950).
-            outcome = preflight_area(page, params.position_plan.title, allow_unresolved_area=False)
+            outcome = preflight_profession(
+                page, params.position_plan.title, allow_unresolved_area=False
+            )
             if not outcome.ok:
                 print(f"[FAIL] создание: {outcome.message}")
                 return True

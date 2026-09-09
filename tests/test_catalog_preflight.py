@@ -1,4 +1,4 @@
-"""Чистая сверка листов и read-only pre-flight --area (#950)."""
+"""Чистая сверка листов и read-only pre-flight --profession (#950)."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from hhru_bot.catalog_preflight import (
     PreflightOutcome,
     evaluate_leaf,
     format_candidates,
-    preflight_area,
+    preflight_profession,
 )
 from hhru_bot.professional_roles import ProfessionalRole
 
@@ -78,7 +78,7 @@ def test_format_candidates_lists_or_reports_empty():
     assert empty == "совпадений по подстроке не найдено"
 
 
-def test_preflight_area_exact_leaf_passes_silently(monkeypatch):
+def test_preflight_profession_exact_leaf_passes_silently(monkeypatch):
     seen: dict[str, object] = {}
 
     def fake_search(page, queries):
@@ -87,13 +87,13 @@ def test_preflight_area_exact_leaf_passes_silently(monkeypatch):
 
     monkeypatch.setattr(module, "search_professional_roles", fake_search)
 
-    outcome = preflight_area(SimpleNamespace(), "Врач")
+    outcome = preflight_profession(SimpleNamespace(), "Врач")
 
     assert outcome == PreflightOutcome(True, "")
     assert seen["queries"] == ["Врач"]
 
 
-def test_preflight_area_missing_leaf_refuses_with_candidates(monkeypatch):
+def test_preflight_profession_missing_leaf_refuses_with_candidates(monkeypatch):
     monkeypatch.setattr(
         module,
         "search_professional_roles",
@@ -104,7 +104,7 @@ def test_preflight_area_missing_leaf_refuses_with_candidates(monkeypatch):
         ],
     )
 
-    outcome = preflight_area(SimpleNamespace(), "Врач-хирург")
+    outcome = preflight_profession(SimpleNamespace(), "Врач-хирург")
 
     assert outcome.ok is False
     assert "не найдена в live-каталоге" in outcome.message
@@ -116,7 +116,7 @@ def test_preflight_area_missing_leaf_refuses_with_candidates(monkeypatch):
     assert "--allow-unresolved-area" in outcome.message
 
 
-def test_preflight_area_placeholder_only_filter_retries_then_refuses(monkeypatch):
+def test_preflight_profession_placeholder_only_filter_retries_then_refuses(monkeypatch):
     """Нестабильность фильтра #920: вырожденный ответ переспрашивается один раз."""
     calls: list[list[str]] = []
 
@@ -126,14 +126,14 @@ def test_preflight_area_placeholder_only_filter_retries_then_refuses(monkeypatch
 
     monkeypatch.setattr(module, "search_professional_roles", fake_search)
 
-    outcome = preflight_area(SimpleNamespace(), "Врач-хирург")
+    outcome = preflight_profession(SimpleNamespace(), "Врач-хирург")
 
     assert calls == [["Врач-хирург"], ["Врач-хирург"]]
     assert outcome.ok is False
     assert "совпадений по подстроке не найдено" in outcome.message
 
 
-def test_preflight_area_second_attempt_finds_leaf(monkeypatch):
+def test_preflight_profession_second_attempt_finds_leaf(monkeypatch):
     responses: list[list[ProfessionalRole]] = [
         [ProfessionalRole("40", "Другое", "Медицина")],
         [ProfessionalRole("148", "Врач", "Медицина")],
@@ -144,17 +144,17 @@ def test_preflight_area_second_attempt_finds_leaf(monkeypatch):
 
     monkeypatch.setattr(module, "search_professional_roles", fake_search)
 
-    assert preflight_area(SimpleNamespace(), "Врач").ok is True
+    assert preflight_profession(SimpleNamespace(), "Врач").ok is True
 
 
-def test_preflight_area_allow_unresolved_passes_with_warning(monkeypatch):
+def test_preflight_profession_allow_unresolved_passes_with_warning(monkeypatch):
     monkeypatch.setattr(
         module,
         "search_professional_roles",
         lambda page, queries: [ProfessionalRole("148", "Врач", "Медицина")],
     )
 
-    outcome = preflight_area(SimpleNamespace(), "Врач-хирург", allow_unresolved_area=True)
+    outcome = preflight_profession(SimpleNamespace(), "Врач-хирург", allow_unresolved_area=True)
 
     assert outcome.ok is True
     assert "[WARN]" not in outcome.message

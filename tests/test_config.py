@@ -132,6 +132,79 @@ def test_load_config_applies_current_employer_to_every_resume(tmp_path):
     assert search.exclude_employers == ["OtherCorp", "ООО Пример", "Пример"]
 
 
+# --- D1 (issue-city-search-gaps): include_employers + salary_to --------------
+#
+# Include-фильтр работодателей и потолок ЗП — локальные фильтры filter_candidates
+# (в search URL hh.ru не уходят). Отсутствующий ключ -> нейтральное значение
+# ([] / None), невалидный тип -> ConfigError (явная валидация на границе).
+
+
+def test_load_config_parses_include_employers_and_salary_to(tmp_path):
+    path = _write_config(
+        tmp_path,
+        """
+        account:
+          storage_state_file: data/storage_state/hh_session.json
+        resumes:
+          - id: r1
+            resume_url: "https://hh.ru/resume/BBB222"
+            search:
+              text: "сборщик заказов"
+              include_employers: ["Лента", "Магнит"]
+              salary_to: 90000
+    """,
+    )
+    search = load_config(path).resumes[0].search
+    assert search.include_employers == ["Лента", "Магнит"]
+    assert search.salary_to == 90000
+
+
+def test_load_config_include_employers_defaults_to_empty(tmp_path):
+    path = _write_config(tmp_path, _minimal_config())
+    assert load_config(path).resumes[0].search.include_employers == []
+
+
+def test_load_config_salary_to_defaults_to_none(tmp_path):
+    path = _write_config(tmp_path, _minimal_config())
+    assert load_config(path).resumes[0].search.salary_to is None
+
+
+def test_load_config_rejects_non_list_include_employers(tmp_path):
+    path = _write_config(
+        tmp_path,
+        """
+        account:
+          storage_state_file: data/storage_state/hh_session.json
+        resumes:
+          - id: r1
+            resume_url: "https://hh.ru/resume/BBB222"
+            search:
+              text: "x"
+              include_employers: "Лента"
+    """,
+    )
+    with pytest.raises(ConfigError, match="include_employers"):
+        load_config(path)
+
+
+def test_load_config_rejects_non_int_salary_to(tmp_path):
+    path = _write_config(
+        tmp_path,
+        """
+        account:
+          storage_state_file: data/storage_state/hh_session.json
+        resumes:
+          - id: r1
+            resume_url: "https://hh.ru/resume/BBB222"
+            search:
+              text: "x"
+              salary_to: "abc"
+    """,
+    )
+    with pytest.raises(ConfigError, match="salary_to"):
+        load_config(path)
+
+
 def test_load_config_cover_letter_default_fallback(tmp_path):
     path = _write_config(
         tmp_path,

@@ -332,6 +332,177 @@ def test_search_text_without_resume_uses_empty_default_filters():
     assert actual[0].resume_id.startswith("adhoc-")
 
 
+# --- search --area (issue-city-search-gaps, воркстрим B1) -------------------
+#
+# --area оверлеит id города/региона (hh.ru area, напр. 1641 = Набережные
+# Челны, 88 = Казань) поверх фильтров резюме. Покрыты 4 комбинации:
+# (--resume | ad-hoc) x (--text | без --text). Обратная совместимость
+# Namespace без атрибута area защищена тестами выше (они не передают area).
+
+
+def _search_config(resumes):
+    import pathlib
+
+    from hhru_bot.config import AppConfig, ThrottleConfig
+
+    return AppConfig(
+        storage_state_file=pathlib.Path("state.json"),
+        throttle=ThrottleConfig(),
+        cover_letter_default="hello",
+        resumes=resumes,
+    )
+
+
+def _configured_resume():
+    from hhru_bot.config import ResumeConfig, SearchFilters
+
+    return ResumeConfig(
+        id="python",
+        resume_url="https://hh.ru/resume/AAA111",
+        search=SearchFilters(text="python", exclude_employers=["BadCorp"]),
+    )
+
+
+def test_resume_mode_area_with_text_overlays_both():
+    import argparse
+
+    from hhru_bot.commands.search import _resumes_for_search
+
+    resume = _configured_resume()
+    config = _search_config([resume])
+    args = argparse.Namespace(resume="python", text="Тестировщик", area=1641)
+
+    actual = _resumes_for_search(config, args)
+
+    assert actual[0].search.text == "Тестировщик"
+    assert actual[0].search.area == 1641
+    assert actual[0].search.exclude_employers == ["BadCorp"]
+    # иммутабельность: объект конфига не мутирован
+    assert resume.search.text == "python"
+    assert resume.search.area is None
+
+
+def test_resume_mode_area_without_text_keeps_configured_text():
+    import argparse
+
+    from hhru_bot.commands.search import _resumes_for_search
+
+    resume = _configured_resume()
+    config = _search_config([resume])
+    args = argparse.Namespace(resume="python", text=None, area=1641)
+
+    actual = _resumes_for_search(config, args)
+
+    assert actual[0].search.text == "python"
+    assert actual[0].search.area == 1641
+    assert resume.search.area is None
+
+
+def test_adhoc_text_with_area_builds_synthetic_resume():
+    import argparse
+
+    from hhru_bot.commands.search import _resumes_for_search
+    from hhru_bot.config import SearchFilters
+
+    config = _search_config([])
+    args = argparse.Namespace(resume=None, text="сборщик", area=1641)
+
+    actual = _resumes_for_search(config, args)
+
+    assert len(actual) == 1
+    assert actual[0].search == SearchFilters(text="сборщик", area=1641)
+    assert actual[0].resume_id.startswith("adhoc-")
+
+
+def test_adhoc_area_reaches_search_url():
+    import argparse
+
+    from hhru_bot.commands.search import _resumes_for_search
+    from hhru_bot.search import build_search_url
+
+    config = _search_config([])
+    args = argparse.Namespace(resume=None, text="сборщик", area=1641)
+
+    actual = _resumes_for_search(config, args)
+
+    url = build_search_url(actual[0].search)
+    assert "area=1641" in url
+
+
+def test_area_only_overlays_all_configured_resumes():
+    import argparse
+
+    from hhru_bot.commands.search import _resumes_for_search
+
+    resume = _configured_resume()
+    config = _search_config([resume])
+    args = argparse.Namespace(resume=None, text=None, area=1641)
+
+    actual = _resumes_for_search(config, args)
+
+    assert len(actual) == 1
+    assert actual[0].search.text == "python"
+    assert actual[0].search.area == 1641
+    assert resume.search.area is None
+
+
+def test_adhoc_history_isolated_by_area():
+    """Один и тот же текст в разных городах — разные ad-hoc запросы: их
+    локальная история (resume_id из query_key) не должна смешиваться."""
+    import argparse
+
+    from hhru_bot.commands.search import _resumes_for_search
+
+    config = _search_config([])
+
+    def adhoc_id(area):
+        args = argparse.Namespace(resume=None, text="сборщик", area=area)
+        return _resumes_for_search(config, args)[0].resume_id
+
+    assert adhoc_id(1641) != adhoc_id(88)
+    assert adhoc_id(1641) == adhoc_id(1641)
+    # legacy-изоляция: запрос без area остаётся отдельным от запроса с area
+    assert adhoc_id(None) != adhoc_id(1641)
+
+
+def test_adhoc_query_key_does_not_collide_with_area_syntax_in_text():
+    """m3: композиция key_source обязана быть инъективной.
+
+    --text со литералом "|area=88" (без --area) не должен получать тот же
+    query_key, что --text X --area 88: склейка строкой неоднозначна и слила бы
+    две разные ad-hoc истории в одну.
+    """
+    import argparse
+
+    from hhru_bot.commands.search import _resumes_for_search
+
+    config = _search_config([])
+
+    def adhoc_id(text, area):
+        args = argparse.Namespace(resume=None, text=text, area=area)
+        return _resumes_for_search(config, args)[0].resume_id
+
+    assert adhoc_id("сборщик|area=88", None) != adhoc_id("сборщик", 88)
+
+
+def test_register_area_rejects_non_positive_ids():
+    """m4: --area 0/-1 — не id каталога hh.ru; argparse отклоняет их до run(),
+    по прецеденту _positive_page_count/_nonnegative_limit (#441)."""
+    import argparse
+
+    from hhru_bot.commands import search as search_cmd
+
+    parser = argparse.ArgumentParser()
+    search_cmd.register(parser.add_subparsers())
+
+    parsed = parser.parse_args(["search", "--area", "1641"])
+    assert parsed.area == 1641
+
+    for bad in ("0", "-1"):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["search", "--area", bad])
+
+
 # --- VacancySearchIndeterminate не должен выдаваться за успешный результат ---
 #
 # cycle-review PR #460 (round 1): удалённый `continue` после `failed = True`
@@ -409,3 +580,105 @@ def test_indeterminate_search_skips_resume_without_recording_partial_results(tmp
     # partial_results must never reach the market-recording side effect nor be
     # printed as confirmed candidates -- the resume is skipped entirely.
     assert record_seen_calls == []
+
+
+# --- E4 (issue-city-search-gaps, факт 7): score UX без skonфигурированного scoring ---
+#
+# Без scoring-секции rank_candidates получает _ZERO_WEIGHTS и все кандидаты
+# имеют score=+0.00 BY DESIGN (порядок выдачи hh.ru). Нулевой score на каждой
+# строке — шум, который выглядит как поломка: печатаем один [INFO] в шапке
+# резюме, а score= на строках [candidate] не выводим. При заданном scoring
+# вывод со score= не меняется (обратная совместимость).
+
+
+def _run_search_with_rank(monkeypatch, tmp_path, resumes, ranked):
+    """Мокает браузер/поиск/отбор/ранжирование в run() до печати; возвращает args."""
+    import argparse
+
+    config = _search_config(resumes)
+
+    class _Context:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def new_page(self):
+            return object()
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **k: _Context())
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
+    monkeypatch.setattr(
+        "hhru_bot.search.search_vacancies",
+        lambda _page, _filters, max_pages: [card for card, _score, _b in ranked],
+    )
+    monkeypatch.setattr(search_command_module(), "_record_seen", lambda cards, _q, _h: None)
+    monkeypatch.setattr(
+        "hhru_bot.search.filter_candidates", lambda cards, *a, **k: (list(cards), [])
+    )
+    monkeypatch.setattr("hhru_bot.search.rank_candidates", lambda _c, _f, _r: list(ranked))
+
+    return argparse.Namespace(
+        config=None,
+        history=str(tmp_path / "history.db"),
+        account=None,
+        resume=None,
+        max_pages=1,
+        headless=True,
+    )
+
+
+def search_command_module():
+    from hhru_bot.commands import search as search_command
+
+    return search_command
+
+
+def test_run_without_scoring_prints_info_and_omits_per_line_score(tmp_path, monkeypatch, capsys):
+    args = _run_search_with_rank(
+        monkeypatch, tmp_path, [_configured_resume()], [(_card(), 0.0, {})]
+    )
+
+    failed = search_command_module().run(args)
+
+    assert failed is False
+    out = capsys.readouterr().out
+    assert out.count("[INFO] scoring не сконфигурирован — порядок выдачи hh.ru") == 1
+    assert "[candidate]" in out
+    assert "score=" not in out
+
+
+def test_run_with_scoring_keeps_score_output(tmp_path, monkeypatch, capsys):
+    import dataclasses
+    from types import SimpleNamespace
+
+    resume = dataclasses.replace(_configured_resume(), scoring=SimpleNamespace())
+    args = _run_search_with_rank(monkeypatch, tmp_path, [resume], [(_card(), 2.5, {"tier": 2.5})])
+
+    failed = search_command_module().run(args)
+
+    assert failed is False
+    out = capsys.readouterr().out
+    assert "score=+2.50" in out
+    assert "tier=+2.50" in out
+    assert "[INFO] scoring не сконфигурирован" not in out
+
+
+def test_info_printed_once_per_resume_not_per_line(tmp_path, monkeypatch, capsys):
+    from hhru_bot.config import ResumeConfig, SearchFilters
+
+    second = ResumeConfig(
+        id="qa", resume_url="https://hh.ru/resume/BBB222", search=SearchFilters(text="qa")
+    )
+    ranked = [(_card(), 0.0, {}), (_card(), 0.0, {})]
+    args = _run_search_with_rank(monkeypatch, tmp_path, [_configured_resume(), second], ranked)
+
+    failed = search_command_module().run(args)
+
+    assert failed is False
+    out = capsys.readouterr().out
+    # по одному [INFO] на каждое резюме (2 кандидата на резюме — не на строку)
+    assert out.count("[INFO] scoring не сконфигурирован — порядок выдачи hh.ru") == 2
+    assert out.count("[candidate]") == 4
+    assert "score=" not in out

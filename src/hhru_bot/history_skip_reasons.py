@@ -26,6 +26,8 @@ class _SkipReasons:
     STOPWORD_TITLE = "stopword_title"  # exclude_keywords совпал в названии
     BLACKLIST = "blacklist"
     STOPWORD_EMPLOYER = "stopword_employer"  # exclude_employers — стоп-компания
+    INCLUDE_EMPLOYER_MISS = "include_employer_miss"  # include_employers — вне списка интереса
+    SALARY_OVER_LIMIT = "salary_over_limit"  # salary_to — salary_from выше лимита
     CURRENT_EMPLOYER = "current_employer"  # account.current_employer
     ALREADY_APPLIED = "already_applied"  # history.has_applied — уже откликались
     LOW_EMPLOYER_SIGNAL = "low_employer_signal"  # #85 pre-LLM фильтр (зарезервирован)
@@ -57,6 +59,8 @@ SKIP_REASON_VALUES = (
     _SkipReasons.BLACKLIST,
     _SkipReasons.STOPWORD_TITLE,
     _SkipReasons.STOPWORD_EMPLOYER,
+    _SkipReasons.INCLUDE_EMPLOYER_MISS,
+    _SkipReasons.SALARY_OVER_LIMIT,
     _SkipReasons.CURRENT_EMPLOYER,
     _SkipReasons.ALREADY_APPLIED,
     _SkipReasons.LOW_EMPLOYER_SIGNAL,
