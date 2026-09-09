@@ -80,6 +80,12 @@ class _FakeLocator:
 
     def wait_for(self, *, state: str = "visible", timeout: float = 0) -> None:
         self._state.wait_for_timeout = timeout
+        # or_-локатор (гонка формы и пост-откликного маркера #1093): тесты
+        # проверяют budget ожидания по состоянию операнда (submit-кнопки), а
+        # wait_for в этой модели пишет в комбинированное состояние — дублируем
+        # в видимый операнд, куда реальный Playwright адресует ожидание.
+        if self._delegate_to is not None:
+            self._delegate_to.wait_for_timeout = timeout
         if self._state.wait_error:
             # Cycle-5: имитация не-timeout PlaywrightError (runtime/selector failure).
             raise Error(f"runtime error waiting for {self.selector}")
@@ -196,6 +202,17 @@ class _FakeLocator:
         )
         loc = _FakeLocator(f"({self.selector})|({other.selector})", combined, strict=False)
         loc._delegate_to = target
+        return loc
+
+    def filter(self, *, visible: bool | None = None) -> _FakeLocator:
+        # #1093: гонка в navigate_to_response_form фильтрует union по видимости
+        # (тот же приём, что check_already_responded #248). Модель фейка —
+        # один boolean visible на состояние, отдельного «attached-but-hidden»
+        # нет: фильтр либо пропускает состояние как есть (visible), либо
+        # подменяет заведомо пустым. Прочие критерии в src не используются.
+        if visible is None or self._state.visible:
+            return self
+        loc = _FakeLocator(self.selector, _SelectorState(visible=False), strict=False)
         return loc
 
 
@@ -416,37 +433,28 @@ def test_navigate_does_not_raise_when_form_never_renders():
     assert page.navigation_entered == 0
 
 
-def test_navigate_uses_bounded_random_dom_timeout_by_default(monkeypatch):
-    # form_timeout_ms не передан -> должен выбираться jitter, а не фиксированный
-    # APPLY_TIMEOUT_MS (обычный apply-цикл использует bounded random, не detect).
-    randint_calls: list[tuple[int, int]] = []
-
-    def _randint(minimum: int, maximum: int) -> int:
-        randint_calls.append((minimum, maximum))
-        return maximum
-
-    monkeypatch.setattr(steps.random, "randint", _randint)
+def test_navigate_uses_deliberate_default_form_budget():
+    # #1093: бюджет ожидания формы — единая осознанная константа, а не прежний
+    # случайный jitter 5–15с (таймауты 5971–12352ms в боевых логах были именно
+    # им): в one-click shape форма не монтируется вообще (9/9 дампов
+    # 2026-09-09), любой бюджет там — гарантированная потеря времени.
     page = FakeStepsPage()
     page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
 
     steps.navigate_to_response_form(page)
 
-    assert randint_calls == [
-        (steps.RESPONSE_READY_MIN_TIMEOUT_MS, steps.RESPONSE_READY_MAX_TIMEOUT_MS)
-    ]
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).wait_for_timeout == (
+        steps.RESPONSE_READY_TIMEOUT_MS
+    )
 
 
-def test_navigate_honors_explicit_form_timeout_ms_without_jitter(monkeypatch):
+def test_navigate_honors_explicit_form_timeout_ms():
     # #442 cycle-review (F6): form_timeout_ms ранее принимался, но игнорировался
     # в теле функции — только navigation_timeout_ms реально влиял на ожидание
     # submit-кнопки. questionnaire.py/probe.py передают form_timeout_ms=5_000/
     # 10_000 рассчитывая управлять именно этим ожиданием — регрессия должна
-    # провалить этот тест, если jitter снова перекроет явное значение.
-    def _fail_if_called(*_args, **_kwargs):
-        raise AssertionError("random.randint не должен вызываться при явном form_timeout_ms")
-
-    monkeypatch.setattr(steps.random, "randint", _fail_if_called)
+    # провалить этот тест, если дефолт снова перекроет явное значение.
     page = FakeStepsPage()
     page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
@@ -455,13 +463,9 @@ def test_navigate_honors_explicit_form_timeout_ms_without_jitter(monkeypatch):
     assert page._state(apply_form.APPLY_SUBMIT_BUTTON).wait_for_timeout == 5_000
 
 
-def test_navigate_form_timeout_ms_zero_is_honored_not_treated_as_falsy(monkeypatch):
+def test_navigate_form_timeout_ms_zero_is_honored_not_treated_as_falsy():
     # 0 — валидное значение таймаута в этом файле (см. render_timeout_ms=0);
-    # `form_timeout_ms or random.randint(...)` молча подменил бы 0 на jitter.
-    def _fail_if_called(*_args, **_kwargs):
-        raise AssertionError("random.randint не должен вызываться при form_timeout_ms=0")
-
-    monkeypatch.setattr(steps.random, "randint", _fail_if_called)
+    # `form_timeout_ms or <дефолт>` молча подменил бы 0 на дефолт.
     page = FakeStepsPage()
     page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
@@ -469,6 +473,32 @@ def test_navigate_form_timeout_ms_zero_is_honored_not_treated_as_falsy(monkeypat
     steps.navigate_to_response_form(page, form_timeout_ms=0)
 
     assert page._state(apply_form.APPLY_SUBMIT_BUTTON).wait_for_timeout == 0
+
+
+def test_navigate_one_click_marker_wins_race_returns_sentinel():
+    # #1093: one-click shape — после клика по кнопке отклика форма не
+    # монтируется никогда, а пост-откликный маркер («уже откликались»)
+    # отрендерился: гонка завершается маркером, а не таймаутом бюджета.
+    page = FakeStepsPage()
+    page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
+    page.set_visible(vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT, True)
+    # submit намеренно отсутствует: в one-click shape его не будет
+
+    result = steps.navigate_to_response_form(page)
+
+    assert isinstance(result, steps.OneClickResponded)
+
+
+def test_navigate_one_click_marker_absent_form_visible_returns_true():
+    # Обратная сторона гонки: маркер не отрендерился, форма видна — обычный
+    # путь формы, сентинел не возвращается.
+    page = FakeStepsPage()
+    page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    result = steps.navigate_to_response_form(page)
+
+    assert result is True
 
 
 def test_navigate_uses_wait_for_url_not_expect_navigation():

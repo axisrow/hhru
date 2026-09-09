@@ -24,7 +24,7 @@ from ..external_forms.detect import normalize
 from ..search import VacancyCard
 from .dedup import check_already_responded
 from .questions import detect_questions
-from .steps import navigate_to_response_form, wait_apply_button
+from .steps import OneClickResponded, navigate_to_response_form, wait_apply_button
 
 QUESTIONNAIRE = "questionnaire"
 NO_QUESTIONNAIRE = "no_questionnaire"
@@ -163,6 +163,13 @@ def scan_questionnaire(
             form_timeout_ms=form_timeout_ms,
             dump_diagnostics=False,
         )
+        if isinstance(form_state, OneClickResponded):
+            # #1093: one-click shape — сам клик по кнопке отклика отправил
+            # реальный отклик (скан этого не планировал). Вакансия теперь
+            # откликнута: ALREADY_RESPONDED, а не UNKNOWN — ретраи скана
+            # кликнули бы повторно (и повторный клик уже безопасно уйдёт в
+            # ветку wait_apply_button → check_already_responded выше).
+            return QuestionnaireScanResult(vacancy, ALREADY_RESPONDED, form_state.reason)
         if form_state is not True:
             return QuestionnaireScanResult(
                 vacancy,

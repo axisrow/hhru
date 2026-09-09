@@ -217,6 +217,16 @@ def probe_vacancy(
         # #350: развёрнутое предупреждение о видимости резюме — недвусмысленный
         # пропуск, без дампа (hh.ru дал определённый ответ прямо на странице).
         return ProbeResult(vacancy, False, navigation_result, skipped=True)
+    if isinstance(navigation_result, apply_steps.OneClickResponded):
+        # #1093: one-click shape — сам клик по кнопке отклика отправил реальный
+        # отклик (probe этого не планировал). Формы нет, дамплить нечего;
+        # честный skip с явным предупреждением о состоявшейся мутации.
+        logger.warning(
+            "[PROBE] %s — %s (клик по кнопке в one-click shape реально отправил отклик)",
+            vacancy.title,
+            navigation_result.reason,
+        )
+        return ProbeResult(vacancy, False, navigation_result.reason, skipped=True)
     if not navigation_result:
         reason = "форма отклика не отрисовалась — состояние формы не подтверждено"
         partial_ctx = ProbeContext(
