@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, call
 
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 
 import hhru_bot.skills as skills_module
 from hhru_bot.browser import RESUME_ERROR_BANNER
@@ -368,8 +369,10 @@ def test_edit_skills_waits_for_each_chip_before_next_addition(monkeypatch) -> No
 
 
 def test_edit_skills_stops_input_after_chip_commit_timeout(monkeypatch) -> None:
-    """#801: if a chip never confirms, further additions must not be typed —
-    the resulting mismatch is left for the post-save Counter check to catch."""
+    """#801/#1092: if a chip never confirms, further additions must not be
+    typed, the form is cancelled BEFORE save (zero mutation on hh.ru) and the
+    result is a plain failed, not uncertain — save was never clicked, so there
+    is no has_unresolved_uncertain retry barrier for a rerun."""
     resume = bare_resume("resume-id")
     page = MagicMock()
     page.url = "https://hh.ru/resume/resume-id"
@@ -380,9 +383,12 @@ def test_edit_skills_stops_input_after_chip_commit_timeout(monkeypatch) -> None:
     input_.input_value.return_value = ""
     save = MagicMock()
     save.count.return_value = 1
+    cancel = MagicMock()
     chip_locator = MagicMock()
     # The expected chip never appears — simulates a merged/rejected chip.
-    chip_locator.filter.return_value.count.return_value = 0
+    chip_locator.filter.return_value.first.wait_for.side_effect = PlaywrightError(
+        "chip render timeout"
+    )
     trigger = MagicMock()
     trigger.count.return_value = 1
     page.locator.side_effect = lambda selector: {
@@ -391,6 +397,7 @@ def test_edit_skills_stops_input_after_chip_commit_timeout(monkeypatch) -> None:
         skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
         skills_module.resume_page.RESUME_SKILLS_SUGGEST_USER_INPUT: _mock_suggest_locator(),
         skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
+        skills_module.resume_page.RESUME_PARTIAL_EDIT_CANCEL: cancel,
         skills_module.resume_page.RESUME_SKILLS_CHIP: chip_locator,
         skills_module.resume_page.RESUME_SKILLS_DISPLAY_TAG: _mock_display_tag_locator(),
     }[selector]
@@ -404,6 +411,60 @@ def test_edit_skills_stops_input_after_chip_commit_timeout(monkeypatch) -> None:
         "read_display_skills",
         MagicMock(return_value=(Skill("FastAPILangChain", "Средний уровень"),)),
     )
+
+    result = edit_skills_on_hh(
+        page,
+        resume,
+        (Skill("FastAPI", "intermediate"), Skill("LangChain", "intermediate")),
+        dry_run=False,
+        mode="append",
+    )
+
+    assert result.success is False
+    # #1092: input stopped before the save click — nothing reached hh.ru, so
+    # this is a plain failed (acted=False), never an uncertain.
+    assert result.acted is False
+    assert "форма закрыта без сохранения" in result.reason
+    cancel.click.assert_called_once()
+    save.click.assert_not_called()
+    # Only the first skill was typed; the timeout stopped the loop before the
+    # second fill could race the still-unsettled first one.
+    assert input_.fill.call_args_list == [call("FastAPI")]
+
+
+def test_edit_skills_stops_input_when_input_never_clears(monkeypatch) -> None:
+    """#1092: a chip that landed but left the input non-empty (a commit signal
+    that never finished) also stops input pre-save: cancel, no save click,
+    plain failed — not uncertain."""
+    resume = bare_resume("resume-id")
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/resume-id"
+    editor = MagicMock()
+    editor.wait_for.return_value = None
+    input_ = MagicMock()
+    input_.count.return_value = 1
+    # The chip lands, but the combobox never clears the typed text.
+    input_.input_value.return_value = "FastAPI"
+    save = MagicMock()
+    save.count.return_value = 1
+    cancel = MagicMock()
+    trigger = MagicMock()
+    trigger.count.return_value = 1
+    page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
+        skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
+        skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
+        skills_module.resume_page.RESUME_SKILLS_SUGGEST_USER_INPUT: _mock_suggest_locator(),
+        skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
+        skills_module.resume_page.RESUME_PARTIAL_EDIT_CANCEL: cancel,
+        skills_module.resume_page.RESUME_SKILLS_CHIP: _mock_chip_locator(),
+        skills_module.resume_page.RESUME_SKILLS_DISPLAY_TAG: _mock_display_tag_locator(),
+    }[selector]
+    monkeypatch.setattr(skills_module, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(skills_module, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(skills_module, "has_login_form", lambda _page: False)
+    monkeypatch.setattr(skills_module, "open_hydrated_resume_editor", lambda *_a, **_kw: editor)
+    monkeypatch.setattr(skills_module, "read_skills", MagicMock(return_value=()))
     monkeypatch.setattr(skills_module.time, "monotonic", MagicMock(side_effect=range(10_000)))
     monkeypatch.setattr(page, "wait_for_timeout", MagicMock())
 
@@ -416,9 +477,11 @@ def test_edit_skills_stops_input_after_chip_commit_timeout(monkeypatch) -> None:
     )
 
     assert result.success is False
-    assert result.acted is True
-    # Only the first skill was typed; the timeout stopped the loop before the
-    # second fill+Enter could race the still-unsettled first one.
+    assert result.acted is False
+    assert "поле ввода не очистилось" in result.reason
+    assert "форма закрыта без сохранения" in result.reason
+    cancel.click.assert_called_once()
+    save.click.assert_not_called()
     assert input_.fill.call_args_list == [call("FastAPI")]
 
 
