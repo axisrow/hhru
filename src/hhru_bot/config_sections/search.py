@@ -19,6 +19,34 @@ from ._validation import require
 _SCHEDULE_VALUES = frozenset({"fullDay", "shift", "flex", "flyInFlyOut", "remote"})
 
 
+def _parse_str_list(raw, key: str, context: str) -> list[str]:
+    """Список строк из raw[key]; None/отсутствие → [].
+
+    Явная валидация типа (fail-closed на границе конфига): строка вместо
+    списка или не-строковый элемент дают ConfigError с указанием поля.
+    """
+    value = raw.get(key)
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ConfigError(f"{context}.{key} должен быть списком строк")
+    return list(value)
+
+
+def _parse_optional_int(raw, key: str, context: str) -> int | None:
+    """Целое из raw[key]; None/отсутствие → None.
+
+    bool — подтип int в Python, но YAML true/false числом не является —
+    отклоняем явно, чтобы `salary_to: true` не превратился молча в 1.
+    """
+    value = raw.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ConfigError(f"{context}.{key} должен быть целым числом")
+    return value
+
+
 @register("search")
 def parse_search(raw, context: str) -> SearchFilters:
     """raw — подсекция search; context — строка вида 'resumes[i].search'."""
@@ -39,9 +67,11 @@ def parse_search(raw, context: str) -> SearchFilters:
         text=require(raw, "text", f"{context}.text"),
         area=raw.get("area"),
         salary_from=raw.get("salary_from"),
+        salary_to=_parse_optional_int(raw, "salary_to", context),
         experience=raw.get("experience"),
         schedule=schedule,
         allow_relocation=bool(raw.get("allow_relocation", False)),
+        include_employers=_parse_str_list(raw, "include_employers", context),
         exclude_employers=raw.get("exclude_employers") or [],
         exclude_keywords=raw.get("exclude_keywords") or [],
         must_have=raw.get("must_have") or [],

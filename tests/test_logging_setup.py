@@ -40,7 +40,20 @@ def test_setup_logging_rotates_without_deleting_archives(tmp_path, monkeypatch):
         assert handler.maxBytes == 128
         assert handler.backupCount == 2
 
-        messages = [f"rotation-message-{index}-" + "x" * 80 for index in range(6)]
+        # Calibrate padding from the live formatter so every written line lands
+        # in [maxBytes/2, maxBytes): the first message then writes without a
+        # rollover and each following message triggers exactly one, yielding
+        # len(messages) - 1 archives.  A hardcoded "x" * 80 made lines exceed
+        # maxBytes (formatter overhead was not accounted for) and rotated the
+        # very first message, archiving an empty segment.
+        probe_msg = "x" * 80
+        probe = logging.LogRecord("hhru_bot", logging.INFO, __file__, 1, probe_msg, (), None)
+        line_overhead = len(handler.format(probe)) + 1 - len(probe_msg)  # +1 for newline
+        prefix = "rotation-message-0-"
+        padding = 3 * handler.maxBytes // 4 - line_overhead - len(prefix)
+        assert padding > 0, "formatter overhead leaves no room to calibrate"
+
+        messages = [f"rotation-message-{index}-" + "x" * padding for index in range(6)]
         for message in messages:
             logger.info(message)
 

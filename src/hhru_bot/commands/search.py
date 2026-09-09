@@ -16,6 +16,18 @@ from ._common import add_common_args, resumes_from_args
 logger = logging.getLogger("hhru_bot.cli")
 
 
+def _positive_area_id(value: str) -> int:
+    """Валидатор --area: id территории в каталоге hh.ru — положительное целое.
+
+    m4 (ревью): голый type=int пропускал 0/-1 в search URL hh.ru (пустая/неясная
+    выдача); прецедент — _positive_page_count/_nonnegative_limit в _common.py (#441).
+    """
+    area_id = int(value)
+    if area_id < 1:
+        raise argparse.ArgumentTypeError("--area должен быть положительным id каталога")
+    return area_id
+
+
 def register(subparsers) -> None:
     p = subparsers.add_parser("search", help="Найти вакансии по фильтрам резюме (без откликов)")
     add_common_args(p)
@@ -46,6 +58,12 @@ def register(subparsers) -> None:
         "--list-saved",
         action="store_true",
         help="Показать список автопоисков аккаунта (read-only)",
+    )
+    p.add_argument(
+        "--area",
+        type=_positive_area_id,
+        help="Id города/региона из каталога hh.ru (напр. 1641 = Набережные Челны, "
+        "88 = Казань); разовый оверлей поверх фильтров резюме",
     )
     p.set_defaults(func=run)
 
@@ -257,27 +275,50 @@ def _load_saved_search_filters(
     return filters, False
 
 
+def _overlay_search(resume: ResumeConfig, text: str | None, area: int | None) -> ResumeConfig:
+    """Иммутабельно оверлеит разовые --text/--area поверх фильтров резюме.
+
+    None-значения не входят в оверлей: отсутствующий флаг не затирает
+    настроенный фильтр. Исходный объект конфига не мутируется (dataclasses.replace).
+    """
+    overrides = {
+        name: value for name, value in (("text", text), ("area", area)) if value is not None
+    }
+    if not overrides:
+        return resume
+    return replace(resume, search=replace(resume.search, **overrides))
+
+
 def _resumes_for_search(config, args: argparse.Namespace) -> list[ResumeConfig]:
     """Resolve configured resumes, optionally overlaying an ad-hoc query."""
     text = getattr(args, "text", None)
-    if args.resume:
-        resumes = resumes_from_args(config, args)
-        if text is None:
-            return resumes
-        return [replace(resume, search=replace(resume.search, text=text)) for resume in resumes]
-
-    if text is None:
+    area = getattr(args, "area", None)
+    if text is None and area is None:
         return resumes_from_args(config, args)
+
+    if args.resume or text is None:
+        # --resume: оверлей поверх выбранных резюме. Без --resume и без --text
+        # один --area оверлеит все настроенные резюме (тот же смысл: разовый
+        # город вместо настроенного).
+        return [_overlay_search(resume, text, area) for resume in resumes_from_args(config, args)]
 
     # Keep history for separate ad-hoc queries isolated from configured
     # resumes and from one another.  The synthetic resume is local-only: it is
-    # never used to address a resume on HH.ru.
-    query_key = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+    # never used to address a resume on HH.ru.  ``area`` participates in the
+    # key: the same text in different cities is a different query, and their
+    # local histories must not mix.
+    # m3 (ревью): склейка f"{text}|area={area}" не инъективна — текст со
+    # литералом "|area=88" дал бы тот же ключ, что текст "X" + --area 88, и две
+    # разные ad-hoc истории слились бы в одну. json — однозначная композиция.
+    # Ветка area=None сохраняет legacy key_source=text: существующая история
+    # запросов без города не сбрасывается.
+    key_source = text if area is None else json.dumps([text, area], ensure_ascii=False)
+    query_key = hashlib.sha256(key_source.encode("utf-8")).hexdigest()[:16]
     return [
         ResumeConfig(
             id=f"adhoc:{text}",
             resume_url=f"https://hh.ru/resume/adhoc-{query_key}",
-            search=SearchFilters(text=text),
+            search=SearchFilters(text=text, area=area),
         )
     ]
 
@@ -413,8 +454,11 @@ def run(args: argparse.Namespace) -> bool:
         # Режимы --save/--list-saved завершают команду: обычный поиск
         # в тех же прогонах не выполняется.
         return saved_mode_failed
-    if getattr(args, "saved", None) and (args.text or args.resume):
-        print("[FAIL] --saved не сочетается с --text/--resume: параметрика прогона")
+    if getattr(args, "saved", None) and (args.text or args.resume or args.area):
+        # --area добавлен в guard при rebase (issue-city-search-gaps): параметрика
+        # --saved приходит из URL автопоиска (включая его area) — явный оверлей
+        # игнорировался бы молча, как --text/--resume.
+        print("[FAIL] --saved не сочетается с --text/--resume/--area: параметрика прогона")
         print("       берётся из автопоиска, явные фильтры игнорировались бы молча")
         return True
     saved_filters, saved_failed = _load_saved_search_filters(args, config)
@@ -480,12 +524,22 @@ def run(args: argparse.Namespace) -> bool:
                 f"Найдено всего: {len(cards)}, "
                 f"подходящих: {len(candidates)}, исключено: {len(skipped)}"
             )
+            # E4 (issue-city-search-gaps, факт 7): без scoring-секции
+            # rank_candidates работает на _ZERO_WEIGHTS и каждый кандидат
+            # получает score=+0.00 BY DESIGN (порядок выдачи hh.ru). Нулевой
+            # score на каждой строке — шум, похожий на поломку: печатаем один
+            # [INFO] в шапке резюме и не выводим score= построчно. Логика
+            # ранжирования (search.py) не меняется — только UX вывода.
+            show_score = scoring is not None
+            if not show_score:
+                print("[INFO] scoring не сконфигурирован — порядок выдачи hh.ru")
             for c, score, breakdown in ranked:
                 factors = ", ".join(
                     f"{name}={value:+.2f}" for name, value in breakdown.items() if value
                 )
                 detail = f" | {factors}" if factors else ""
-                print(f"  [candidate] score={score:+.2f} {_format_card_line(c)}{detail}")
+                prefix = f"score={score:+.2f} " if show_score else ""
+                print(f"  [candidate] {prefix}{_format_card_line(c)}{detail}")
             for card, reason in skipped:
                 print(f"  [skip] {_format_card_line(card)} — {reason}")
     return failed

@@ -47,11 +47,18 @@ class SearchFilters:
     text: str
     area: int | None = None
     salary_from: int | None = None
+    # Локальный фильтр filter_candidates: отсев вакансий, чья НИЖНЯЯ граница
+    # ЗП (salary_from) выше порога, только в рублёвых валютах (см. search.py);
+    # в search URL hh.ru не уходит.
+    salary_to: int | None = None
     experience: str | None = None
     schedule: str | None = None
     # Explicitly permit confirming HH's relocation warning.  The safe default
     # is false; remote-only profiles must never silently accept relocation.
     allow_relocation: bool = False
+    # Локальный include-фильтр filter_candidates (зеркало exclude_employers,
+    # casefold substring); пустой список = без ограничений. В search URL не уходит.
+    include_employers: list[str] = field(default_factory=list)
     exclude_employers: list[str] = field(default_factory=list)
     current_employers: list[str] = field(default_factory=list)
     exclude_keywords: list[str] = field(default_factory=list)

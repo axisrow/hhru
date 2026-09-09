@@ -51,6 +51,7 @@ BROWSER_COMMANDS = frozenset(
         "census",
         "adaptive-resume",
         "apply",
+        "areas",
         "bump",
         "call-api",
         "clear-negotiations",

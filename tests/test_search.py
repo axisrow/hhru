@@ -300,9 +300,13 @@ class FakeHistory:
 
 
 def card(
-    vacancy_id: str, title: str = "T", company: str = "C", url: str = "https://hh.ru/vacancy/0"
+    vacancy_id: str,
+    title: str = "T",
+    company: str = "C",
+    url: str = "https://hh.ru/vacancy/0",
+    salary: SalaryInfo | None = None,
 ):
-    return VacancyCard(vacancy_id=vacancy_id, title=title, company=company, url=url)
+    return VacancyCard(vacancy_id=vacancy_id, title=title, company=company, url=url, salary=salary)
 
 
 # --- build_search_url ---
@@ -444,6 +448,162 @@ def test_filter_candidates_excludes_keywords():
     assert [c.vacancy_id for c in candidates] == ["1"]
     assert skipped[0][0].vacancy_id == "2"
     assert "стоп-слово" in skipped[0][1]
+
+
+# --- filter_candidates: include_employers + salary_to (issue-city-search-gaps D2) ---
+
+
+def test_filter_candidates_include_employers_keeps_only_matching():
+    """Непустой include_employers: проходят только карточки со списком интереса."""
+    filters = SearchFilters(text="x", include_employers=["лента"])
+    cards = [
+        card("1", company="ООО Лента"),
+        card("2", company="Магнит"),
+    ]
+    candidates, skipped = filter_candidates(cards, filters, "r1", FakeHistory())
+    assert [c.vacancy_id for c in candidates] == ["1"]
+    assert skipped[0][0].vacancy_id == "2"
+    assert "списком интереса" in skipped[0][1]
+
+
+def test_filter_candidates_include_employers_matches_casefold_substring():
+    """Зеркало exclude_employers: casefold substring, частичное совпадение."""
+    filters = SearchFilters(text="x", include_employers=["лента"])
+    candidates, skipped = filter_candidates(
+        [card("1", company="АО ЛЕНТА-Казань")], filters, "r1", FakeHistory()
+    )
+    assert [c.vacancy_id for c in candidates] == ["1"]
+    assert skipped == []
+
+
+def test_filter_candidates_include_employers_empty_keeps_all():
+    """Пустой include_employers (дефолт) = без ограничений."""
+    filters = SearchFilters(text="x")
+    cards = [card("1", company="Магнит"), card("2", company="ООО Лента")]
+    candidates, skipped = filter_candidates(cards, filters, "r1", FakeHistory())
+    assert [c.vacancy_id for c in candidates] == ["1", "2"]
+    assert skipped == []
+
+
+def test_filter_candidates_records_include_employer_miss():
+    """Include-отсев пишется в журнал skipped с INCLUDE_EMPLOYER_MISS."""
+    from hhru_bot.history import SKIP_REASONS
+
+    filters = SearchFilters(text="x", include_employers=["лента"])
+    history = FakeHistory()
+    filter_candidates([card("1", company="Магнит")], filters, "r1", history)
+    assert ("r1", "1", SKIP_REASONS.INCLUDE_EMPLOYER_MISS) in history.recorded_skips
+
+
+def test_filter_candidates_include_miss_empty_company_not_recorded():
+    """Пустая company = дрейф селектора: скип на прогон БЕЗ кэша (зеркало CURRENT_EMPLOYER)."""
+    filters = SearchFilters(text="x", include_employers=["лента"])
+    history = FakeHistory()
+    candidates, skipped = filter_candidates([card("1", company="")], filters, "r1", history)
+    assert candidates == []
+    assert len(skipped) == 1
+    assert history.recorded_skips == []
+
+
+def test_filter_candidates_salary_to_cuts_higher_salary():
+    """salary_from > salary_to → отсев; salary_from <= salary_to → проходит."""
+    filters = SearchFilters(text="x", salary_to=50000)
+    cards = [
+        card(
+            "1",
+            salary=SalaryInfo(salary_from=60000, salary_to=None, currency="RUR", raw="от 60000"),
+        ),
+        card(
+            "2",
+            salary=SalaryInfo(salary_from=40000, salary_to=None, currency="RUR", raw="от 40000"),
+        ),
+    ]
+    candidates, skipped = filter_candidates(cards, filters, "r1", FakeHistory())
+    assert [c.vacancy_id for c in candidates] == ["2"]
+    assert skipped[0][0].vacancy_id == "1"
+    assert "выше лимита" in skipped[0][1]
+
+
+def test_filter_candidates_salary_to_none_keeps_all():
+    """salary_to=None (дефолт) = без ограничения по потолку."""
+    filters = SearchFilters(text="x")
+    cards = [
+        card(
+            "1",
+            salary=SalaryInfo(salary_from=600000, salary_to=None, currency="RUR", raw="от 600000"),
+        ),
+        card("2"),
+    ]
+    candidates, skipped = filter_candidates(cards, filters, "r1", FakeHistory())
+    assert [c.vacancy_id for c in candidates] == ["1", "2"]
+    assert skipped == []
+
+
+def test_filter_candidates_salary_to_keeps_unknown_salary():
+    """Неизвестная зарплата (нет salary / только «до N») — не доказательство превышения."""
+    filters = SearchFilters(text="x", salary_to=50000)
+    cards = [
+        card("1", salary=None),
+        card(
+            "2",
+            salary=SalaryInfo(salary_from=None, salary_to=30000, currency="RUR", raw="до 30000"),
+        ),
+    ]
+    candidates, skipped = filter_candidates(cards, filters, "r1", FakeHistory())
+    assert [c.vacancy_id for c in candidates] == ["1", "2"]
+    assert skipped == []
+
+
+def test_filter_candidates_records_salary_over_limit():
+    """Salary-отсев пишется в журнал skipped с SALARY_OVER_LIMIT."""
+    from hhru_bot.history import SKIP_REASONS
+
+    filters = SearchFilters(text="x", salary_to=50000)
+    history = FakeHistory()
+    card_high = card(
+        "1", salary=SalaryInfo(salary_from=60000, salary_to=None, currency="RUR", raw="от 60000")
+    )
+    filter_candidates([card_high], filters, "r1", history)
+    assert ("r1", "1", SKIP_REASONS.SALARY_OVER_LIMIT) in history.recorded_skips
+
+
+def test_filter_candidates_salary_to_ignores_non_ruble_cards():
+    """M1: salary_to — рублёвый порог, а суммы в разных валютах несопоставимы.
+
+    «от 100 000 ₸» (KZT) при лимите 90000 не должен отсеиваться и попадать в
+    кэш skipped (иначе вакансия молча заблокирована для apply навсегда).
+    Карточка без маркера валюты (None) — рубли: hh.ru всегда явно показывает
+    нерублёвые символы (₸/$/€/тг), а парсер валюту по хвосту не угадывает.
+    """
+    from hhru_bot.history import SKIP_REASONS
+
+    filters = SearchFilters(text="x", salary_to=5000)
+    history = FakeHistory()
+    cards = [
+        card(
+            "1",
+            salary=SalaryInfo(
+                salary_from=100000, salary_to=None, currency="KZT", raw="от 100000 ₸"
+            ),
+        ),
+        card(
+            "2",
+            salary=SalaryInfo(salary_from=6000, salary_to=None, currency="USD", raw="от 6000 USD"),
+        ),
+        card(
+            "3",
+            salary=SalaryInfo(salary_from=6000, salary_to=None, currency=None, raw="от 6000"),
+        ),
+        card(
+            "4",
+            salary=SalaryInfo(salary_from=6000, salary_to=None, currency="RUB", raw="от 6000"),
+        ),
+    ]
+    candidates, skipped = filter_candidates(cards, filters, "r1", history)
+    assert [c.vacancy_id for c in candidates] == ["1", "2"]
+    assert [c.vacancy_id for c, _ in skipped] == ["3", "4"]
+    assert ("r1", "3", SKIP_REASONS.SALARY_OVER_LIMIT) in history.recorded_skips
+    assert ("r1", "1", SKIP_REASONS.SALARY_OVER_LIMIT) not in history.recorded_skips
 
 
 # --- filter_candidates: запись skip-причин в журнал skipped (#87) -----------

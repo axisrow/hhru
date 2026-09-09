@@ -29,8 +29,17 @@ END = "<!-- END CLI REF -->"
 
 
 def _opts(parser: argparse.ArgumentParser) -> list[argparse.Action]:
-    """Опции парсера (с option_strings), без служебного -h/--help."""
-    return [a for a in parser._actions if a.option_strings and a.dest != "help"]
+    """Опции парсера (с option_strings), без служебного -h/--help.
+
+    Скрытые алиасы (``help=argparse.SUPPRESS``) не попадают в доку — как и в
+    ``--help`` самого argparse: SUPPRESS означает «не показывать» (например,
+    устаревший ``create-resume --area`` при основном ``--profession``).
+    """
+    return [
+        a
+        for a in parser._actions
+        if a.option_strings and a.dest != "help" and a.help != argparse.SUPPRESS
+    ]
 
 
 def _fmt_opt(action: argparse.Action, *, trim_help: bool = False) -> str:

@@ -25,7 +25,7 @@ def _args(tmp_path, **overrides):
         config="unused.yaml",
         history=str(tmp_path / "history.db"),
         headless=True,
-        area="it",
+        profession="it",
         title="Backend developer",
         force=False,
         dry_run=False,
@@ -53,7 +53,7 @@ def env(monkeypatch, tmp_path):
     # предупреждения; конкретные refusal-сценарии — в тестах ниже и в
     # test_catalog_preflight.py.
     monkeypatch.setattr(
-        "hhru_bot.catalog_preflight.preflight_area",
+        "hhru_bot.catalog_preflight.preflight_profession",
         lambda page, area, *, allow_unresolved_area=False: PreflightOutcome(True, ""),
     )
 
@@ -78,7 +78,7 @@ def test_dry_run_is_default_and_does_not_prompt(env, tmp_path, capsys, monkeypat
 def test_preflight_refusal_blocks_wizard_in_live_run(env, tmp_path, capsys, monkeypatch):
     """#950: отказ по area наступает до входа в визард — create не вызывается."""
     monkeypatch.setattr(
-        "hhru_bot.catalog_preflight.preflight_area",
+        "hhru_bot.catalog_preflight.preflight_profession",
         lambda page, area, *, allow_unresolved_area=False: PreflightOutcome(
             False,
             "профессия «Хирург» не найдена в live-каталоге; ближайшие доступные "
@@ -97,7 +97,7 @@ def test_preflight_refusal_blocks_wizard_in_live_run(env, tmp_path, capsys, monk
 
 def test_preflight_refusal_blocks_dry_run_before_wizard(env, tmp_path, capsys, monkeypatch):
     monkeypatch.setattr(
-        "hhru_bot.catalog_preflight.preflight_area",
+        "hhru_bot.catalog_preflight.preflight_profession",
         lambda page, area, *, allow_unresolved_area=False: PreflightOutcome(
             False, "профессия не найдена в live-каталоге"
         ),
@@ -111,7 +111,7 @@ def test_preflight_refusal_blocks_dry_run_before_wizard(env, tmp_path, capsys, m
 
 def test_preflight_allow_mode_passes_with_warning(env, tmp_path, capsys, monkeypatch):
     monkeypatch.setattr(
-        "hhru_bot.catalog_preflight.preflight_area",
+        "hhru_bot.catalog_preflight.preflight_profession",
         lambda page, area, *, allow_unresolved_area=False: PreflightOutcome(
             True, "профессия не найдена; будет выбрана роль-плейсхолдер «Другое» (id 40)."
         ),
@@ -403,3 +403,81 @@ def test_fill_common_not_run_in_dry_run(env, tmp_path, capsys, monkeypatch):
     out = capsys.readouterr().out
     assert confirm_calls == []
     assert "[DRY-RUN] В боевом режиме --fill-common" in out
+
+
+# --- E1 (issue-city-search-gaps): --profession основной, --area скрытый алиас ---
+
+
+def _parser():
+    """Мини-парсер только с create-resume: глобальные флаги (--config и т.п.)
+    добавляет cli.py, для контракта register() они не нужны."""
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers()
+    cmd.register(subparsers)
+    return parser, subparsers
+
+
+def test_register_profession_flag_is_primary():
+    parser, _ = _parser()
+    ns = parser.parse_args(["create-resume", "--profession", "it", "--title", "T"])
+    assert ns.profession == "it"
+
+
+def test_register_area_alias_still_accepted():
+    """Старые вызовы --area X продолжают работать (скрытый алиас, compat)."""
+    parser, _ = _parser()
+    ns = parser.parse_args(["create-resume", "--area", "it", "--title", "T"])
+    assert ns.profession == "it"
+
+
+def test_register_area_hidden_from_help():
+    """--help (и генерируемые README/cli-spec) видят только --profession:
+    алиас скрыт argparse.SUPPRESS. "--area" не встречается как опция
+    ("--allow-unresolved-area" содержит "-area", но не "--area")."""
+    _, subparsers = _parser()
+    help_text = subparsers.choices["create-resume"].format_help()
+    assert "--profession" in help_text
+    assert "--area" not in help_text
+
+
+def test_register_both_flags_last_wins():
+    """Общий dest: при обоих флагах побеждает последний (argparse-семантика,
+    осознанное решение вместо конфликта — зафиксировано комментарием в register)."""
+    parser, _ = _parser()
+    ns = parser.parse_args(["create-resume", "--profession", "a", "--area", "b", "--title", "T"])
+    assert ns.profession == "b"
+
+
+def test_run_without_profession_fails_before_config(env, tmp_path, capsys):
+    """Обязательность проверяется вручную в run() (argparse не умеет «один из
+    двух required» со скрытым алиасом): [FAIL] + exit 2 (конвенция argparse),
+    до load_config/браузера."""
+    with pytest.raises(SystemExit) as exc:
+        cmd.run(_args(tmp_path, profession=None))
+    assert exc.value.code == 2
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out
+    assert "--profession" in out
+    assert env.calls == []
+
+
+def test_dry_run_plan_output_identical_for_profession_and_alias(env, tmp_path, capsys):
+    """--profession X и legacy --area X дают одинаковый plan/dry-run вывод;
+    строка плана говорит profession= (нейминг-ловушка «area=профессия» снята
+    и в выводе). UUID supervised-run нормализован: он уникален на запуск и
+    к семантике флага отношения не имеет."""
+    import re
+
+    parser, _ = _parser()
+    outputs = []
+    for argv in (["--profession", "it"], ["--area", "it"]):
+        ns = parser.parse_args(
+            ["create-resume", *argv, "--title", "Backend developer", "--dry-run"]
+        )
+        ns.config = "unused.yaml"
+        ns.history = str(tmp_path / "history.db")
+        ns.headless = True
+        cmd.run(ns)
+        outputs.append(re.sub(r"\[RUN\] id=\S+", "[RUN] id=<uuid>", capsys.readouterr().out))
+    assert outputs[0] == outputs[1]
+    assert "[DRY-RUN] Создание резюме: profession=it" in outputs[0]

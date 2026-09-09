@@ -12,8 +12,7 @@ def register(subparsers) -> None:
         "common",
         help="Заполнить простые поля экрана common резюме",
         description=(
-            "Заполняет через UI поля common, включая условия работы. "
-            "area, metro и citizenship пока не входят в команду."
+            "Заполняет через UI поля common, включая город, метро, гражданство и условия работы."
         ),
     )
     parser.add_argument("--resume", required=True, help="Slug из конфига или resume_id HH.ru")
@@ -25,7 +24,13 @@ def register(subparsers) -> None:
     )
     parser.add_argument("--gender", choices=("male", "female"), help="Пол")
     parser.add_argument("--phone", help="Телефон")
-    parser.add_argument("--area", help="Точный leaf города из live-каталога hh.ru")
+    # E2 (issue-city-search-gaps, факт 6): --area значил три разные вещи в CLI
+    # (id города в config/search, профессия в create-resume, город-строка здесь).
+    # Основной флаг — --city; --area сохранён скрытым алиасом для совместимости.
+    # Общий dest "city": при обоих флагах побеждает последний в argv — штатная
+    # argparse-семантика, осознанно не конфликт (то же решение, что в E1).
+    parser.add_argument("--city", help="Точный leaf города из live-каталога hh.ru")
+    parser.add_argument("--area", dest="city", help=argparse.SUPPRESS)
     parser.add_argument("--metro", help="Точная станция метро")
     parser.add_argument(
         "--citizenship",
@@ -151,7 +156,10 @@ def _run(args: argparse.Namespace, progress) -> bool:
         birthday=args.birthday,
         gender=args.gender,
         phone=args.phone,
-        area=getattr(args, "area", None),
+        # Граница словарей E2: CLI-флаг называется --city, а поле браузерного
+        # слоя CommonValues сохраняет имя "area" намеренно (hhru_bot/common.py
+        # не меняется — план заполнения печатает "area: <город>").
+        area=getattr(args, "city", None),
         metro=(
             [args.metro]
             if getattr(args, "metro", None) is not None and isinstance(args.metro, str)
