@@ -88,6 +88,13 @@ class MarketStore(AnalyticsMixin, VacanciesMixin, CompetitorsMixin):
         PK/UNIQUE-ключам), но после успешного прохода маркер в market_meta
         снимает работу с последующих открытий. Колонки берутся пересечением
         PRAGMA table_info — легаси-источник может не иметь поздних колонок.
+
+        При конфликте ключа между источниками побеждает ПЕРВЫЙ в порядке
+        ``_history_sources`` (корневой history.db, потом аккаунты по алфавиту),
+        а не самый свежий срез по last_seen_at/updated_at — осознанный выбор
+        для одноразовой миграции: реальная свежесть приезжает первым же
+        collect/search после неё, а гоняться за timestamp'ами между источниками
+        ради строк, которые вот-вот перезапишет штатный upsert, незачем.
         """
         done = conn.execute(
             "SELECT value FROM market_meta WHERE key = ?", (MIGRATION_MARKER_KEY,)

@@ -118,6 +118,35 @@ def test_migration_copies_all_rows_once_and_never_deletes_sources(tmp_path, monk
     assert (resumes, seen) == (2, 1)
 
 
+def test_record_seen_dual_writes_to_market_db(tmp_path, monkeypatch):
+    """Двойная запись search (#1106): _record_seen с реальным MarketStore
+    кладёт карточку и в per-account history, и в общую market.db — иначе
+    регрессия «забыл передать market=» пройдёт сюиту незамеченной."""
+    from hhru_bot.commands.search import _record_seen
+    from hhru_bot.search import SalaryInfo, VacancyCard
+
+    monkeypatch.setattr(
+        "hhru_bot.market_store.DEFAULT_MARKET_PATH", tmp_path / "data" / "market.db"
+    )
+    history = History(tmp_path / "data" / "accounts" / "alpha" / "history.db")
+    card = VacancyCard(
+        vacancy_id="00007",
+        title="Backend",
+        company="Acme",
+        url="https://hh.ru/vacancy/00007",
+        salary=SalaryInfo(300000, 400000, "RUB", "raw"),
+    )
+
+    _record_seen([card], "python backend", history, market=MarketStore())
+
+    market_rows = MarketStore(tmp_path / "data" / "market.db").list_vacancies_seen()
+    assert [r["vacancy_id"] for r in market_rows] == ["00007"]
+    assert market_rows[0]["salary_from"] == 300000
+    assert market_rows[0]["search_query"] == "python backend"
+    # Личная история тоже записана (её читают joins аналитики).
+    assert [r["vacancy_id"] for r in history.list_vacancies_seen()] == ["00007"]
+
+
 def test_default_market_path_is_cwd_relative():
     """Дефолт — data/market.db относительно cwd, по образцу history (#1106)."""
     assert str(DEFAULT_MARKET_PATH) == str(Path("data") / "market.db")
