@@ -42,23 +42,28 @@ def _classify_card_timeout(page: Page, card_link: Locator) -> str:
     какую сторону, ранний выход до действия: acted=False по #163).
     """
     any_card = page.locator(RESUME_LIST_CARD_LINK_PREFIX)
+    # Гидрация-гейт (#858, ревью PR #1079): count() — срез DOM, а не
+    # видимости: SSR-разметка содержит якоря resume-card-link-* ещё ДО
+    # гидрации, при этом якорь НАШЕГО резюме может появиться только после
+    # клиентского рендера. Ожидания разделены (nit-ревью PR #1079): таймаут
+    # ВИДИМОСТИ списка — состояние страницы не подтверждено независимо от
+    # count() (SSR-якоря в DOM ≠ отрисованный список, fail-closed #5);
+    # «удалено» — только когда список подтверждённо видим, а повторный
+    # поиск карточки в нём таймаутнул.
     try:
-        # Гидрация-гейт (#858, ревью PR #1079): count() — срез DOM, а не
-        # видимости: SSR-разметка содержит якоря resume-card-link-* ещё ДО
-        # гидрации, при этом якорь НАШЕГО резюме может появиться только после
-        # клиентского рендера. Поэтому вердикт «удалено» выносится не по
-        # count(), а после подтверждённо ВИДИМОГО списка и повторного поиска
-        # карточки — тот же приём, что ниже для не отрисовавшегося списка.
         any_card.first.wait_for(state="visible", timeout=BUMP_TIMEOUT_MS)
-        card_link.first.wait_for(state="visible", timeout=BUMP_TIMEOUT_MS)
     except PlaywrightTimeoutError:
-        if any_card.count() > 0:
-            return "резюме не найдено в списке /applicant/resumes (удалено или недоступно)"
         return (
             "список резюме не отрисовался за "
             f"{BUMP_TIMEOUT_MS // 1000} с (гидрация/медленная загрузка) — наличие "
             "резюме не подтверждено; повторите запуск позже"
         )
+    except PlaywrightError:
+        return "ошибка при поиске карточки резюме в списке — поднятие отменено"
+    try:
+        card_link.first.wait_for(state="visible", timeout=BUMP_TIMEOUT_MS)
+    except PlaywrightTimeoutError:
+        return "резюме не найдено в списке /applicant/resumes (удалено или недоступно)"
     except PlaywrightError:
         return "ошибка при поиске карточки резюме в списке — поднятие отменено"
     return ""

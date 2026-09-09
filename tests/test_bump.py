@@ -485,3 +485,26 @@ def test_bump_ssr_anchors_pre_hydration_do_not_falsely_delete():
 
     assert result.success is True
     assert "удалено" not in result.reason
+
+
+def test_bump_ssr_anchors_list_never_visible_is_indeterminate():
+    """#1076 (nit-ревью PR #1079): SSR-якоря в DOM есть, но список так и не
+    стал ВИДИМЫМ — состояние страницы не подтверждено (fail-closed #5),
+    НЕ «удалено»: таймаут видимости списка и таймаут повторного поиска
+    карточки — разные вердикты и не смешиваются в одном except."""
+    # render_after_waits=10: все ожидания истекают; count()>0 за счёт
+    # SSR-якорей, видимости нет.
+    page = FakeBumpPage(
+        hint_present=False,
+        button_present=True,
+        card_present=False,
+        render_after_waits=10,
+        ssr_anchors=True,
+    )
+
+    result = bump_resume(page, _resume(), dry_run=False)
+
+    assert result.success is False
+    assert "не подтверждено" in result.reason
+    assert "удалено" not in result.reason
+    assert result.acted is False
