@@ -412,6 +412,19 @@ def _execute(args: argparse.Namespace) -> None:
         setup_logging(verbose=args.verbose)
 
     try:
+        # #1069: имя команды (с подкомандой) — в контекст дрейфа DOM, чтобы
+        # провал селектора в глубине browser.py печатал пакет с командой.
+        from .drift import begin_drift_session
+
+        sub = next(
+            (
+                str(value)
+                for key, value in vars(args).items()
+                if key.endswith("_command") and isinstance(value, str)
+            ),
+            None,
+        )
+        begin_drift_session(f"{args.command} {sub}".strip() if sub else args.command)
         failed = args.func(args)
         # A command may return the conventional SIGINT status explicitly after
         # rendering a partial report (rather than raising KeyboardInterrupt).
