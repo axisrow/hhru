@@ -1,5 +1,5 @@
-// Локальный плагин opencode для проекта hhru (не коммитится; автозагрузка из
-// .opencode/plugins/ при старте opencode из корня проекта).
+// Локальный плагин opencode для проекта hhru (коммитится в репозиторий;
+// автозагрузка из .opencode/plugins/ при старте opencode из корня проекта).
 //
 // Назначение: человек общается с агентом по-русски, агент управляет CLI
 // hh.ru-бота через единственный санкционированный инструмент `hhru`.
@@ -158,19 +158,26 @@ export const HhruPlugin: Plugin = async ({ directory, worktree, $ }) => {
     "tool.execute.before": async (input, output) => {
       if (input.tool !== "bash") return
       const command = String((output.args as Record<string, unknown>).command ?? "")
-      const m = command.match(/(?:\.venv\/bin\/hhru|scripts\/run\.sh|(?<![\w/.-])hhru)\s+([^\n]*)/)
-      if (!m) return
-      const sub = firstSubcommand(tokenize(m[1]))
-      if (!sub) return
-      const kind = classify(sub)
-      const dangerous =
-        (kind === "hh_write" || kind === "local_write") && !m[1].includes("--dry-run")
-      if (dangerous) {
-        throw new Error(
-          `hhru: команда «${sub}» меняет данные и запрещена через голый bash без --dry-run. ` +
-          "Используй инструмент hhru: сначала dry_run=true (покажи план человеку), " +
-          "боевой запуск — только после явного согласия (confirmed=true).",
-        )
+      // Проверяем ВСЕ вхождения hhru/run.sh в строке (команда может быть
+      // цепочкой: `hhru whoami; hhru bump ...`), а наличие `--dry-run`
+      // определяем токенизацией сегмента — подстрока по строке целиком
+      // отключала бы страж значением аргумента или эхом в echo.
+      const re = /(?:\.venv\/bin\/hhru|scripts\/run\.sh|(?<![\w/.-])hhru)\s+([^\n]*)/g
+      let m: RegExpExecArray | null
+      while ((m = re.exec(command)) !== null) {
+        const tokens = tokenize(m[1])
+        const sub = firstSubcommand(tokens)
+        if (!sub) continue
+        const kind = classify(sub)
+        const dangerous =
+          (kind === "hh_write" || kind === "local_write") && !tokens.includes("--dry-run")
+        if (dangerous) {
+          throw new Error(
+            `hhru: команда «${sub}» меняет данные и запрещена через голый bash без --dry-run. ` +
+            "Используй инструмент hhru: сначала dry_run=true (покажи план человеку), " +
+            "боевой запуск — только после явного согласия (confirmed=true).",
+          )
+        }
       }
     },
 
