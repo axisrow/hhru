@@ -1284,10 +1284,10 @@ def test_reply_candidates_exclude_discard_status(tmp_path):
 
 def _discard_card_html(vacancy_id: str) -> str:
     return (
-        "<li><div data-qa=\"negotiations-item\">"
-        "<header><span data-qa=\"negotiations-tag negotiations-item-discard\">Отказ</span></header>"
-        f"<a href=\"/vacancy/{vacancy_id}?hhtmFrom=negotiation_list\">"
-        "<span data-qa=\"negotiations-item-vacancy\">Python dev</span></a>"
+        '<li><div data-qa="negotiations-item">'
+        '<header><span data-qa="negotiations-tag negotiations-item-discard">Отказ</span></header>'
+        f'<a href="/vacancy/{vacancy_id}?hhtmFrom=negotiation_list">'
+        '<span data-qa="negotiations-item-vacancy">Python dev</span></a>'
         "</div></li>"
     )
 
