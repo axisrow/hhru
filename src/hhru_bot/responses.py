@@ -47,7 +47,9 @@ NEGOTIATIONS_URL = f"{HH_BASE_URL}/applicant/negotiations"
 # и границы на живом html (бейдж и ссылка внутри одного среза, 20 карточек).
 _NEGOTIATION_CARD_RE = re.compile(r'data-qa=["\']negotiations-item["\']')
 _CARD_VACANCY_HREF_RE = re.compile(r'href=["\'][^"\']*?/vacancy/(\d+)')
-_CARD_BADGE_RE = re.compile(r'data-qa=["\']negotiations-tag[^"\']*["\'][^>]*>(.*?)</span>', re.DOTALL)
+_CARD_BADGE_RE = re.compile(
+    r'data-qa=["\']negotiations-tag[^"\']*["\'][^>]*>(.*?)</span>', re.DOTALL
+)
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 # Ждём появления карточек на JS-рендеренной странице. Достаточно для типичного
