@@ -29,6 +29,7 @@ from .selector_groups.negotiations import (
     CHAT_MESSAGE_SEND,
     CHAT_MESSAGE_TEXT,
     CHAT_MESSAGE_TIME,
+    DIALOGUE_CLOSED_NOTICE,
     QUICK_REPLY_BUTTON,
     QUICK_REPLY_BUTTONS_WRAPPER,
 )
@@ -106,6 +107,25 @@ class NoReplyForm(RuntimeError):
     после начала клика (см. ``send_reply_current``) — на hh.ru в этом случае
     следа нет, повторная попытка безопасна как ``status='failed'``.
     """
+
+
+def is_dialogue_closed(page) -> bool:
+    """Отрисован ли маркер закрытого диалога на открытом чате (#1104).
+
+    Слой 3 гейта «не отвечать отказавшим»: после отказа работодателя hh.ru
+    скрывает композер и рендерит предупреждение «Переписка будет доступна
+    после приглашения работодателя» (``DIALOGUE_CLOSED_NOTICE``). Правда
+    страницы чата, которая не устаревает — в отличие от статуса в локальной
+    истории (слой 1) и бейджа списка при планировании (слой 2).
+
+    Read-only (count по уже открытой странице чата), вызывается ДО
+    ``send_reply_current``: положительный ответ означает, что поле ответа
+    не появится никогда — писать в чат нечего, попытка недопустима.
+    Предупреждение без data-qa, поэтому здесь селектор-префикс CSS-модуля;
+    дрейф селектора здесь не ломает отправку (композер-проверка
+    ``send_reply_current`` остаётся fail-closed), только классификацию.
+    """
+    return page.locator(DIALOGUE_CLOSED_NOTICE).count() > 0
 
 
 # A URL is deliberately restricted to HTTP(S).  This avoids treating email

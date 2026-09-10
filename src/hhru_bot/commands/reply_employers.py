@@ -96,6 +96,7 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
     from ..negotiations_chat import (
         NoReplyForm,
         count_visible_messages,
+        is_dialogue_closed,
         is_robot_questionnaire,
         needs_follow_up,
         needs_reply,
@@ -144,6 +145,12 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
         # в responses.py ловит их так же): истёкшая сессия или не
         # подтверждённая пагинация не должны крашить команду с traceback.
         remindable_topics: set[str] | None = None
+        # Слой 2 гейта «не отвечать отказавшим» (#1104): vacancy_id карточек с
+        # бейджем «Отказ», собранные из того же html страниц ?page=N. В
+        # follow-up-режиме не собирается (там очередь уже исключает discard, а
+        # hh.ru-разрешение напоминалки проверяет remindable-гейт), set остаётся
+        # пустым и гейт ниже — no-op.
+        discard_vacancy_ids: set[str] = set()
         try:
             if follow_up:
                 # #710: локальная история говорит «работодатель молчит N дней»,
@@ -163,7 +170,9 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                 # negotiations (аналогично --max-pages в других командах),
                 # иначе чат, ушедший за пределы первой страницы, тихо
                 # выглядит как empty_chat.
-                topic_list = paginated_topic_refs(page, max_pages=max_pages)
+                topic_list = paginated_topic_refs(
+                    page, max_pages=max_pages, discard_vacancy_ids=discard_vacancy_ids
+                )
         except (NotAuthenticated, ResponsesIndeterminate, ValueError) as exc:
             # ValueError (#710, cycle-review round 2): remindable_topic_refs()
             # -- в отличие от topic_refs(), который молча дропает битые
@@ -195,6 +204,14 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
             topic = str(candidate["topic"])
             label = f"{candidate['vacancy_id']} «{candidate['title']}» @ {candidate['employer']}"
             live_resume_id = resume_by_topic.get(topic)
+            if str(candidate["vacancy_id"]) in discard_vacancy_ids:
+                # Слой 2 гейта «не отвечать отказавшим» (#1104): свежий бейдж
+                # «Отказ» из того же SSR-прохода. Стоит ДО read_chat —
+                # заведомо закрытый чат не стоит ни одного браузерного
+                # чтения (тот же принцип, что у remindable-гейта ниже).
+                print(f"[skip] {label} — работодатель отказал (бейдж переговоров)")
+                progress.skipped_count += 1
+                continue
             if remindable_topics is not None and topic not in remindable_topics:
                 # cycle-review (PR #761): этот гейт стоит ДО read_chat/decide
                 # намеренно (дешёвый ранний выход без лишнего браузерного
@@ -278,6 +295,18 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                     failed = True
                 continue
             assert chat is not None
+            if is_dialogue_closed(page):
+                # Слой 3 гейта «не отвечать отказавшим» (#1104): маркер
+                # закрытого диалога отрисован — hh.ru скрыл композер, поля
+                # ответа здесь не будет никогда. Правда страницы чата, не
+                # устаревающая вместе с локальной историей (слой 1) и бейджем
+                # списка (слой 2). Клика не было, следа на hh.ru нет — чистый
+                # skip до begin_action/journal; дрейф селектора маркера
+                # молча отключает только классификацию, композер-проверка
+                # send_reply_current остаётся fail-closed.
+                print(f"[skip] {label} — работодатель закрыл диалог (отказ), поля ответа нет")
+                progress.skipped_count += 1
+                continue
             # #710: для follow-up нет нового входящего сообщения, дедуплицируем
             # по marker'у самого затишья (status_changed_at кандидата), а не по
             # chat.inbound_marker (это marker НАШЕГО последнего сообщения и не

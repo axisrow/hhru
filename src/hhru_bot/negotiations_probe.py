@@ -173,7 +173,9 @@ def _require_windows_overlap(
         )
 
 
-def paginated_topic_refs(page, max_pages: int = 5) -> list[TopicRef]:
+def paginated_topic_refs(
+    page, max_pages: int = 5, discard_vacancy_ids: set[str] | None = None
+) -> list[TopicRef]:
     """Read SSR topic mappings from every available negotiations page.
 
     ``topicList`` is paginated with the cards, so reading only page zero makes
@@ -181,6 +183,12 @@ def paginated_topic_refs(page, max_pages: int = 5) -> list[TopicRef]:
     серверному контракту ``?page=N``; конец списка доказывается данными
     (страница без новых топиков), а не UI-пейджером — подробности дрейфа
     в комментарии внутри цикла.
+
+    ``discard_vacancy_ids`` (#1104) — опциональный out-параметр: если передан,
+    из того же ``page.content()`` каждой страницы собираются vacancy_id
+    карточек с бейджем «Отказ» (:func:`responses.discard_vacancy_ids_from_html`)
+    — слой 2 гейта «не отвечать отказавшим» без единого дополнительного
+    перехода. None — поведение прежнее (пробники, robot_reply).
     """
     if max_pages < 1:
         raise ValueError("max_pages must be >= 1")
@@ -203,7 +211,15 @@ def paginated_topic_refs(page, max_pages: int = 5) -> list[TopicRef]:
         # пустой inbox, но с другой причиной, которую вызывающий код не
         # должен путать с завершённой пагинацией.
         require_authenticated_page(page)
-        page_refs = topic_refs(page.content())
+        html = page.content()
+        page_refs = topic_refs(html)
+        if discard_vacancy_ids is not None:
+            # Слой 2 #1104: бейджи «Отказ» читаются из того же html, что и SSR
+            # topicList — см. docstring. Ленивый импорт: responses.py сам
+            # импортирует этот модуль (внутри _confirmed_no_new_topics).
+            from .responses import discard_vacancy_ids_from_html
+
+            discard_vacancy_ids.update(discard_vacancy_ids_from_html(html))
         new_refs = [r for r in page_refs if r.topic_id not in seen]
         # Живой дрейф 2026-09-09: hh.ru убрал пейджер из UI (карточки за
         # пределами первой двадцатки подгружаются скроллом), но серверный
