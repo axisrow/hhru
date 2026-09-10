@@ -29,7 +29,8 @@ from ..competitor_collection import (
     throttle_estimate,
 )
 from ..exit_codes import CommandExitCode
-from ..history import CommandRunBusy, History
+from ..history import CommandRunBusy
+from ..market_store import MarketStore
 
 # Re-exported for tests and back-compat (#1047): реализации переехали в
 # competitor_collection, имена остались на прежнем месте.
@@ -189,7 +190,10 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
         raise ValueError("--auth-mode authenticated требует --detail-workers 1")
 
     config = load_config_or_exit(args.config)
-    history = History(args.history)
+    # Рынок общий на все аккаунты (#1106): collect всегда пишет в data/market.db,
+    # а не в per-account args.history. --account определяет только конфиг/сессию
+    # (authenticated-сбор идёт под сессией этого аккаунта).
+    history = MarketStore()
     require_authentication = args.auth_mode == "authenticated"
     try:
         started = history.begin_competitor_collection(
@@ -325,7 +329,6 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
 
 def run_report(args: argparse.Namespace) -> None:
     from ..competitors import report_competitors
-    from ..history import History
 
     query = args.text.strip() if args.text else None
     if args.text is not None and not query:
@@ -336,7 +339,8 @@ def run_report(args: argparse.Namespace) -> None:
         # Область поиска — свойство одной выборки, а не всей базы: без --text
         # фильтровать нечего, и молча игнорировать флаг нельзя.
         raise ValueError("--search-in/--auth-mode требуют --text")
-    history = History(args.history)
+    # Рынок общий (#1106): report читает data/market.db независимо от --account.
+    history = MarketStore()
     rows = history.list_competitor_resumes(query, search_in=search_in, auth_mode=auth_mode)
     limited = history.count_limited_competitor_runs(query, search_in=search_in, auth_mode=auth_mode)
     print(report_competitors(rows, top=args.top, limited_runs=limited))

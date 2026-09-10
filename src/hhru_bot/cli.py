@@ -325,6 +325,14 @@ def _write_lock_path(args: argparse.Namespace) -> Path:
         from .professional_roles import DEFAULT_CACHE_PATH
 
         return DEFAULT_CACHE_PATH.expanduser().resolve().parent / ".professional_roles.lock"
+    if args.command == "competitors" and getattr(args, "competitors_command", None) == "collect":
+        # #1106: collect мутирует ОБЩУЮ data/market.db, а не per-account
+        # history — lock обязан быть глобальным вне аккаунт-директорий (тот же
+        # прецедент, что professional_roles выше), иначе два аккаунта Collect'или
+        # бы параллельно в одну базу.
+        from .market_store import DEFAULT_MARKET_PATH
+
+        return DEFAULT_MARKET_PATH.expanduser().resolve().parent / ".market.lock"
     writes_config = args.command == "config" or getattr(args, "write_config", False)
     # copy-resume's post-click list diff is an account-wide reconciliation.
     # Serialize by the config/session identity even when callers intentionally

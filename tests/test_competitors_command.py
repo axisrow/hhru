@@ -29,7 +29,15 @@ from hhru_bot.competitors import (
     CompetitorSearchCoverage,
 )
 from hhru_bot.exit_codes import CommandExitCode
-from hhru_bot.history import History
+from hhru_bot.market_store import MarketStore
+
+
+@pytest.fixture(autouse=True)
+def _market_db(tmp_path, monkeypatch):
+    """#1106: конкурент-команды открывают общую data/market.db, а не
+    per-account history — все тесты файла работают в изолированном market.db."""
+    monkeypatch.setattr("hhru_bot.market_store.DEFAULT_MARKET_PATH", tmp_path / "market.db")
+
 
 pytestmark = pytest.mark.integration
 
@@ -140,7 +148,7 @@ def _patch_runtime(monkeypatch) -> None:
 def test_competing_collect_returns_fail_without_traceback(tmp_path, monkeypatch, capsys):
     """A live collection lease is reported as a normal command failure."""
     _patch_runtime(monkeypatch)
-    history = History(tmp_path / "history.db")
+    history = MarketStore(tmp_path / "market.db")
     history.start_competitor_collection("AI", 1)
 
     result = run_collect(_args(tmp_path))
@@ -174,7 +182,7 @@ def test_signal_finalizes_partial_checkpoint(tmp_path, monkeypatch, signum, expe
     result = run_collect(_args(tmp_path))
 
     assert result is expected
-    row = History(tmp_path / "history.db").competitor_collection_runs()[0]
+    row = MarketStore(tmp_path / "market.db").competitor_collection_runs()[0]
     assert row["status"] == "partial"
     assert row["exit_code"] == expected.value
     assert row["last_started_page"] == 0
@@ -192,7 +200,7 @@ def test_browser_crash_finalizes_run_before_propagating(tmp_path, monkeypatch):
     with pytest.raises(PlaywrightError, match="browser closed"):
         run_collect(_args(tmp_path))
 
-    row = History(tmp_path / "history.db").competitor_collection_runs()[0]
+    row = MarketStore(tmp_path / "market.db").competitor_collection_runs()[0]
     assert row["status"] == "partial"
     assert row["exit_code"] == 1
     assert row["resume_page"] == 0
@@ -276,7 +284,7 @@ def test_auth_mode_controls_context_and_page_guards(
 
 
 def test_resume_starts_after_last_completed_page(tmp_path, monkeypatch):
-    history = History(tmp_path / "history.db")
+    history = MarketStore(tmp_path / "market.db")
     previous = history.start_competitor_collection("AI", 2)
     history.finish_competitor_collection(
         previous,
@@ -414,7 +422,7 @@ def test_variable_page_sizes_update_volume(tmp_path, monkeypatch, capsys):
             desired_role=card.desired_role,
         ),
     )
-    monkeypatch.setattr(History, "upsert_competitor_resume", lambda *_a, **_k: "new")
+    monkeypatch.setattr(MarketStore, "upsert_competitor_resume", lambda *_a, **_k: "new")
     args = _args(tmp_path)
     args.max_pages = 2
 
@@ -423,7 +431,7 @@ def test_variable_page_sizes_update_volume(tmp_path, monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "объём~120 деталей" in output
     assert "страница=2, карточек=120, деталей=120" in output
-    row = History(tmp_path / "history.db").competitor_collection_runs()[0]
+    row = MarketStore(tmp_path / "market.db").competitor_collection_runs()[0]
     assert row["status"] == "complete"
     assert row["cards_seen"] == 120
     assert row["details_saved"] == 120
@@ -444,12 +452,17 @@ from types import SimpleNamespace
 
 from hhru_bot.commands.competitors import run_collect
 from hhru_bot.competitors import CompetitorResume, CompetitorSearchCard, CompetitorSearchCoverage
-from hhru_bot.history import History
+from hhru_bot.market_store import MarketStore
 import hhru_bot.browser
 import hhru_bot.competitor_workers
 import hhru_bot.competitors
 import hhru_bot.config
+import hhru_bot.market_store
 import hhru_bot.throttle
+
+from pathlib import Path
+
+hhru_bot.market_store.DEFAULT_MARKET_PATH = Path({market_path!r})
 
 handshake_read_fd = {handshake_read_fd}
 
@@ -538,7 +551,7 @@ hhru_bot.competitors.has_next_search_page = lambda *_a, **_k: next(_next_pages)
 hhru_bot.competitors.inspect_search_coverage = (
     lambda *_a, **_k: CompetitorSearchCoverage(4, 2, False, 2)
 )
-History.upsert_competitor_resume = lambda _self, *_a, **_k: "new"
+MarketStore.upsert_competitor_resume = lambda _self, *_a, **_k: "new"
 
 _fetch_calls = 0
 
@@ -616,6 +629,7 @@ def test_stdout_streams_progress_line_by_line_before_process_completes(tmp_path)
         src_root=src_root,
         config_path=config_path,
         history_path=history_path,
+        market_path=str(tmp_path / "market.db"),
         handshake_read_fd=handshake_read_fd,
     )
     script_path = tmp_path / "stdout_streaming_child.py"
@@ -769,9 +783,9 @@ def _report_args(tmp_path: Path, **overrides) -> Namespace:
 
 
 def _seed_two_scopes(db: Path) -> None:
-    from hhru_bot.history import History
+    from hhru_bot.market_store import MarketStore
 
-    history = History(db)
+    history = MarketStore(db)
     for resume_id, role, scope in (
         ("designer", "Графический дизайнер", "full_text"),
         ("engineer", "AI Engineer", "position"),
@@ -806,7 +820,7 @@ def test_report_scope_flag_excludes_other_search_in(tmp_path, capsys):
     в него попадали дизайнеры из прежнего full_text-прогона."""
     from hhru_bot.commands.competitors import run_report
 
-    db = tmp_path / "history.db"
+    db = tmp_path / "market.db"
     _seed_two_scopes(db)
 
     run_report(_report_args(tmp_path, search_in="position"))
