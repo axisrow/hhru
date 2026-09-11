@@ -328,21 +328,38 @@ order by company;
 («чатGPT» — отдельный ключ от «ChatGPT»). Читаемые имена групп — словарь
 `CANONICAL_DISPLAY` в `src/hhru_bot/market_norm.py`.
 
-Топ ролей по всем резюме (по разбору составных должностей):
+Готовый читаемый топ по всей базе — `./scripts/run.sh competitors report`
+(витрина через словарь `CANONICAL_DISPLAY`); SQL ниже — когда нужна своя
+агрегация или экспорт, а его витрина «самая частая сырая форма» —
+приближение отчёта без словаря. Ключ после фолда — смешанная раскладка,
+поэтому в вывод подставляем самую частую сырую форму из той же таблицы,
+а не сам ключ:
 
 ```
 ./scripts/run.sh --history data/market.db query "
-  SELECT role_key, COUNT(DISTINCT resume_id) AS resumes
-  FROM competitor_resume_roles GROUP BY role_key ORDER BY resumes DESC LIMIT 15"
+  WITH top AS (
+    SELECT role_key, COUNT(DISTINCT resume_id) AS resumes
+    FROM competitor_resume_roles GROUP BY role_key ORDER BY resumes DESC LIMIT 15)
+  SELECT (SELECT r.role FROM competitor_resume_roles r WHERE r.role_key = t.role_key
+          GROUP BY r.role ORDER BY COUNT(*) DESC, r.role LIMIT 1) AS role, t.resumes
+  FROM top t ORDER BY t.resumes DESC"
 ```
 
 Топ навыков без расщепления по написанию («1С: Бухгалтерия» и
-«1C: Бухгалтерия» — один ключ):
+«1C: Бухгалтерия» — один ключ); витрина — по тому же паттерну, плюс сам
+`skill_key` — его копируют в рецепты подсчёта ниже. На `skill_key` индекса
+нет: витринный подзапрос сканирует таблицу на каждую строку вывода —
+не поднимайте LIMIT легкомысленно:
 
 ```
 ./scripts/run.sh --history data/market.db query "
-  SELECT skill_key, COUNT(DISTINCT resume_id) AS resumes
-  FROM competitor_resume_skills GROUP BY skill_key ORDER BY resumes DESC LIMIT 15"
+  WITH top AS (
+    SELECT skill_key, COUNT(DISTINCT resume_id) AS resumes
+    FROM competitor_resume_skills GROUP BY skill_key ORDER BY resumes DESC LIMIT 15)
+  SELECT (SELECT s.skill FROM competitor_resume_skills s WHERE s.skill_key = t.skill_key
+          GROUP BY s.skill ORDER BY COUNT(*) DESC, s.skill LIMIT 1) AS skill,
+         t.skill_key, t.resumes
+  FROM top t ORDER BY t.resumes DESC"
 ```
 
 Сколько резюме владеют конкретным навыком (ключ можно получить из любого
