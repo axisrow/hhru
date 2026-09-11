@@ -188,6 +188,11 @@ CREATE TABLE IF NOT EXISTS competitor_resume_roles (
     resume_id TEXT NOT NULL,
     role TEXT NOT NULL,
     role_key TEXT NOT NULL,
+    -- Семантический кластер профессии (market_norm.ROLE_CLUSTERS): QA
+    -- Engineer и Тестировщик ПО — один кластер «тестировщик». NULL = роль
+    -- без кластера, агрегат по самому role_key. Производное от role_key,
+    -- сырьё не трогается.
+    role_cluster TEXT,
     is_primary INTEGER NOT NULL DEFAULT 0,
     first_seen_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
@@ -237,4 +242,6 @@ MIGRATION_MARKER_KEY = "migrated_from_history"
 #      разделения версий не нужно), она дробила роли с точкой на конце.
 # v5 — э→e (брэнд/бренд) и механизм KEY_ALIASES (версии платформы,
 #      число слова, парные написания — по аудиту дубликатов).
-BACKFILL_MARKER_KEY = "competitor_norm_backfill:v5"
+# v6 — правило категорий прав и семантические кластеры ролей
+#      (role_cluster).
+BACKFILL_MARKER_KEY = "competitor_norm_backfill:v6"

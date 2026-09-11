@@ -14,7 +14,7 @@ from playwright.sync_api import Page
 
 from .apply.antibot import raise_for_antibot
 from .browser import HH_BASE_URL, goto_hh, require_authenticated_page, resume_identity_matches
-from .market_norm import canonical_display, fold_key, split_roles
+from .market_norm import canonical_display, fold_key, resolve_cluster, split_roles
 from .search import parse_salary
 from .selector_groups import competitor_resume as sel
 
@@ -738,10 +738,13 @@ def report_competitors(rows: list[dict], *, top: int, limited_runs: int = 0) -> 
             # разойдётся с PK-дедупом competitor_resume_roles.
             row_role_keys: set[str] = set()
             for part in split_roles(str(raw_role)):
-                key = cached_fold(part)
-                if key not in row_role_keys:
-                    row_role_keys.add(key)
-                    role_forms.setdefault(key, Counter())[part] += 1
+                # Профессия важнее написания: ключ роли резолвится в
+                # семантический кластер (QA Engineer и Тестировщик ПО —
+                # один бакет «тестировщик»).
+                ckey = resolve_cluster(cached_fold(part))
+                if ckey not in row_role_keys:
+                    row_role_keys.add(ckey)
+                    role_forms.setdefault(ckey, Counter())[part] += 1
         amount = row.get("salary_to") or row.get("salary_from")
         currency = row.get("salary_currency")
         if amount and currency:

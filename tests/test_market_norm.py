@@ -10,6 +10,7 @@ from hhru_bot.market_norm import (
     CANONICAL_DISPLAY,
     canonical_display,
     fold_key,
+    resolve_cluster,
     split_roles,
 )
 
@@ -107,6 +108,44 @@ def test_key_aliases_do_not_merge_distinct_things():
     assert fold_key("Java EE") != fold_key("Java SE")
     assert fold_key("2D") != fold_key("3D")
     assert fold_key("B2B") != fold_key("B2C")
+
+
+def test_fold_key_merges_license_categories():
+    # «Посрать, ABS или D»: любые категории водительских удостоверений —
+    # один ключ (v6, префикс-правило).
+    assert fold_key("Водительское удостоверение категории B") == fold_key(
+        "Водительское удостоверение категории BC"
+    )
+    assert fold_key("Водительское удостоверение категории A") == fold_key(
+        "Водительское удостоверение категории D"
+    )
+    assert fold_key("Водительское удостоверение категории «В, С»;") == fold_key(
+        "Водительское удостоверение"
+    )
+
+
+def test_role_clusters_aggregate_professions():
+    # Семантический слой: синонимы — одна профессия.
+    assert resolve_cluster(fold_key("QA Engineer")) == resolve_cluster(fold_key("Тестировщик"))
+    assert resolve_cluster(fold_key("Тестировщик ПО")) == "тестировщик"
+    assert resolve_cluster(fold_key("Тестер")) == "тестировщик"
+    assert resolve_cluster(fold_key("Data Scientist")) == resolve_cluster(fold_key("DS"))
+    assert resolve_cluster(fold_key("Интернет-маркетолог")) == resolve_cluster(
+        fold_key("Маркетолог")
+    )
+
+
+def test_role_clusters_respect_boundaries():
+    # Не-склейки зафиксированы стражем: граничные роли остаются отдельными.
+    assert resolve_cluster(fold_key("Главный бухгалтер")) != resolve_cluster(fold_key("Бухгалтер"))
+    assert resolve_cluster(fold_key("помощник бухгалтера")) != resolve_cluster(
+        fold_key("Бухгалтер")
+    )
+    assert resolve_cluster(fold_key("Маркетолог-аналитик")) != resolve_cluster(
+        fold_key("Маркетолог")
+    )
+    # Без кластера ключ возвращается сам.
+    assert resolve_cluster(fold_key("Кладовщик")) == fold_key("Кладовщик")
 
 
 def test_fold_key_drops_emoji_and_punctuation_only():

@@ -27,7 +27,7 @@ from pathlib import Path
 from .history_analytics import AnalyticsMixin
 from .history_competitors import CompetitorsMixin, ensure_competitor_norm_columns
 from .history_vacancies import VacanciesMixin
-from .market_norm import fold_key, split_roles
+from .market_norm import ROLE_CLUSTERS, fold_key, split_roles
 from .market_schema import BACKFILL_MARKER_KEY, MIGRATION_MARKER_KEY, SCHEMA
 
 logger = logging.getLogger("hhru_bot.market")
@@ -203,15 +203,19 @@ class MarketStore(AnalyticsMixin, VacanciesMixin, CompetitorsMixin):
             conn.execute("DELETE FROM competitor_resume_roles")
             for row in resumes:
                 for position, part in enumerate(split_roles(str(row["desired_role"]))):
-                    role_key = cached_key(part)
+                    # split_roles отбрасывает части с пустым фолдом — None
+                    # здесь недостижим.
+                    role_key = cached_key(part) or ""
                     conn.execute(
                         """INSERT OR IGNORE INTO competitor_resume_roles
-                           (resume_id, role, role_key, is_primary, first_seen_at, last_seen_at)
-                           VALUES (?, ?, ?, ?, ?, ?)""",
+                           (resume_id, role, role_key, role_cluster, is_primary,
+                            first_seen_at, last_seen_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
                         (
                             row["resume_id"],
                             part,
                             role_key,
+                            ROLE_CLUSTERS.get(role_key),
                             1 if position == 0 else 0,
                             old_roles.get((row["resume_id"], role_key), now),
                             now,
