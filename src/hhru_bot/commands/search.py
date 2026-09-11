@@ -356,10 +356,8 @@ def _format_card_line(card: VacancyCard) -> str:
     return f"{card.title} — {card.company} ({card.url}){suffix}"
 
 
-def _record_seen(
-    cards: list[VacancyCard], search_query: str, history: History, market=None
-) -> None:
-    """Записывает собранные карточки в vacancies_seen (#66, рынок).
+def _record_seen(cards: list[VacancyCard], search_query: str, market=None) -> None:
+    """Записывает собранные карточки в общую рыночную базу (#66, #1109).
 
     Побочный эффект сбора — НЕ влияет на поиск/скоринг/вывод. Пишет ВСЕ
     собранные карточки (до фильтра stop-списками/историей): рынок хочет полную
@@ -367,11 +365,11 @@ def _record_seen(
     SalaryInfo (#34); None → «з/п не указана» (тоже пишется для доли рынка без
     зарплаты). Сбой записи НЕ должен валить поиск — рынок лишь удобство.
 
-    #1106: запись ДВОЙНАЯ — в per-account history (vacancies_seen там читают
-    joins личной аналитики: funnel/replies/adaptive) и в общую data/market.db
-    (откуда читает команда market). ``market`` — уже открытый MarketStore или
-    None, если общую базу открыть не удалось: personal-путь важнее, отказ
-    market-записи не должен валить и его.
+    #1109: запись ОДНА — в общую data/market.db (MarketStore); легаси-копия в
+    per-account history.db убрана (vacancies_seen там больше не создаётся),
+    личная аналитика (funnel/adaptive/skipped/reply) читает карточки из
+    market.db. ``market`` — уже открытый MarketStore или None, если общую базу
+    открыть не удалось: запись молча пропускается, поиску рынок не нужен.
 
     employer_tier (#93): classify_employer(company, employer_info) на каждую
     карточку — уровень известности (top_tech/big_corp/mid/unknown). Нужен для
@@ -388,6 +386,8 @@ def _record_seen(
     activity/hh_rating/hrbrand_winner/metro_stations (#551) — приоритет-3
     признаки; станции сохраняются JSON-массивом, чтобы поддержать 0..N.
     """
+    if market is None:
+        return
     from ..scoring import classify_employer
 
     for card in cards:
@@ -416,7 +416,7 @@ def _record_seen(
         if tier == "unknown" and (employer_info is None or employer_info.reviews_count is None):
             tier = None
         try:
-            history.upsert_vacancy_seen(
+            market.upsert_vacancy_seen(
                 vacancy_id=card.vacancy_id,
                 search_query=search_query,
                 title=title,
@@ -441,35 +441,6 @@ def _record_seen(
                 if card.metro_stations is not None
                 else None,
             )
-            if market is not None:
-                # #1106: та же карточка — в общую рыночную базу. Отдельный
-                # try не нужен: сбой любой из двух записей ниже ловит общий
-                # except, а upsert идемпотентен — повторный search допишет.
-                market.upsert_vacancy_seen(
-                    vacancy_id=card.vacancy_id,
-                    search_query=search_query,
-                    title=title,
-                    company=company,
-                    salary_from=salary.salary_from if salary else None,
-                    salary_to=salary.salary_to if salary else None,
-                    salary_currency=salary.currency if salary else None,
-                    employer_tier=tier,
-                    vacancy_text=card.vacancy_text or None,
-                    published_at=card.published_at.isoformat() if card.published_at else None,
-                    address=card.address or None,
-                    is_remote=card.is_remote,
-                    experience=card.experience or None,
-                    snippet_requirement=card.snippet_requirement or None,
-                    snippet_responsibility=card.snippet_responsibility or None,
-                    side_job=card.side_job,
-                    no_resume=card.no_resume,
-                    activity=card.activity or None,
-                    hh_rating=card.hh_rating or None,
-                    hrbrand_winner=card.hrbrand_winner,
-                    metro_stations=json.dumps(card.metro_stations, ensure_ascii=False)
-                    if card.metro_stations is not None
-                    else None,
-                )
         except Exception as e:  # noqa: BLE001 — рынок не должен валить поиск
             logger.warning("Не записать вакансию %s в рынок: %s", card.vacancy_id, e)
 
@@ -486,16 +457,6 @@ def run(args: argparse.Namespace) -> bool:
 
     config = load_config_or_exit(args.config)
     history = History(args.history)
-    # #1106: общая рыночная база для двойной записи vacancies_seen. Открытие
-    # вне try не делаем: невозможность открыть market.db не должна мешать
-    # поиску (personal-история пишется независимо).
-    try:
-        from ..market_store import MarketStore
-
-        market = MarketStore()
-    except Exception as e:  # noqa: BLE001 — рынок не должен валить поиск
-        logger.warning("Не открыть общую рыночную базу market.db: %s", e)
-        market = None
     saved_mode_failed = _run_saved_search_modes(args, config)
     if saved_mode_failed is not None:
         # Режимы --save/--list-saved завершают команду: обычный поиск
@@ -524,6 +485,14 @@ def run(args: argparse.Namespace) -> bool:
     else:
         resumes = _resumes_for_search(config, args)
 
+    # #1106/#1109: общая рыночная база для записи собранных карточек. Открытие
+    # мягкое (open_market возвращает None при сбое): невозможность открыть
+    # market.db не должна мешать поиску (personal-история пишется независимо).
+    # Рынок нужен только самому прогону поиска, поэтому открывается ПОСЛЕ
+    # завершающих режимов --save/--list-saved и guard'а --saved — им он не нужен.
+    from ..market_store import open_market
+
+    market = open_market()
     failed = False
     with launch_context(
         config.storage_state_file, headless=args.headless, user_agent=config.user_agent
@@ -552,7 +521,7 @@ def run(args: argparse.Namespace) -> bool:
                 continue
             # #66: запись собранных карточек в рынок (побочный эффект сбора) —
             # между search_vacancies и filter_candidates, не трогая отбор/скоринг.
-            _record_seen(cards, resume.search.text, history, market=market)
+            _record_seen(cards, resume.search.text, market=market)
             # pre-LLM фильтр работодателя (#85): пороги из опц. scoring.prefilter.
             scoring = getattr(resume, "scoring", None)
             prefilter = getattr(scoring, "prefilter", None)

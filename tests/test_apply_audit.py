@@ -241,11 +241,12 @@ def test_approved_apply_from_pre_migration_queue_row_falls_back_to_vacancies_see
 ):
     """Codex adversarial-review round 2 (PR #449): review_queue rows created
     before this fix shipped have no stored search_query (the column didn't
-    exist yet) and are attributed via the existing vacancies_seen fallback in
-    funnel_by_search_query — exactly the pre-PR `main` behavior for every
-    action (#420: "keep vacancies_seen as fallback rather than backfilling
-    historical actions"). This is a one-time migration-window case, not a new
-    defect: rows enqueued *after* this fix always carry their real query (see
+    exist yet) and are attributed via the collected cards in the shared
+    market.db (vacancies_seen fallback in funnel_by_search_query, #1109) —
+    exactly the pre-PR `main` behavior for every action (#420: "keep the
+    fallback rather than backfilling historical actions"). This is a one-time
+    migration-window case, not a new defect: rows enqueued *after* this fix
+    always carry their real query (see
     test_approved_apply_attributes_to_the_query_recorded_at_enqueue_time), so
     the fallback here only ever applies to the finite backlog of queue
     entries that predate the column.
@@ -270,18 +271,11 @@ def test_approved_apply_from_pre_migration_queue_row_falls_back_to_vacancies_see
         url="https://hh.ru/vacancy/123",
     )
     # This vacancy was independently seen by `search` under two unrelated queries.
-    now = "2026-01-01T00:00:00"
-    with history._connect() as conn:
-        conn.execute(
-            "INSERT INTO vacancies_seen (vacancy_id, search_query, first_seen_at, last_seen_at) "
-            "VALUES (?, ?, ?, ?)",
-            ("123", "python", now, now),
-        )
-        conn.execute(
-            "INSERT INTO vacancies_seen (vacancy_id, search_query, first_seen_at, last_seen_at) "
-            "VALUES (?, ?, ?, ?)",
-            ("123", "backend", now, now),
-        )
+    from hhru_bot.market_store import MarketStore
+
+    market = MarketStore(tmp_path / "market.db")
+    market.upsert_vacancy_seen(vacancy_id="123", search_query="python")
+    market.upsert_vacancy_seen(vacancy_id="123", search_query="backend")
     # Pre-fix queue row: no search_query recorded (legacy row, provenance unknown).
     item_id = history.enqueue_review("AAA111", card, 1.0, {}, "cover letter")
     permit = history.approve_review(item_id)
@@ -314,12 +308,12 @@ def test_approved_apply_from_pre_migration_queue_row_falls_back_to_vacancies_see
 
     _common.run_apply_for_resume(object(), config, resume, history, throttle, args)
 
-    funnel = history.funnel_by_search_query()
+    funnel = history.funnel_by_search_query(market=market)
     attributed_to_seen_queries = {
         row["search_query"] for row in funnel if row["search_query"] in {"python", "backend"}
     }
     assert attributed_to_seen_queries == {"python", "backend"}, (
-        "pre-migration queue row should still fall back to vacancies_seen, "
+        "pre-migration queue row should still fall back to the collected cards, "
         f"got {attributed_to_seen_queries}"
     )
 

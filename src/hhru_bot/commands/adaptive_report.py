@@ -20,7 +20,14 @@ def run(args: argparse.Namespace) -> None:
     from ..report_adaptive import format_adaptive, success_statement
 
     config = load_config_or_exit(args.config)
-    metrics = build_adaptive_metrics(config.resumes, History(args.history).adaptive_report_facts())
+    # #1109: вакансии для метрик читаются из общей market.db; недоступна —
+    # мягкая деградация (метрики по actions/responses/views).
+    from ..market_store import open_market
+
+    market = open_market()
+    metrics = build_adaptive_metrics(
+        config.resumes, History(args.history).adaptive_report_facts(market=market)
+    )
     print(format_adaptive(metrics))
     if not metrics or not any(m.samples for m in metrics):
         print("[INFO] insufficient data: score для резюме пока не накоплен")

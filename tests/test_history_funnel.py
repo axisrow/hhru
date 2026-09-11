@@ -11,6 +11,9 @@ topic), хранит ТЕКУЩИЙ статус. Поэтому воронка 
 иначе read→invitation регрессировал бы viewed до 0. Ручной offer живёт в
 manual_offers (per-resume, липкая), не в responses. Статусы read/invitation в
 тестах сидируем через upsert_response #12 с явным topic.
+
+С #1109 карточки вакансий (атрибуция по запросу, зарплата в отказах) живут в
+общей market.db: сидируем MarketStore и передаём его параметром ``market=``.
 """
 
 from __future__ import annotations
@@ -20,12 +23,17 @@ from datetime import datetime, timedelta
 import pytest
 
 from hhru_bot.history import History
+from hhru_bot.market_store import MarketStore
 
 pytestmark = pytest.mark.unit
 
 
 def _iso_days_ago(days: int) -> str:
     return (datetime.now() - timedelta(days=days)).isoformat()
+
+
+def _market(tmp_path) -> MarketStore:
+    return MarketStore(tmp_path / "market.db")
 
 
 # --- структура: responses и manual_offers существуют после инициализации ----
@@ -228,23 +236,19 @@ def test_funnel_since_filters_old_actions(tmp_path):
 def test_funnel_by_search_query_joins_seen_vacancies_and_sorts_by_invite_rate(tmp_path):
     """Запросы считаются отдельно, включая одну вакансию, найденную дважды."""
     h = History(tmp_path / "h.db")
+    market = _market(tmp_path)
     for vacancy in ("v1", "v2", "v3"):
         h.record_action("r1", vacancy, "apply", "success")
-    with h._connect() as conn:
-        for vacancy, query in (
-            ("v1", "python"),
-            ("v2", "python"),
-            ("v2", "backend"),
-            ("v3", "backend"),
-        ):
-            conn.execute(
-                "INSERT INTO vacancies_seen "
-                "(vacancy_id, search_query, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?)",
-                (vacancy, query, "2026-01-01", "2026-01-01"),
-            )
+    for vacancy, query in (
+        ("v1", "python"),
+        ("v2", "python"),
+        ("v2", "backend"),
+        ("v3", "backend"),
+    ):
+        market.upsert_vacancy_seen(vacancy_id=vacancy, search_query=query)
     h.upsert_response("v1", "Acme", "invitation", "/c", topic="1")
 
-    funnel = h.funnel_by_search_query()
+    funnel = h.funnel_by_search_query(market=market)
     assert [row["search_query"] for row in funnel] == ["python", "backend"]
     assert funnel[0]["sent"] == 2
     assert funnel[0]["invited"] == 1
@@ -274,16 +278,12 @@ def test_funnel_by_search_query_counts_distinct_resumes_per_vacancy(tmp_path):
     занижая счётчики и искажая производные *_rate.
     """
     h = History(tmp_path / "h.db")
+    market = _market(tmp_path)
     h.record_action("r1", "v1", "apply", "success")
     h.record_action("r2", "v1", "apply", "success")
-    with h._connect() as conn:
-        conn.execute(
-            "INSERT INTO vacancies_seen "
-            "(vacancy_id, search_query, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?)",
-            ("v1", "python", "2026-01-01", "2026-01-01"),
-        )
+    market.upsert_vacancy_seen(vacancy_id="v1", search_query="python")
 
-    funnel = h.funnel_by_search_query()
+    funnel = h.funnel_by_search_query(market=market)
     assert funnel[0]["sent"] == 2
     assert funnel[0]["viewed"] == 0  # ни один отклик не получил ответа/оффера
 
@@ -296,17 +296,13 @@ def test_funnel_by_search_query_counts_viewed_per_distinct_resume(tmp_path):
     к дедупу по одному vacancy_id (а не паре resume_id:vacancy_id) тоже ловился.
     """
     h = History(tmp_path / "h.db")
+    market = _market(tmp_path)
     h.record_action("r1", "v1", "apply", "success")
     h.record_action("r2", "v1", "apply", "success")
-    with h._connect() as conn:
-        conn.execute(
-            "INSERT INTO vacancies_seen "
-            "(vacancy_id, search_query, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?)",
-            ("v1", "python", "2026-01-01", "2026-01-01"),
-        )
+    market.upsert_vacancy_seen(vacancy_id="v1", search_query="python")
     h.upsert_response("v1", "Acme", "read", "/c", topic="1")
 
-    funnel = h.funnel_by_search_query()
+    funnel = h.funnel_by_search_query(market=market)
     assert funnel[0]["viewed"] == 2
 
 
@@ -314,33 +310,25 @@ def test_funnel_by_search_query_counts_viewed_per_distinct_resume(tmp_path):
 
 
 def test_count_unattributed_applies_counts_missing_vacancies_seen_rows(tmp_path):
-    """apply/run не пишут vacancies_seen (#411 code review) — этот счётчик
+    """apply/run не пишут карточки (#411 code review) — этот счётчик
     делает потерю видимой вместо тихого искажения funnel_by_search_query.
     """
     h = History(tmp_path / "h.db")
+    market = _market(tmp_path)
     h.record_action("r1", "v1", "apply", "success")
     h.record_action("r1", "v2", "apply", "success")
-    with h._connect() as conn:
-        conn.execute(
-            "INSERT INTO vacancies_seen "
-            "(vacancy_id, search_query, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?)",
-            ("v1", "python", "2026-01-01", "2026-01-01"),
-        )
+    market.upsert_vacancy_seen(vacancy_id="v1", search_query="python")
 
-    assert h.count_unattributed_applies() == 1  # только v2 без vacancies_seen
+    assert h.count_unattributed_applies(market=market) == 1  # только v2 без карточки
 
 
 def test_count_unattributed_applies_zero_when_all_attributed(tmp_path):
     h = History(tmp_path / "h.db")
+    market = _market(tmp_path)
     h.record_action("r1", "v1", "apply", "success")
-    with h._connect() as conn:
-        conn.execute(
-            "INSERT INTO vacancies_seen "
-            "(vacancy_id, search_query, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?)",
-            ("v1", "python", "2026-01-01", "2026-01-01"),
-        )
+    market.upsert_vacancy_seen(vacancy_id="v1", search_query="python")
 
-    assert h.count_unattributed_applies() == 0
+    assert h.count_unattributed_applies(market=market) == 0
 
 
 def test_count_unattributed_applies_filters_resume_and_since(tmp_path):
@@ -357,21 +345,19 @@ def test_count_unattributed_applies_filters_resume_and_since(tmp_path):
 
 def test_funnel_by_search_query_filters_resume_and_since(tmp_path):
     h = History(tmp_path / "h.db")
+    market = _market(tmp_path)
     h.record_action("r1", "v1", "apply", "success")
     h.record_action("r2", "v2", "apply", "success")
+    market.upsert_vacancy_seen(vacancy_id="v1", search_query="q")
+    market.upsert_vacancy_seen(vacancy_id="v2", search_query="q")
     with h._connect() as conn:
         for vacancy, _resume, created in (("v1", "r1", "2026-01-01"), ("v2", "r2", "2026-01-02")):
-            conn.execute(
-                "INSERT INTO vacancies_seen "
-                "(vacancy_id, search_query, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?)",
-                (vacancy, "q", "2026-01-01", "2026-01-01"),
-            )
             conn.execute(
                 "UPDATE actions SET created_at = ? WHERE vacancy_id = ?", (created, vacancy)
             )
 
-    assert h.funnel_by_search_query(resume_id="r1")[0]["sent"] == 1
-    assert h.funnel_by_search_query(since="2026-01-01T12:00:00")[0]["sent"] == 1
+    assert h.funnel_by_search_query(resume_id="r1", market=market)[0]["sent"] == 1
+    assert h.funnel_by_search_query(since="2026-01-01T12:00:00", market=market)[0]["sent"] == 1
 
 
 # --- dead_responses: отклики без ответа за N дней --------------------------
@@ -419,17 +405,18 @@ def test_dead_responses_empty_is_zero(tmp_path):
 def test_rejections_group_by_employer_query_and_salary_without_cartesian_rows(tmp_path):
     """Отказ атрибутируется по карточке, а EXISTS не размножает его actions."""
     h = History(tmp_path / "h.db")
+    market = _market(tmp_path)
     h.record_action("r1", "v1", "apply", "success")
     h.record_action("r2", "v1", "apply", "success")  # второй action не удваивает отказ
     h.record_action("r1", "v2", "apply", "success")
-    h.upsert_vacancy_seen(
+    market.upsert_vacancy_seen(
         "v1",
         search_query="python",
         salary_from=100_000,
         salary_to=150_000,
         salary_currency="RUR",
     )
-    h.upsert_vacancy_seen(
+    market.upsert_vacancy_seen(
         "v2",
         search_query="backend",
         salary_from=200_000,
@@ -438,7 +425,7 @@ def test_rejections_group_by_employer_query_and_salary_without_cartesian_rows(tm
     h.upsert_response("v1", "Acme", "discard", None, topic="1")
     h.upsert_response("v2", "Acme", "discard", None, topic="2")
 
-    rows = h.rejections_by_employer()
+    rows = h.rejections_by_employer(market=market)
 
     assert rows == [
         {
@@ -461,7 +448,7 @@ def test_rejections_group_by_employer_query_and_salary_without_cartesian_rows(tm
 
 
 def test_rejections_keep_vacancy_without_seen_card_and_filter_resume(tmp_path):
-    """Отказ без vacancies_seen не выпадает и --resume сужает actions."""
+    """Отказ без карточки в market не выпадает и --resume сужает actions."""
     h = History(tmp_path / "h.db")
     h.record_action("r1", "v1", "apply", "success")
     h.record_action("r2", "v2", "apply", "success")
@@ -485,12 +472,13 @@ def test_rejections_keep_vacancy_without_seen_card_and_filter_resume(tmp_path):
 def test_rejections_prefer_apply_search_query_over_other_seen_queries(tmp_path):
     """Точная actions.search_query не приписывается соседним поискам."""
     h = History(tmp_path / "h.db")
+    market = _market(tmp_path)
     h.record_action("r1", "v1", "apply", "success", search_query="python")
-    h.upsert_vacancy_seen("v1", search_query="python", salary_from=100_000)
-    h.upsert_vacancy_seen("v1", search_query="backend", salary_from=200_000)
+    market.upsert_vacancy_seen("v1", search_query="python", salary_from=100_000)
+    market.upsert_vacancy_seen("v1", search_query="backend", salary_from=200_000)
     h.upsert_response("v1", "Acme", "discard", None, topic="1")
 
-    rows = h.rejections_by_employer()
+    rows = h.rejections_by_employer(market=market)
 
     assert [(row["search_query"], row["salary_from"]) for row in rows] == [("python", 100_000)]
 
@@ -511,14 +499,15 @@ def test_rejections_resume_filter_respects_known_response_attribution(tmp_path):
 def test_rejections_default_report_respects_known_response_attribution(tmp_path):
     """Без --resume известные response.resume_id не смешивают поиски резюме."""
     h = History(tmp_path / "h.db")
+    market = _market(tmp_path)
     h.record_action("r1", "v1", "apply", "success", search_query="python")
     h.record_action("r2", "v1", "apply", "success", search_query="backend")
-    h.upsert_vacancy_seen("v1", search_query="python", salary_from=100_000)
-    h.upsert_vacancy_seen("v1", search_query="backend", salary_from=200_000)
+    market.upsert_vacancy_seen("v1", search_query="python", salary_from=100_000)
+    market.upsert_vacancy_seen("v1", search_query="backend", salary_from=200_000)
     h.upsert_response("v1", "Acme", "discard", None, topic="1", resume_id="r1")
     h.upsert_response("v1", "Beta", "discard", None, topic="2", resume_id="r2")
 
-    rows = h.rejections_by_employer()
+    rows = h.rejections_by_employer(market=market)
 
     assert [(row["employer"], row["search_query"]) for row in rows] == [
         ("Acme", "python"),

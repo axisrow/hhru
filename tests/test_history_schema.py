@@ -29,6 +29,26 @@ def test_schema_creates_actions_table():
         conn.close()
 
 
+def test_fresh_history_db_has_no_legacy_market_tables(tmp_path):
+    """#1109 (breaking): свежесозданный account db НЕ содержит ни одной из 5
+    легаси рыночных таблиц — они живут только в общей data/market.db
+    (MarketStore), а личная аналитика читает карточки оттуда параметром."""
+    History(tmp_path / "accounts" / "alpha" / "history.db")
+    conn = sqlite3.connect(tmp_path / "accounts" / "alpha" / "history.db")
+    try:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    finally:
+        conn.close()
+    for legacy in (
+        "vacancies_seen",
+        "competitor_resumes",
+        "competitor_resume_skills",
+        "competitor_resume_queries",
+        "competitor_collection_runs",
+    ):
+        assert legacy not in tables, f"легаси-таблица {legacy} не должна создаваться в history.db"
+
+
 def test_schema_is_idempotent():
     # IF NOT EXISTS: повторное executescript той же схемы не падает.
     conn = sqlite3.connect(":memory:")

@@ -96,27 +96,41 @@ def run(args: argparse.Namespace) -> None:
     history = History(args.history)
 
     if getattr(args, "rejections", False):
-        rejections = history.rejections_by_employer(since=since, resume_id=resume_id)
+        # #1109: зарплаты отказов читаются из общей market.db; недоступна —
+        # аналитика деградирует мягко (отказы с пустыми карточными полями).
+        from ..market_store import open_market
+
+        market = open_market()
+        rejections = history.rejections_by_employer(since=since, resume_id=resume_id, market=market)
         print(format_rejections(rejections, args.format))
         return
 
     if args.dead:
         # «мёртвая зона»: доля откликов без ответа старше --dead-days.
+        # market.db не нужен: этап считается только по actions × responses.
         dead = history.dead_responses(days=args.dead_days, resume_id=resume_id)
         print(format_dead(dead, args.format))
         return
 
+    # #1109: карточки вакансий (атрибуция по запросу) читаются из общей
+    # market.db; недоступна — аналитика деградирует мягко.
+    from ..market_store import open_market
+
+    market = open_market()
+
     # На пустой истории воронка печатает шапку таблицы (формат стабилен, как
     # format_actions в report.py) — пользователь видит структуру даже без данных.
     if args.search_query:
-        funnel = history.funnel_by_search_query(since=since, resume_id=resume_id)
+        funnel = history.funnel_by_search_query(since=since, resume_id=resume_id, market=market)
         print(format_funnel(funnel, args.format, group_key="search_query"))
-        # #411 code review: INNER JOIN к vacancies_seen молча теряет отклики,
-        # сделанные через apply/run без предварительного отдельного search по
-        # тем же вакансиям (vacancies_seen заполняет только команда search).
-        # Числа воронки при этом корректны для того, что она видит — просто
-        # неполны; предупреждаем, а не оставляем расхождение незаметным.
-        unattributed = history.count_unattributed_applies(since=since, resume_id=resume_id)
+        # #411 code review: отклики, сделанные через apply/run без
+        # предварительного отдельного search по тем же вакансиям (карточки в
+        # market.db пишет только команда search), не имеют атрибуции по
+        # запросу. Числа воронки при этом корректны для того, что она видит —
+        # просто неполны; предупреждаем, а не оставляем расхождение незаметным.
+        unattributed = history.count_unattributed_applies(
+            since=since, resume_id=resume_id, market=market
+        )
         if unattributed:
             print(
                 f"[INFO] {unattributed} отклик(ов) не привязаны к поисковому "

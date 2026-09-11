@@ -9,6 +9,8 @@ from pathlib import Path
 import pytest
 
 from hhru_bot.history import CommandRunBusy, History
+from hhru_bot.market_schema import MARKET_TABLES_DDL
+from hhru_bot.market_store import MarketStore
 
 pytestmark = pytest.mark.unit
 
@@ -38,10 +40,28 @@ def _snapshot(*, role="AI Engineer", skills=None):
     }
 
 
-def test_history_creates_competitor_tables(tmp_path):
+def test_competitor_tables_live_in_market_db_not_history(tmp_path):
+    """#1109 (breaking): competitor-таблицы создаёт только MarketStore (общая
+    data/market.db); per-account history.db их больше не имеет."""
     db = tmp_path / "history.db"
     History(db)
     with sqlite3.connect(db) as conn:
+        tables = {
+            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+    assert (
+        not {
+            "competitor_resumes",
+            "competitor_resume_skills",
+            "competitor_resume_queries",
+            "competitor_collection_runs",
+            "vacancies_seen",
+        }
+        & tables
+    )
+
+    MarketStore(tmp_path / "market.db")
+    with sqlite3.connect(tmp_path / "market.db") as conn:
         tables = {
             row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
@@ -50,6 +70,7 @@ def test_history_creates_competitor_tables(tmp_path):
         "competitor_resume_skills",
         "competitor_resume_queries",
         "competitor_collection_runs",
+        "vacancies_seen",
     } <= tables
 
 
@@ -91,7 +112,7 @@ def test_existing_competitor_rows_get_nullable_geography_columns(tmp_path):
 
 
 def test_upsert_current_snapshot_and_query_relations_are_atomic(tmp_path):
-    history = History(tmp_path / "history.db")
+    history = MarketStore(tmp_path / "market.db")
     assert history.upsert_competitor_resume(_snapshot(), search_query="AI", search_rank=1) == "new"
     assert (
         history.upsert_competitor_resume(_snapshot(), search_query="LLM", search_rank=2)
@@ -111,7 +132,7 @@ def test_upsert_current_snapshot_and_query_relations_are_atomic(tmp_path):
 
 
 def test_upsert_preserves_all_skill_values_without_privacy_triggers(tmp_path):
-    history = History(tmp_path / "history.db")
+    history = MarketStore(tmp_path / "market.db")
     skills = [
         {"name": "node.js"},
         {"name": "test@example.com"},
@@ -130,7 +151,7 @@ def test_upsert_preserves_all_skill_values_without_privacy_triggers(tmp_path):
         "node.js",
         "test@example.com",
     ]
-    with sqlite3.connect(tmp_path / "history.db") as conn:
+    with sqlite3.connect(tmp_path / "market.db") as conn:
         triggers = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='trigger' "
             "AND name LIKE 'competitor_resume_skills_no_contacts%'"
@@ -176,7 +197,7 @@ def test_existing_skill_privacy_schema_is_migrated_away(tmp_path):
 
 
 def test_failed_write_rolls_back_previous_snapshot(tmp_path):
-    history = History(tmp_path / "history.db")
+    history = MarketStore(tmp_path / "market.db")
     history.upsert_competitor_resume(_snapshot(), search_query="AI", search_rank=1)
     broken = _snapshot(role="broken", skills=[{}])
     with pytest.raises(KeyError):
@@ -187,7 +208,7 @@ def test_failed_write_rolls_back_previous_snapshot(tmp_path):
 
 
 def test_collection_run_status_and_limited_count(tmp_path):
-    history = History(tmp_path / "history.db")
+    history = MarketStore(tmp_path / "market.db")
     run_id = history.start_competitor_collection("AI", 5)
     history.finish_competitor_collection(
         run_id,
@@ -213,7 +234,7 @@ def test_collection_run_status_and_limited_count(tmp_path):
 
 
 def test_collection_checkpoint_persists_owner_heartbeat_and_resume_page(tmp_path):
-    history = History(tmp_path / "history.db")
+    history = MarketStore(tmp_path / "market.db")
     run_id = history.start_competitor_collection("AI", 0)
 
     history.checkpoint_competitor_collection(
@@ -238,7 +259,7 @@ def test_collection_checkpoint_persists_owner_heartbeat_and_resume_page(tmp_path
 
 
 def test_live_competitor_owner_is_not_recovered(tmp_path):
-    history = History(tmp_path / "history.db")
+    history = MarketStore(tmp_path / "market.db")
     run_id = history.start_competitor_collection("AI", 0)
 
     with pytest.raises(CommandRunBusy):
@@ -249,13 +270,13 @@ def test_live_competitor_owner_is_not_recovered(tmp_path):
 
 
 def test_abrupt_process_exit_is_recovered_from_last_checkpoint(tmp_path):
-    db = tmp_path / "history.db"
+    db = tmp_path / "market.db"
     run_file = tmp_path / "run-id"
     script = f"""
 import os
 from pathlib import Path
-from hhru_bot.history import History
-h = History({str(db)!r})
+from hhru_bot.market_store import MarketStore
+h = MarketStore({str(db)!r})
 run_id = h.start_competitor_collection('AI', 0)
 h.checkpoint_competitor_collection(
     run_id, pages_fetched=3, cards_seen=60, details_saved=47, details_failed=1,
@@ -269,7 +290,7 @@ os._exit(9)
     child = subprocess.run([sys.executable, "-c", script], check=False, env=env)
     assert child.returncode == 9
 
-    history = History(db)
+    history = MarketStore(db)
     started = history.begin_competitor_collection("AI", 1, resume=True)
     rows = {row["run_id"]: row for row in history.competitor_collection_runs()}
     dead = rows[run_file.read_text()]
@@ -284,7 +305,7 @@ os._exit(9)
 
 
 def test_resume_uses_only_explicit_checkpoint_for_same_query(tmp_path):
-    history = History(tmp_path / "history.db")
+    history = MarketStore(tmp_path / "market.db")
     first = history.start_competitor_collection("AI", 2)
     history.finish_competitor_collection(
         first,
@@ -316,7 +337,7 @@ def test_resume_uses_only_explicit_checkpoint_for_same_query(tmp_path):
 
 
 def test_resume_rank_offset_uses_exact_cards_seen_for_variable_page_sizes(tmp_path):
-    history = History(tmp_path / "history.db")
+    history = MarketStore(tmp_path / "market.db")
     first = history.start_competitor_collection("AI", 2)
     history.finish_competitor_collection(
         first,
@@ -355,7 +376,7 @@ def test_resume_rank_offset_excludes_in_progress_page_cards(tmp_path):
     shifted past where they belong, and repeated interruptions compound
     the drift.
     """
-    history = History(tmp_path / "history.db")
+    history = MarketStore(tmp_path / "market.db")
     run_id = history.start_competitor_collection("AI", 0, requested_page_size=100)
     # Page 0 (100 cards) fully completed. Page 1's 100 cards were just
     # parsed (cards_seen jumps to 200) but its details are still being
@@ -389,7 +410,7 @@ def test_resume_rank_offset_excludes_in_progress_page_cards(tmp_path):
 
 
 def test_resume_does_not_cross_requested_page_sizes(tmp_path):
-    history = History(tmp_path / "history.db")
+    history = MarketStore(tmp_path / "market.db")
     smoke = history.start_competitor_collection("AI", 1, requested_page_size=20)
     history.finish_competitor_collection(
         smoke,
@@ -412,7 +433,7 @@ def test_resume_does_not_cross_requested_page_sizes(tmp_path):
 
 
 def test_resume_does_not_cross_authentication_modes(tmp_path):
-    history = History(tmp_path / "history.db")
+    history = MarketStore(tmp_path / "market.db")
     authenticated = history.start_competitor_collection("AI", 1, auth_mode="authenticated")
     history.finish_competitor_collection(
         authenticated,
@@ -436,7 +457,7 @@ def test_resume_does_not_cross_authentication_modes(tmp_path):
 
 
 def test_repeated_interruption_preserves_page_size_and_global_rank_offset(tmp_path):
-    history = History(tmp_path / "history.db")
+    history = MarketStore(tmp_path / "market.db")
     first = history.start_competitor_collection("AI", 1)
     history.finish_competitor_collection(
         first,
@@ -471,7 +492,7 @@ def test_repeated_interruption_preserves_page_size_and_global_rank_offset(tmp_pa
 
 
 def test_completed_latest_run_prevents_resurrecting_older_checkpoint(tmp_path):
-    history = History(tmp_path / "history.db")
+    history = MarketStore(tmp_path / "market.db")
     limited = history.start_competitor_collection("AI", 1)
     history.finish_competitor_collection(
         limited,
@@ -514,7 +535,7 @@ def test_report_scope_separates_search_in_populations(tmp_path):
     мусора), `position` — только должность. Обе выборки живут под одним
     `search_query`, поэтому членство обязано ключеваться и по `search_in`:
     иначе отчёт молча смешает узкую популяцию с широкой."""
-    history = History(tmp_path / "history.db")
+    history = MarketStore(tmp_path / "market.db")
     history.upsert_competitor_resume(
         _snapshot_id("designer", role="Графический дизайнер"),
         search_query="AI",
@@ -543,7 +564,7 @@ def test_report_scope_separates_search_in_populations(tmp_path):
 def test_membership_rank_is_per_scope(tmp_path):
     """Одно резюме может попасть в обе выборки с разными рангами: узкий поиск
     ставит его выше. Общий ключ перезаписывал бы один ранг другим."""
-    history = History(tmp_path / "history.db")
+    history = MarketStore(tmp_path / "market.db")
     history.upsert_competitor_resume(
         _snapshot_id("overlap"), search_query="AI", search_rank=317, search_in="full_text"
     )
@@ -551,7 +572,7 @@ def test_membership_rank_is_per_scope(tmp_path):
         _snapshot_id("overlap"), search_query="AI", search_rank=2, search_in="position"
     )
 
-    with sqlite3.connect(tmp_path / "history.db") as conn:
+    with sqlite3.connect(tmp_path / "market.db") as conn:
         conn.row_factory = sqlite3.Row
         ranks = {
             row["search_in"]: row["search_rank"]
@@ -565,7 +586,7 @@ def test_membership_rank_is_per_scope(tmp_path):
 def test_report_scope_separates_auth_mode_populations(tmp_path):
     """Та же ось у `auth_mode` (#663): анонимная выдача hh.ru урезана, а
     авторизованная полнее. Смешивать их в одном отчёте так же нельзя."""
-    history = History(tmp_path / "history.db")
+    history = MarketStore(tmp_path / "market.db")
     history.upsert_competitor_resume(
         _snapshot_id("anon"), search_query="AI", search_rank=1, auth_mode="anonymous"
     )
@@ -587,6 +608,9 @@ def test_legacy_membership_rows_are_scoped_as_full_text_anonymous(tmp_path):
     db = tmp_path / "history.db"
     History(db)
     with sqlite3.connect(db) as conn:
+        # Легаси-база: рыночные таблицы досоздаются тем же DDL, каким их
+        # создавал код до #1109 (SCHEMA их больше не содержит).
+        conn.executescript(MARKET_TABLES_DDL)
         conn.execute("DROP TABLE competitor_resume_queries")
         conn.execute("""CREATE TABLE competitor_resume_queries (
             resume_id TEXT NOT NULL,
@@ -627,7 +651,7 @@ def test_resume_does_not_cross_search_scopes(tmp_path):
     """#669: `position` по «AI» даёт 619 резюме, `full_text` — ~5000. Номера
     страниц несопоставимы, поэтому чекпоинт одного режима не должен
     подхватываться другим (близнец теста по `auth_mode` выше)."""
-    history = History(tmp_path / "history.db")
+    history = MarketStore(tmp_path / "market.db")
     legacy = history.start_competitor_collection("AI", 1)
     history.finish_competitor_collection(
         legacy,
@@ -641,7 +665,7 @@ def test_resume_does_not_cross_search_scopes(tmp_path):
         last_completed_page=2,
         observed_page_size=20,
     )
-    with sqlite3.connect(tmp_path / "history.db") as conn:
+    with sqlite3.connect(tmp_path / "market.db") as conn:
         conn.execute(
             "UPDATE competitor_collection_runs SET search_in=NULL WHERE run_id=?", (legacy,)
         )
@@ -679,6 +703,9 @@ def test_interrupted_scope_migration_leaves_original_table_intact(tmp_path, monk
     db = tmp_path / "history.db"
     History(db)
     with sqlite3.connect(db) as conn:
+        # Легаси-база: рыночные таблицы досоздаются тем же DDL, каким их
+        # создавал код до #1109 (SCHEMA их больше не содержит).
+        conn.executescript(MARKET_TABLES_DDL)
         conn.execute("DROP TABLE competitor_resume_queries")
         conn.execute("""CREATE TABLE competitor_resume_queries (
             resume_id TEXT NOT NULL,
@@ -736,6 +763,9 @@ def test_legacy_membership_is_not_claimed_by_either_auth_mode(tmp_path):
     db = tmp_path / "history.db"
     History(db)
     with sqlite3.connect(db) as conn:
+        # Легаси-база: рыночные таблицы досоздаются тем же DDL, каким их
+        # создавал код до #1109 (SCHEMA их больше не содержит).
+        conn.executescript(MARKET_TABLES_DDL)
         conn.execute("DROP TABLE competitor_resume_queries")
         conn.execute("""CREATE TABLE competitor_resume_queries (
             resume_id TEXT NOT NULL,
@@ -771,9 +801,9 @@ def test_legacy_membership_is_not_claimed_by_either_auth_mode(tmp_path):
 def test_legacy_membership_rekey_is_idempotent(tmp_path):
     """Сентинел вместо NULL: NULL в составном PRIMARY KEY не конфликтует сам с
     собой, поэтому повторная запись легаси-строки плодила бы дубликаты."""
-    db = tmp_path / "history.db"
-    History(db)
-    history = History(db)
+    db = tmp_path / "market.db"
+    MarketStore(db)
+    history = MarketStore(db)
     for _ in range(2):
         history.upsert_competitor_resume(
             _snapshot_id("dup"), search_query="AI", search_rank=1, search_in="full_text"
@@ -795,6 +825,9 @@ def test_interrupted_skills_migration_leaves_original_table_intact(tmp_path, mon
     db = tmp_path / "history.db"
     History(db)
     with sqlite3.connect(db) as conn:
+        # Легаси-база: рыночные таблицы досоздаются тем же DDL, каким их
+        # создавал код до #1109 (SCHEMA их больше не содержит).
+        conn.executescript(MARKET_TABLES_DDL)
         conn.execute("DROP TABLE competitor_resume_skills")
         conn.execute("""CREATE TABLE competitor_resume_skills (
             resume_id TEXT NOT NULL,
@@ -841,6 +874,9 @@ def test_coverage_warning_follows_the_same_legacy_scope_as_membership(tmp_path):
     db = tmp_path / "history.db"
     History(db)
     with sqlite3.connect(db) as conn:
+        # Легаси-база: рыночные таблицы досоздаются тем же DDL, каким их
+        # создавал код до #1109 (SCHEMA их больше не содержит).
+        conn.executescript(MARKET_TABLES_DDL)
         conn.execute("DROP TABLE competitor_resume_queries")
         conn.execute("""CREATE TABLE competitor_resume_queries (
             resume_id TEXT NOT NULL,

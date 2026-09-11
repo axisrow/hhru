@@ -14,8 +14,6 @@ from __future__ import annotations
 import logging
 import sqlite3
 
-from .market_schema import MARKET_TABLES_DDL
-
 logger = logging.getLogger("hhru_bot.history")
 
 # Схема SQLite — одна константа, CREATE TABLE IF NOT EXISTS для всех таблиц.
@@ -224,10 +222,11 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 """
 
-# Рыночные таблицы (vacancies_seen + competitor_*, #1106) живут отдельной константой
-# MARKET_TABLES_DDL в market_schema.py — их создаёт и общая рыночная база
-# data/market.db (MarketStore), а здесь они остаются частью per-account history.db
-# (легаси-данные, доктрина «ничего не удалять»: новые таблицы history.db не читает).
+# Рыночные таблицы (vacancies_seen + competitor_*, #1106/#1109) живут ТОЛЬКО в
+# общей рыночной базе data/market.db (MarketStore) — их DDL (MARKET_TABLES_DDL)
+# определён в market_schema.py и в SCHEMA per-account history.db больше не
+# входит: свежесоздаваемые history.db рыночных таблиц не имеют, код их не
+# читает и не пишет (чтения аналитики идут через MarketStore, #1109).
 
 _SCHEMA_TAIL = """\
 -- skipped — журнал отсева вакансий (#87, append-only).
@@ -484,10 +483,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_test_assignments_dedup
     ON test_assignments(topic, message_text);
 """
 
-# Личные таблицы + рыночные: per-account history.db по-прежнему создаёт ВСЕ
-# таблицы (легаси-данные в старых базах и joins аналитики на vacancies_seen
-# остаются валидными), новая запись competitor-таблиц идёт в data/market.db.
-SCHEMA = _SCHEMA_HEAD + MARKET_TABLES_DDL + _SCHEMA_TAIL
+SCHEMA = _SCHEMA_HEAD + _SCHEMA_TAIL
 
 #: Провенанс режима сессии у строк членства, записанных до #669: он там не
 #: хранился, а `--auth-mode authenticated` уже существовал, поэтому подставить

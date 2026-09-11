@@ -13,8 +13,16 @@ import pytest
 
 from hhru_bot.commands import funnel as funnel_cmd
 from hhru_bot.history import History
+from hhru_bot.market_store import MarketStore
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture(autouse=True)
+def _isolated_market(tmp_path, monkeypatch):
+    """funnel читает карточки из общей market.db (#1109) — уводим дефолтный
+    путь в tmp, чтобы команда не открывала реальный data/market.db cwd."""
+    monkeypatch.setattr("hhru_bot.market_store.DEFAULT_MARKET_PATH", tmp_path / "market.db")
 
 
 def _write_config(tmp_path, body: str):
@@ -133,12 +141,7 @@ def test_funnel_run_search_query(capsys, tmp_path):
     config = _write_config(tmp_path, _minimal_config())
     h = History(tmp_path / "h.db")
     h.record_action("12345", "v1", "apply", "success")
-    with h._connect() as conn:
-        conn.execute(
-            "INSERT INTO vacancies_seen "
-            "(vacancy_id, search_query, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?)",
-            ("v1", "python", "2026-01-01", "2026-01-01"),
-        )
+    MarketStore().upsert_vacancy_seen(vacancy_id="v1", search_query="python")
 
     funnel_cmd.run(_args(config, tmp_path / "h.db", search_query=True, period=0))
     out = capsys.readouterr().out
@@ -148,19 +151,14 @@ def test_funnel_run_search_query(capsys, tmp_path):
 
 
 def test_funnel_run_search_query_warns_about_unattributed_applies(capsys, tmp_path):
-    """apply/run не пишут vacancies_seen (#411 code review) — отклик без строки
-    в vacancies_seen молча выпадает из воронки; funnel обязан предупредить.
+    """apply/run не пишут карточки (#411 code review) — отклик без карточки в
+    market.db не имеет атрибуции по запросу; funnel обязан предупредить.
     """
     config = _write_config(tmp_path, _minimal_config())
     h = History(tmp_path / "h.db")
     h.record_action("12345", "v1", "apply", "success")
-    with h._connect() as conn:
-        conn.execute(
-            "INSERT INTO vacancies_seen "
-            "(vacancy_id, search_query, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?)",
-            ("v1", "python", "2026-01-01", "2026-01-01"),
-        )
-    h.record_action("12345", "v2", "apply", "success")  # без vacancies_seen
+    MarketStore().upsert_vacancy_seen(vacancy_id="v1", search_query="python")
+    h.record_action("12345", "v2", "apply", "success")  # без карточки в market.db
 
     funnel_cmd.run(_args(config, tmp_path / "h.db", search_query=True, period=0))
     out = capsys.readouterr().out
@@ -172,7 +170,7 @@ def test_funnel_run_rejections(capsys, tmp_path):
     config = _write_config(tmp_path, _minimal_config())
     h = History(tmp_path / "h.db")
     h.record_action("12345", "v1", "apply", "success")
-    h.upsert_vacancy_seen("v1", search_query="python", salary_from=100000)
+    MarketStore().upsert_vacancy_seen("v1", search_query="python", salary_from=100000)
     h.upsert_response("v1", "Acme", "discard", None, topic="1")
 
     funnel_cmd.run(_args(config, tmp_path / "h.db", rejections=True, period=0))

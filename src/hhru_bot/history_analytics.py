@@ -2,16 +2,47 @@
 
 Выделено из ``history.py`` механически; один report-топик на модуль
 (конвенция репортов), read-only запросы поверх actions/responses/skipped.
+
+С #1109 карточки вакансий (vacancies_seen) живут только в общей рыночной базе
+data/market.db: методы, которым нужна карточка (воронка по запросам, отказы,
+adaptive-отчёт), принимают уже открытый ``MarketStore`` параметром ``market``
+и мягко деградируют (пустые карточные поля), когда база недоступна —
+``None``. Глобального синглтона нет: открытие — в командах через
+``market_store.open_market()``.
 """
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    # Только для аннотаций: market_store импортирует этот модуль (AnalyticsMixin),
+    # рантайм-импорт на уровне модуля дал бы цикл.
+    from .market_store import MarketStore
+
     # Ленивый импорт внутри estimate_salary разрывает цикл history <-> search.
     from .search import SalaryInfo
+
+logger = logging.getLogger("hhru_bot.history")
+
+
+def _market_vacancies(market: MarketStore | None) -> list[dict]:
+    """Строки vacancies_seen из общей market.db; [] если база недоступна.
+
+    Единственная точка чтения рынка для карточных данных аналитики: ``None``
+    (открыть не удалось) и сбой чтения деградируют одинаково — пустой список,
+    как будто карточки ещё не собирались (#1109: рыночная база не должна
+    ронять личную аналитику, тот же принцип, что у записи в search).
+    """
+    if market is None:
+        return []
+    try:
+        return market.list_vacancies_seen()
+    except Exception as e:  # noqa: BLE001 — рынок не должен валить аналитику
+        logger.warning("Не прочитать vacancies_seen из market.db: %s", e)
+        return []
 
 
 class AnalyticsMixin:
@@ -141,20 +172,30 @@ class AnalyticsMixin:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def adaptive_report_facts(self) -> dict[str, list[dict]]:
+    def adaptive_report_facts(self, market: MarketStore | None = None) -> dict[str, list[dict]]:
         """Return the read-only rows needed by the adaptive-pool report.
 
         This deliberately does not reuse ``list_actions``: its default limit is
         a presentation concern and would silently truncate the metric.
+
+        Вакансии читаются из ОБЩЕЙ рыночной базы (``market``, #1109): в
+        history.db таблица vacancies_seen больше не создаётся. ``market is
+        None`` — мягкая деградация: список вакансий пуст, метрики считаются по
+        actions/responses/views как раньше. Строки идут в порядке
+        ``last_seen_at DESC`` (порядок list_vacancies_seen): build_adaptive_
+        metrics оставляет для вакансии первую встреченную (самую свежую) строку.
         """
+        vacancies = [
+            {
+                "vacancy_id": row["vacancy_id"],
+                "title": row["title"],
+                "company": row["company"],
+                "search_query": row["search_query"],
+                "vacancy_text": row["vacancy_text"],
+            }
+            for row in _market_vacancies(market)
+        ]
         with self._connect() as conn:
-            vacancies = [
-                dict(row)
-                for row in conn.execute(
-                    """SELECT vacancy_id, title, company, search_query, vacancy_text
-                       FROM vacancies_seen ORDER BY vacancy_id, last_seen_at DESC"""
-                )
-            ]
             actions = [
                 dict(row)
                 for row in conn.execute(
@@ -316,6 +357,7 @@ class AnalyticsMixin:
         self,
         since: str | None = None,
         resume_id: str | None = None,
+        market: MarketStore | None = None,
     ) -> list[dict]:
         """Воронка отправлено → оффер с группировкой по поисковому запросу.
 
@@ -325,16 +367,23 @@ class AnalyticsMixin:
         ``review_queue`` на момент постановки в очередь). Если он ``NULL``
         (строки, созданные до появления колонки — миграционное окно, а не
         дефект — см. #420: "не бэкафилить исторические actions"), запрос
-        берётся через ``LEFT JOIN`` из ``vacancies_seen`` по ``vacancy_id`` —
-        так отклик учитывается в каждом запросе, в котором была найдена его
-        вакансия (``vacancies_seen`` допускает несколько таких строк). Внутри
-        запроса счётчики дедуплицируются по паре (resume_id, vacancy_id), а не
-        только по vacancy_id: ``idx_resume_vacancy_apply`` — UNIQUE по этой
-        паре, поэтому два разных резюме легитимно откликаются на одну и ту же
-        вакансию отдельными строками actions (code review #411) — дедуп по
-        одному vacancy_id занижал бы sent/viewed/invited/offer/replied и искажал
-        производные *_rate при дефолтном resume_id=None (все резюме). Этапы
-        остаются кумулятивными, как в :meth:`funnel_by_resume`.
+        берётся из собранных карточек ОБЩЕЙ рыночной базы (``market``,
+        #1109 — в history.db таблица vacancies_seen больше не создаётся):
+        отклик учитывается в каждом запросе, в котором была найдена его
+        вакансия (карточка допускает несколько строк на vacancy_id — по одной
+        на запрос). Внутри запроса счётчики дедуплицируются по паре
+        (resume_id, vacancy_id), а не только по vacancy_id:
+        ``idx_resume_vacancy_apply`` — UNIQUE по этой паре, поэтому два разных
+        резюме легитимно откликаются на одну и ту же вакансию отдельными
+        строками actions (code review #411) — дедуп по одному vacancy_id
+        занижал бы sent/viewed/invited/offer/replied и искажал производные
+        *_rate при дефолтном resume_id=None (все резюме). Этапы остаются
+        кумулятивными, как в :meth:`funnel_by_resume`.
+
+        ``market is None`` (market.db недоступен) — мягкая деградация: отклики
+        без собственного query уходят в группу без запроса (``search_query``
+        = ``None``), как раньше при пустых карточках; отклики с записанным
+        query считаются как обычно.
         """
         where = ["a.action = 'apply'", "a.status = 'success'"]
         params: list = []
@@ -346,36 +395,43 @@ class AnalyticsMixin:
             params.append(resume_id)
         clause = " WHERE " + " AND ".join(where)
 
+        # Атрибуция откликов без собственного query: vacancy_id → запросы, под
+        # которыми карточка найдена в market.db (в порядке свежести).
+        seen: dict[str, list[str]] = {}
+        for card in _market_vacancies(market):
+            seen.setdefault(card["vacancy_id"], []).append(card["search_query"])
+
         with self._connect() as conn:
             rows = conn.execute(
                 f"""
                 SELECT
-                    COALESCE(a.search_query, v.search_query) AS search_query,
-                    COUNT(DISTINCT a.resume_id || ':' || a.vacancy_id) AS sent,
-                    COUNT(DISTINCT CASE WHEN EXISTS (
+                    a.resume_id AS resume_id,
+                    a.vacancy_id AS vacancy_id,
+                    a.search_query AS search_query,
+                    EXISTS (
                         SELECT 1 FROM responses r
                         WHERE r.vacancy_id = a.vacancy_id
                           AND r.status IN ('read', 'response', 'invitation', 'discard', 'offer')
                     ) OR EXISTS (
                         SELECT 1 FROM manual_offers m
                         WHERE m.resume_id = a.resume_id AND m.vacancy_id = a.vacancy_id
-                    ) THEN a.resume_id || ':' || a.vacancy_id END) AS viewed,
-                    COUNT(DISTINCT CASE WHEN EXISTS (
+                    ) AS viewed,
+                    EXISTS (
                         SELECT 1 FROM responses r
                         WHERE r.vacancy_id = a.vacancy_id
                           AND r.status IN ('invitation', 'offer')
                     ) OR EXISTS (
                         SELECT 1 FROM manual_offers m
                         WHERE m.resume_id = a.resume_id AND m.vacancy_id = a.vacancy_id
-                    ) THEN a.resume_id || ':' || a.vacancy_id END) AS invited,
-                    COUNT(DISTINCT CASE WHEN EXISTS (
+                    ) AS invited,
+                    EXISTS (
                         SELECT 1 FROM responses r
                         WHERE r.vacancy_id = a.vacancy_id AND r.status = 'offer'
                     ) OR EXISTS (
                         SELECT 1 FROM manual_offers m
                         WHERE m.resume_id = a.resume_id AND m.vacancy_id = a.vacancy_id
-                    ) THEN a.resume_id || ':' || a.vacancy_id END) AS offer,
-                    COUNT(DISTINCT CASE WHEN EXISTS (
+                    ) AS offer,
+                    EXISTS (
                         SELECT 1 FROM responses r
                         JOIN replies p ON p.topic = r.topic AND p.status = 'success'
                         WHERE r.vacancy_id = a.vacancy_id
@@ -386,23 +442,49 @@ class AnalyticsMixin:
                     ) OR EXISTS (
                         SELECT 1 FROM manual_offers m
                         WHERE m.resume_id = a.resume_id AND m.vacancy_id = a.vacancy_id
-                    ) THEN a.resume_id || ':' || a.vacancy_id END) AS replied
+                    ) AS replied
                 FROM actions AS a
-                LEFT JOIN vacancies_seen AS v
-                  ON v.vacancy_id = a.vacancy_id AND a.search_query IS NULL
                 {clause}
-                GROUP BY COALESCE(a.search_query, v.search_query)
                 """,
                 params,
             ).fetchall()
 
-        funnel: list[dict] = []
+        # Прежняя семантика SQL-группировки: отклик с собственным query
+        # учитывается один раз в нём; без собственного — в КАЖДОМ запросе
+        # найденной карточки, ни в одном — в NULL-группе. Дедуп по паре
+        # (resume_id, vacancy_id) внутри запроса — аналог COUNT(DISTINCT ...)
+        # из #411.
+        groups: dict[str | None, dict[str, set[str]]] = {}
         for row in rows:
-            sent, viewed, invited = row["sent"], row["viewed"], row["invited"]
-            replied, offer = row["replied"], row["offer"]
+            own = row["search_query"]
+            queries = [own] if own is not None else seen.get(row["vacancy_id"], [None])
+            pair = f"{row['resume_id']}:{row['vacancy_id']}"
+            for query in queries:
+                counts = groups.setdefault(
+                    query,
+                    {
+                        "sent": set(),
+                        "viewed": set(),
+                        "invited": set(),
+                        "offer": set(),
+                        "replied": set(),
+                    },
+                )
+                counts["sent"].add(pair)
+                for stage in ("viewed", "invited", "offer", "replied"):
+                    if row[stage]:
+                        counts[stage].add(pair)
+
+        funnel: list[dict] = []
+        for query, counts in groups.items():
+            sent = len(counts["sent"])
+            viewed = len(counts["viewed"])
+            invited = len(counts["invited"])
+            replied = len(counts["replied"])
+            offer = len(counts["offer"])
             funnel.append(
                 {
-                    "search_query": row["search_query"],
+                    "search_query": query,
                     "sent": sent,
                     "viewed": viewed,
                     "invited": invited,
@@ -427,6 +509,7 @@ class AnalyticsMixin:
         self,
         since: str | None = None,
         resume_id: str | None = None,
+        market: MarketStore | None = None,
     ) -> list[dict]:
         """Агрегат отказов работодателей по поиску и вилке зарплаты.
 
@@ -436,14 +519,15 @@ class AnalyticsMixin:
         отклика из ``actions``, поэтому ``--period`` имеет одинаковую семантику
         во всех режимах ``funnel``.
 
-        ``vacancies_seen`` хранит по строке на пару (vacancy_id, search_query),
-        поэтому одна вакансия может попасть в несколько поисковых групп. Для
-        отказов без карточки добавляется отдельная строка с пустым поиском и
-        зарплатой: INNER JOIN используется только для найденных карточек, а
-        ``NOT EXISTS`` сохраняет непросмотренные через ``search`` вакансии.
-        DISTINCT по response_id не размножает отказ несколькими topic или
-        actions; NOT EXISTS используется для надёжного detection отсутствующей
-        карточки.
+        Карточки вакансий (запрос + вилка) читаются из ОБЩЕЙ рыночной базы
+        (``market``, #1109 — в history.db таблица vacancies_seen больше не
+        создаётся). Карточка хранит по строке на пару (vacancy_id,
+        search_query), поэтому одна вакансия может попасть в несколько
+        поисковых групп. Для отказов без карточки добавляется отдельная строка
+        с пустым поиском и зарплатой вместо тихой потери отказа;
+        ``market is None`` деградирует так же — все отказы без карточных
+        полей. Дедупликация по response_id не размножает отказ несколькими
+        topic или actions.
         """
         from .responses import ResponseStatus
 
@@ -471,115 +555,107 @@ class AnalyticsMixin:
         branch_params = [*params, *action_params]
 
         with self._connect() as conn:
-            rows = conn.execute(
+            matched = conn.execute(
                 f"""
-                WITH matched_actions AS (
-                    -- A known response belongs only to the application made
-                    -- with the same resume. Unattributed responses retain the
-                    -- vacancy-level fallback used by the legacy data.
-                    SELECT DISTINCT
-                        r.id AS response_id,
-                        NULLIF(TRIM(r.employer), '') AS employer,
-                        r.vacancy_id AS vacancy_id,
-                        a.search_query AS search_query
-                    FROM responses AS r
-                    JOIN actions AS a
-                      ON a.vacancy_id = r.vacancy_id
-                     AND (r.resume_id IS NULL OR r.resume_id = a.resume_id)
-                    WHERE {response_where}
-                      AND {action_where}
-                ),
-                rejection_rows AS (
-                    -- An explicit query on the apply is authoritative. A
-                    -- vacancy can be present under several searches; using
-                    -- every vacancies_seen row here would report the same
-                    -- rejection for searches where no application was sent.
-                    SELECT DISTINCT
-                        m.response_id,
-                        m.employer,
-                        m.search_query,
-                        (
-                            SELECT v.salary_from FROM vacancies_seen AS v
-                            WHERE v.vacancy_id = m.vacancy_id
-                              AND v.search_query = m.search_query
-                        ) AS salary_from,
-                        (
-                            SELECT v.salary_to FROM vacancies_seen AS v
-                            WHERE v.vacancy_id = m.vacancy_id
-                              AND v.search_query = m.search_query
-                        ) AS salary_to,
-                        (
-                            SELECT v.salary_currency FROM vacancies_seen AS v
-                            WHERE v.vacancy_id = m.vacancy_id
-                              AND v.search_query = m.search_query
-                        ) AS salary_currency
-                    FROM matched_actions AS m
-                    WHERE m.search_query IS NOT NULL
-
-                    UNION ALL
-
-                    -- Legacy actions have no query of their own, so retain
-                    -- each known search attribution from vacancies_seen.
-                    SELECT DISTINCT
-                        m.response_id,
-                        m.employer,
-                        v.search_query AS search_query,
-                        v.salary_from AS salary_from,
-                        v.salary_to AS salary_to,
-                        v.salary_currency AS salary_currency
-                    FROM matched_actions AS m
-                    JOIN vacancies_seen AS v ON v.vacancy_id = m.vacancy_id
-                    WHERE m.search_query IS NULL
-
-                    UNION ALL
-
-                    -- No card was ever collected: keep the rejection with
-                    -- empty metadata instead of silently dropping it.
-                    SELECT DISTINCT
-                        m.response_id,
-                        m.employer,
-                        NULL AS search_query,
-                        NULL AS salary_from,
-                        NULL AS salary_to,
-                        NULL AS salary_currency
-                    FROM matched_actions AS m
-                    WHERE m.search_query IS NULL
-                      AND NOT EXISTS (
-                          SELECT 1 FROM vacancies_seen AS v
-                          WHERE v.vacancy_id = m.vacancy_id
-                      )
-                )
-                SELECT employer, search_query, salary_from, salary_to, salary_currency,
-                       COUNT(DISTINCT response_id) AS rejections
-                FROM rejection_rows
-                GROUP BY employer, search_query, salary_from, salary_to, salary_currency
-                ORDER BY rejections DESC,
-                         COALESCE(employer, ''),
-                         COALESCE(search_query, ''),
-                         salary_from, salary_to, salary_currency
+                -- A known response belongs only to the application made
+                -- with the same resume. Unattributed responses retain the
+                -- vacancy-level fallback used by the legacy data.
+                SELECT DISTINCT
+                    r.id AS response_id,
+                    NULLIF(TRIM(r.employer), '') AS employer,
+                    r.vacancy_id AS vacancy_id,
+                    a.search_query AS search_query
+                FROM responses AS r
+                JOIN actions AS a
+                  ON a.vacancy_id = r.vacancy_id
+                 AND (r.resume_id IS NULL OR r.resume_id = a.resume_id)
+                WHERE {response_where}
+                  AND {action_where}
                 """,
                 branch_params,
             ).fetchall()
 
-        return [dict(row) for row in rows]
+        # Карточки из market.db: (vacancy_id, query) → зарплата и vacancy_id →
+        # все его (query, зарплата) в порядке свежести строк. Прежняя
+        # SQL-семантика трёх веток: явный query отклика авторитетен (зарплата
+        # его собственной карточки, без карточки — пустые поля); legacy-отклик
+        # без query приписывается каждой карточке вакансии; карточки нет
+        # вовсе — отказ остаётся с пустыми полями.
+        cards: dict[tuple[str, str], tuple] = {}
+        by_vacancy: dict[str, list[tuple[str, tuple]]] = {}
+        for card in _market_vacancies(market):
+            key = (card["vacancy_id"], card["search_query"])
+            salaries = (card["salary_from"], card["salary_to"], card["salary_currency"])
+            if key in cards:
+                continue
+            cards[key] = salaries
+            by_vacancy.setdefault(card["vacancy_id"], []).append((card["search_query"], salaries))
+
+        # Агрегат прежнего GROUP BY: (employer, query, вилка) → set response_id
+        # (COUNT(DISTINCT response_id) не размножает отказ по topic/actions).
+        aggregates: dict[tuple, set[int]] = {}
+        for m in matched:
+            own = m["search_query"]
+            if own is not None:
+                variants = [(own, cards.get((m["vacancy_id"], own), (None, None, None)))]
+            else:
+                variants = by_vacancy.get(m["vacancy_id"]) or [(None, (None, None, None))]
+            for query, salaries in variants:
+                key = (m["employer"], query, *salaries)
+                aggregates.setdefault(key, set()).add(m["response_id"])
+
+        def _salary_order(value: int | str | None) -> tuple[bool, int | str]:
+            # NULL-значения раньше ненулевых — порядок SQLite ASC.
+            return (value is not None, value or 0)
+
+        rows = [
+            {
+                "employer": employer,
+                "search_query": query,
+                "salary_from": salary_from,
+                "salary_to": salary_to,
+                "salary_currency": salary_currency,
+                "rejections": len(response_ids),
+            }
+            for (
+                employer,
+                query,
+                salary_from,
+                salary_to,
+                salary_currency,
+            ), response_ids in aggregates.items()
+        ]
+        rows.sort(
+            key=lambda row: (
+                -row["rejections"],
+                row["employer"] or "",
+                row["search_query"] or "",
+                _salary_order(row["salary_from"]),
+                _salary_order(row["salary_to"]),
+                _salary_order(row["salary_currency"]),
+            )
+        )
+        return rows
 
     def count_unattributed_applies(
         self,
         since: str | None = None,
         resume_id: str | None = None,
+        market: MarketStore | None = None,
     ) -> int:
-        """Число успешных откликов без строки в ``vacancies_seen`` (code review #411).
+        """Число успешных откликов без карточки в market.db (code review #411).
 
-        ``funnel_by_search_query`` INNER JOIN'ит ``actions`` к ``vacancies_seen``
-        по ``vacancy_id`` — вакансии, которых там нет, молча выпадают из воронки.
-        ``vacancies_seen`` заполняет только команда ``search`` (`upsert_vacancy_seen`
-        вызывается из ``commands/search.py``); `apply`/`run` вызывают
-        ``search_vacancies()`` напрямую и НЕ пишут в ``vacancies_seen`` — если
+        ``funnel_by_search_query`` группирует отклик по запросу собранной
+        карточки — вакансии без карточки молча выпадают из воронки по запросам.
+        Карточки заполняет только команда ``search`` (``upsert_vacancy_seen``
+        вызывается из ``commands/search.py`` в общую market.db); `apply`/`run`
+        вызывают ``search_vacancies()`` напрямую и карточек не пишут — если
         пользователь откликался через `apply`/`run` без предварительного
         отдельного `search` по тем же вакансиям, эти отклики систематически не
         попадут в `funnel --search-query`. Используется командой `funnel` для
         `[INFO]`-предупреждения вместо тихой потери данных; не влияет на числа
-        самой воронки.
+        самой воронки. ``market is None`` — мягкая деградация: все отклики без
+        собственного query считаются неатрибутированными.
         """
         where = ["a.action = 'apply'", "a.status = 'success'"]
         params: list = []
@@ -591,20 +667,18 @@ class AnalyticsMixin:
             params.append(resume_id)
         clause = " WHERE " + " AND ".join(where)
 
+        seen_ids = {card["vacancy_id"] for card in _market_vacancies(market)}
         with self._connect() as conn:
-            row = conn.execute(
+            rows = conn.execute(
                 f"""
-                SELECT COUNT(*) AS n
+                SELECT a.vacancy_id AS vacancy_id
                 FROM actions AS a
                 {clause}
                 AND a.search_query IS NULL
-                AND NOT EXISTS (
-                    SELECT 1 FROM vacancies_seen AS v WHERE v.vacancy_id = a.vacancy_id
-                )
                 """,
                 params,
-            ).fetchone()
-        return int(row["n"])
+            ).fetchall()
+        return sum(1 for row in rows if row["vacancy_id"] not in seen_ids)
 
     def dead_responses(self, days: int, resume_id: str | None = None) -> dict:
         """«Мёртвая зона»: доля откликов без ответа старше N дней.

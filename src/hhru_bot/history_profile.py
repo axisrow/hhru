@@ -6,9 +6,15 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from .external_forms.detect import normalize
+from .history_analytics import _market_vacancies
 from .history_skip_reasons import SKIP_REASONS
+
+if TYPE_CHECKING:
+    # Только для аннотаций: рантайм-хелпер чтения рынка — из history_analytics.
+    from .market_store import MarketStore
 
 
 class ProfileMixin:
@@ -190,38 +196,51 @@ class ProfileMixin:
                 cur = conn.execute("DELETE FROM skipped WHERE reason = ?", (reason,))
             return cur.rowcount
 
-    def list_skipped(self, reason: str | None = None) -> list[dict]:
+    def list_skipped(
+        self, reason: str | None = None, market: MarketStore | None = None
+    ) -> list[dict]:
         """Возвращает журнал отсева с данными вакансий, свежие первыми.
 
-        ``vacancies_seen`` может содержать несколько строк одной вакансии (по
-        разным поисковым запросам), поэтому JOIN агрегирует её до одной строки
-        на запись ``skipped`` и не дублирует результаты команды.
-        ``LEFT JOIN`` сохраняет старые записи отсева, для которых карточка ещё
-        не была сохранена.
+        Карточки вакансий (title/company/search_query) читаются из ОБЩЕЙ
+        рыночной базы (``market``, #1109 — в history.db таблица vacancies_seen
+        больше не создаётся). Карточка может содержать несколько строк одной
+        вакансии (по разным поисковым запросам), поэтому обогащение берёт для
+        title/company самую свежую строку, а запросы собирает все — по одной
+        строке на запись ``skipped``, без дублей результатов команды.
+        Семантика прежнего ``LEFT JOIN``: нет карточки (или market.db
+        недоступен — ``market is None``) — поля остаются ``None``.
         """
         where = "WHERE s.reason = ?" if reason is not None else ""
         params = (reason,) if reason is not None else ()
         with self._connect() as conn:
             rows = conn.execute(
-                "WITH latest_vacancy AS ("
-                "SELECT vacancy_id, title, company FROM ("
-                "SELECT v.*, ROW_NUMBER() OVER ("
-                "PARTITION BY vacancy_id ORDER BY last_seen_at DESC, id DESC"
-                ") AS rn FROM vacancies_seen v"
-                ") WHERE rn = 1"
-                "), seen_queries AS ("
-                "SELECT vacancy_id, GROUP_CONCAT(DISTINCT search_query) AS search_query "
-                "FROM vacancies_seen GROUP BY vacancy_id"
-                ") SELECT s.created_at, s.resume_id, s.vacancy_id, s.reason, "
-                "v.title, v.company, q.search_query "
-                "FROM skipped s LEFT JOIN latest_vacancy v "
-                "ON v.vacancy_id = s.vacancy_id LEFT JOIN seen_queries q "
-                "ON q.vacancy_id = s.vacancy_id "
-                f"{where} "
+                "SELECT s.created_at, s.resume_id, s.vacancy_id, s.reason "
+                f"FROM skipped s {where} "
                 "ORDER BY s.created_at DESC, s.id DESC",
                 params,
             ).fetchall()
-        return [dict(row) for row in rows]
+        latest: dict[str, tuple[str | None, str | None]] = {}
+        queries: dict[str, list[str]] = {}
+        for card in _market_vacancies(market):
+            vacancy_id = card["vacancy_id"]
+            # list_vacancies_seen отдаёт строки по убыванию last_seen_at —
+            # первая встреченная строка вакансии и есть самая свежая.
+            latest.setdefault(vacancy_id, (card["title"], card["company"]))
+            seen_queries = queries.setdefault(vacancy_id, [])
+            if card["search_query"] not in seen_queries:
+                seen_queries.append(card["search_query"])
+        return [
+            {
+                "created_at": row["created_at"],
+                "resume_id": row["resume_id"],
+                "vacancy_id": row["vacancy_id"],
+                "reason": row["reason"],
+                "title": latest.get(row["vacancy_id"], (None, None))[0],
+                "company": latest.get(row["vacancy_id"], (None, None))[1],
+                "search_query": ",".join(queries.get(row["vacancy_id"], [])) or None,
+            }
+            for row in rows
+        ]
 
     def count_skipped(self, reason: str | None = None) -> int:
         """Число записей отсева (для dry-run/подтверждения clear-skipped).

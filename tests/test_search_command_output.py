@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 from hhru_bot.commands.search import _format_card_line, _format_salary
+from hhru_bot.market_store import MarketStore
 from hhru_bot.search import SalaryInfo, VacancyCard
 
 pytestmark = pytest.mark.integration
@@ -68,18 +69,25 @@ def test_card_line_with_salary():
     assert " / " not in line
 
 
-# --- запись собранных карточек в рынок (#66) ---------------------------------
+# --- запись собранных карточек в рынок (#66, #1109) --------------------------
 #
 # search СОБИРАЕТ карточки (VacancyCard с salary, #34), но НЕ писал их в БД —
 # рынок-анализ был не из чего строить. _record_seen = побочный эффект сбора:
-# пишет ВСЕ собранные карточки в vacancies_seen, не трогая отбор/скоринг/вывод.
+# пишет ВСЕ собранные карточки в vacancies_seen ОБЩЕЙ market.db (#1109 — в
+# per-account history.db записи больше нет), не трогая отбор/скоринг/вывод.
+
+
+@pytest.fixture(autouse=True)
+def _isolated_market(tmp_path, monkeypatch):
+    """_record_seen и run() пишут/открывают общую market.db (#1106) — уводим
+    дефолтный путь в tmp, чтобы тесты не трогали data/market.db cwd."""
+    monkeypatch.setattr("hhru_bot.market_store.DEFAULT_MARKET_PATH", tmp_path / "market.db")
 
 
 def test_record_seen_writes_all_cards(tmp_path):
     from hhru_bot.commands.search import _record_seen
-    from hhru_bot.history import History
 
-    history = History(tmp_path / "h.db")
+    market = MarketStore(tmp_path / "market.db")
     cards = [
         VacancyCard(
             vacancy_id="1",
@@ -104,9 +112,9 @@ def test_record_seen_writes_all_cards(tmp_path):
             metro_stations=[],
         ),
     ]
-    _record_seen(cards, "python backend", history)
+    _record_seen(cards, "python backend", market=market)
 
-    rows = history.list_vacancies_seen()
+    rows = market.list_vacancies_seen()
     assert len(rows) == 2
     by_id = {r["vacancy_id"]: r for r in rows}
     assert by_id["1"]["salary_from"] == 300000
@@ -126,10 +134,9 @@ def test_record_seen_writes_all_cards(tmp_path):
 def test_record_seen_preserves_history_when_company_selector_misses(tmp_path):
     """Пустая company не должна превращать известного работодателя в unknown (#532)."""
     from hhru_bot.commands.search import _record_seen
-    from hhru_bot.history import History
 
-    history = History(tmp_path / "h.db")
-    history.upsert_vacancy_seen(
+    market = MarketStore(tmp_path / "market.db")
+    market.upsert_vacancy_seen(
         vacancy_id="1",
         search_query="python",
         title="Backend",
@@ -149,10 +156,10 @@ def test_record_seen_preserves_history_when_company_selector_misses(tmp_path):
             )
         ],
         "python",
-        history,
+        market=market,
     )
 
-    row = history.list_vacancies_seen()[0]
+    row = market.list_vacancies_seen()[0]
     assert row["title"] == "Backend"
     assert row["company"] == "Yandex"
     assert row["employer_tier"] == "top_tech"
@@ -166,10 +173,9 @@ def test_record_seen_preserves_employer_tier_when_rating_selector_misses(tmp_pat
     None) для нетоповой компании возвращает непустую строку "unknown", которая
     раньше проходила COALESCE(NULLIF(...)) как достоверное новое значение)."""
     from hhru_bot.commands.search import _record_seen
-    from hhru_bot.history import History
 
-    history = History(tmp_path / "h.db")
-    history.upsert_vacancy_seen(
+    market = MarketStore(tmp_path / "market.db")
+    market.upsert_vacancy_seen(
         vacancy_id="1",
         search_query="python",
         title="Backend",
@@ -188,10 +194,10 @@ def test_record_seen_preserves_employer_tier_when_rating_selector_misses(tmp_pat
             )
         ],
         "python",
-        history,
+        market=market,
     )
 
-    row = history.list_vacancies_seen()[0]
+    row = market.list_vacancies_seen()[0]
     assert row["employer_tier"] == "mid"
 
 
@@ -202,11 +208,10 @@ def test_record_seen_preserves_tier_when_reviews_count_selector_drifts(tmp_path)
     reviews_count >= порога), и round-1 гейт (employer_info is None) её не
     ловил — employer_info-то не None. «unknown» затирал подтверждённый "mid"."""
     from hhru_bot.commands.search import _record_seen
-    from hhru_bot.history import History
     from hhru_bot.scoring import EmployerInfo
 
-    history = History(tmp_path / "h.db")
-    history.upsert_vacancy_seen(
+    market = MarketStore(tmp_path / "market.db")
+    market.upsert_vacancy_seen(
         vacancy_id="1",
         search_query="python",
         title="Backend",
@@ -226,10 +231,10 @@ def test_record_seen_preserves_tier_when_reviews_count_selector_drifts(tmp_path)
             )
         ],
         "python",
-        history,
+        market=market,
     )
 
-    row = history.list_vacancies_seen()[0]
+    row = market.list_vacancies_seen()[0]
     assert row["employer_tier"] == "mid"
 
 
@@ -239,11 +244,10 @@ def test_record_seen_downgrades_to_unknown_when_reviews_count_genuinely_low(tmp_
     «unknown» обязан затереть прежний «mid» (гейт не должен перегащивать
     настоящий downgrade)."""
     from hhru_bot.commands.search import _record_seen
-    from hhru_bot.history import History
     from hhru_bot.scoring import EmployerInfo
 
-    history = History(tmp_path / "h.db")
-    history.upsert_vacancy_seen(
+    market = MarketStore(tmp_path / "market.db")
+    market.upsert_vacancy_seen(
         vacancy_id="1",
         search_query="python",
         title="Backend",
@@ -263,26 +267,25 @@ def test_record_seen_downgrades_to_unknown_when_reviews_count_genuinely_low(tmp_
             )
         ],
         "python",
-        history,
+        market=market,
     )
 
-    row = history.list_vacancies_seen()[0]
+    row = market.list_vacancies_seen()[0]
     assert row["employer_tier"] == "unknown"
 
 
 def test_record_seen_failure_does_not_raise(tmp_path):
     """Сбой записи НЕ должен валить поиск — рынок лишь удобство."""
     from hhru_bot.commands.search import _record_seen
-    from hhru_bot.history import History
 
-    history = History(tmp_path / "h.db")
+    market = MarketStore(tmp_path / "market.db")
 
     def _boom(**_kwargs):
         raise RuntimeError("boom")
 
-    history.upsert_vacancy_seen = _boom  # type: ignore[method-assign]
+    market.upsert_vacancy_seen = _boom  # type: ignore[method-assign]
     cards = [VacancyCard(vacancy_id="1", title="T", company="C", url="https://hh.ru/vacancy/1")]
-    _record_seen(cards, "python", history)  # не должно упасть
+    _record_seen(cards, "python", market=market)  # не должно упасть
 
 
 def test_search_text_overrides_resume_without_mutating_config(monkeypatch):
@@ -556,7 +559,7 @@ def test_indeterminate_search_skips_resume_without_recording_partial_results(tmp
             partial_results=partial,
         )
 
-    def record_seen(cards, _query, _history, **_kwargs):
+    def record_seen(cards, _query, **_kwargs):
         record_seen_calls.append(cards)
 
     monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **k: _Context())
@@ -613,7 +616,7 @@ def _run_search_with_rank(monkeypatch, tmp_path, resumes, ranked):
         "hhru_bot.search.search_vacancies",
         lambda _page, _filters, max_pages: [card for card, _score, _b in ranked],
     )
-    monkeypatch.setattr(search_command_module(), "_record_seen", lambda cards, _q, _h, **_k: None)
+    monkeypatch.setattr(search_command_module(), "_record_seen", lambda cards, _q, **_k: None)
     monkeypatch.setattr(
         "hhru_bot.search.filter_candidates", lambda cards, *a, **k: (list(cards), [])
     )

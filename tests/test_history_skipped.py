@@ -164,14 +164,18 @@ def test_clear_skipped_unknown_reason_returns_zero(tmp_path):
 
 
 def test_list_skipped_joins_vacancy_details_without_duplicates(tmp_path):
+    """#1109: карточки для обогащения читаются из общей market.db параметром."""
+    from hhru_bot.market_store import MarketStore
+
     h = History(tmp_path / "h.db")
-    h.upsert_vacancy_seen("v1", "python", "Python developer", "Acme")
-    h.upsert_vacancy_seen("v1", "backend", "Python developer", "Acme")
-    h.upsert_vacancy_seen("v1", "python", "Updated title", "Updated Acme")
+    market = MarketStore(tmp_path / "market.db")
+    market.upsert_vacancy_seen("v1", "python", "Python developer", "Acme")
+    market.upsert_vacancy_seen("v1", "backend", "Python developer", "Acme")
+    market.upsert_vacancy_seen("v1", "python", "Updated title", "Updated Acme")
     h.record_skip("r1", "v1", SKIP_REASONS.STOPWORD_TITLE)
     h.record_skip("r2", "missing", SKIP_REASONS.HAS_QUESTIONS)
 
-    rows = h.list_skipped()
+    rows = h.list_skipped(market=market)
 
     assert len(rows) == 2
     assert rows[0]["vacancy_id"] == "missing"

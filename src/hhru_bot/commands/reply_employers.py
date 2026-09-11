@@ -111,15 +111,23 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
     follow_up = getattr(args, "follow_up", False)
     max_pages = getattr(args, "max_pages", 5)
     throttle = Throttle(config.throttle, history)
+    # #1109: названия вакансий для кандидатов берутся из общей market.db
+    # (vacancies_seen в history.db больше нет); недоступна — title деградирует
+    # до vacancy_id, дальше резолвят SSR-карточка/страница вакансии (#1094).
+    from ..market_store import open_market
+
+    market = open_market()
     if follow_up:
-        candidates = history.follow_up_candidates(args.after_days, args.limit or None)
+        candidates = history.follow_up_candidates(
+            args.after_days, args.limit or None, market=market
+        )
         template = args.template if args.template is not None else config.follow_up_letter
         heading = (
             f"=== Напоминания работодателям (account-wide, --after-days {args.after_days}) ==="
         )
         decide = needs_follow_up
     else:
-        candidates = history.reply_candidates(args.limit or None)
+        candidates = history.reply_candidates(args.limit or None, market=market)
         template = args.template if args.template is not None else config.cover_letter_default
         heading = "=== Ответы работодателям (account-wide) ==="
         decide = needs_reply
