@@ -185,17 +185,21 @@ class MarketStore(AnalyticsMixin, VacanciesMixin, CompetitorsMixin):
             )
             # Роли пересобираются с нуля напрямую, без по-строчного
             # SELECT/DELETE _rebuild_competitor_roles (~30k пустых пар —
-            # секунды чистого waste). first_seen при этом переживает
-            # пересборку: перед бэкфиллом миграция могла привезти строки из
-            # легаси-источника с историческими датами первой встречи —
-            # «пусто до маркера» верно только до этого копирования.
+            # секунды чистого waste). first_seen переживает пересборку,
+            # причём старые строки матчятся по СЫРОЙ роли, прогнанной через
+            # ТЕКУЩИЙ fold_key: алиас переименовывает ключ («Нейросеть» →
+            # ключ «Нейросети»), и матч по старому сохранённому ключу молча
+            # терял историю именно у алиасных ролей. Схлопнувшимся в один
+            # новый ключ вариантам остаётся минимальная дата.
             now = datetime.now().isoformat(timespec="seconds")
-            old_roles = {
-                (row["resume_id"], row["role_key"]): row["first_seen_at"]
-                for row in conn.execute(
-                    "SELECT resume_id, role_key, first_seen_at FROM competitor_resume_roles"
-                )
-            }
+            old_roles = {}
+            for row in conn.execute(
+                "SELECT resume_id, role, first_seen_at FROM competitor_resume_roles"
+            ):
+                pair = (row["resume_id"], cached_key(str(row["role"])))
+                prev = old_roles.get(pair)
+                if prev is None or row["first_seen_at"] < prev:
+                    old_roles[pair] = row["first_seen_at"]
             conn.execute("DELETE FROM competitor_resume_roles")
             for row in resumes:
                 for position, part in enumerate(split_roles(str(row["desired_role"]))):

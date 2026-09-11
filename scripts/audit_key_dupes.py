@@ -29,7 +29,6 @@ import sys
 from collections import defaultdict
 
 MIN_LEN = 6
-BUCKET_CAP = 30
 TOP_PAIRS = 15
 TOP_DIGIT_GROUPS = 8
 
@@ -69,9 +68,7 @@ def deletion_pairs(counts):
         # является ничьей сигнатурой-удалением.
         idx[k].add(k)
         for i in range(len(k)):
-            sig = k[:i] + k[i + 1 :]
-            if len(idx[sig]) < BUCKET_CAP:
-                idx[sig].add(k)
+            idx[k[:i] + k[i + 1 :]].add(k)
     pairs = set()
     for bucket in idx.values():
         b = sorted(bucket)
@@ -104,7 +101,7 @@ def report(title, counts, rawforms):
             f"{top_raw(rawforms, a)} [{counts[a]}] <-> {top_raw(rawforms, b)} [{counts[b]}]"
         )
     groups = digit_groups(counts)
-    dtouched = sum(min(counts[k] for k in g) for g in groups if len(g) == 2)
+    dtouched = sum(min(counts[k] for k in g) for g in groups)
     print(f"цифровые варианты (версии): {len(groups)} групп, ~{dtouched} резюме")
     for g in groups[:TOP_DIGIT_GROUPS]:
         parts = " <-> ".join(f"{top_raw(rawforms, k)} [{counts[k]}]" for k in g)
