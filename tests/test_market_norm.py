@@ -28,7 +28,23 @@ def test_fold_key_unifies_script_register_and_spacing():
 
 def test_fold_key_unifies_spacing_and_punctuation_in_product_names():
     assert fold_key("1С: Предприятие 8") == fold_key("1С:Предприятие 8")
-    assert fold_key("1С: Предприятие 8") != fold_key("1С: Предприятие 8.3")
+    # Точка — пунктуация (v4, решение владельца): «8.3» == «83».
+    # Цифры версий при этом остаются («8.2» → «82» ≠ «83») — различие
+    # несёт цифра, а не точка.
+    assert fold_key("1С: Предприятие 8.3") == fold_key("1С:Предприятие 83")
+    assert fold_key("8.2") == fold_key("82")
+
+
+def test_fold_key_strips_edge_punctuation_and_joins_nodejs():
+    # Точка на конце роли — пунктуация, а не часть имени.
+    assert fold_key("Оператор 1С.") == fold_key("Оператор 1С")
+    assert fold_key("администратор.") == fold_key("Администратор")
+    # Следствия того же решения: слипание через точку — желанный дедуп.
+    assert fold_key("Node.js") == fold_key("Node JS") == "nodejs"
+    assert fold_key(".NET") == "net"
+    # Но C#/C++ по-прежнему не сливаются с одиночной C.
+    assert fold_key("C#") == "c#"
+    assert fold_key("C++") == "c++"
 
 
 def test_fold_key_does_not_transliterate():

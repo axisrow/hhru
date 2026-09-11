@@ -125,8 +125,10 @@ def test_emit_drift_report_prints_full_package(drift_log_dir, capsys):
     # Ожидаемый селектор — из реестра, с именем.
     assert "apply_form.APPLY_COVER_LETTER_TOGGLE" in out
     # URL и фрагмент замаскированы: реальных email/телефона/hex-id нет.
+    # «912-345», а не «912»: голый «912» ловит метку времени имени файла
+    # (20260912_…) — дата воспроизводит фрагмент, маску телефона нет.
     assert "example.com" not in out
-    assert "912" not in out
+    assert "912-345" not in out
     assert "0123456789abcdef" not in out
     # Готовая команда создания ишью с записанным body-файлом (shell-safe).
     assert "gh issue create" in out
