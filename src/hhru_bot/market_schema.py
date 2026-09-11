@@ -233,4 +233,6 @@ MIGRATION_MARKER_KEY = "migrated_from_history"
 # а отчёт будет считать по новым, и числа разъедутся молча.
 # v2 — сохранение # + . в ключе (C#/C++ больше не сливаются с C).
 # v3 — гомоглиф ♯→# (C♯ не сливается с C).
-BACKFILL_MARKER_KEY = "competitor_norm_backfill:v3"
+# v4 — точка удалена из ключа (решение владельца: сохранять её ради
+#      разделения версий не нужно), она дробила роли с точкой на конце.
+BACKFILL_MARKER_KEY = "competitor_norm_backfill:v4"
