@@ -22,7 +22,7 @@ from pathlib import Path
 
 from .history_analytics import AnalyticsMixin
 from .history_commands import CommandsMixin
-from .history_competitors import CompetitorsMixin
+from .history_competitors import CompetitorsMixin, ensure_competitor_norm_columns
 from .history_lease import (  # noqa: F401  (ре-экспорт: monkeypatch-контракт тестов)
     LEGACY_LEASE_GRACE,
     CommandRunBusy,
@@ -170,6 +170,11 @@ class History(
             _ensure_column(conn, "competitor_resumes", "relocation", "TEXT")
             _ensure_column(conn, "competitor_resumes", "business_trips", "TEXT")
             _ensure_column(conn, "competitor_resumes", "metro_station", "TEXT")
+            # Фолд-ключи нормализации: легаси-history.db с рыночными таблицами
+            # добирает ключ-колонки; сам no-op при отсутствии таблиц (свежий
+            # history.db их не создаёт — #1109). Таблицу ролей на легаси
+            # создаст lazy-ensure при первом upsert.
+            ensure_competitor_norm_columns(conn)
             # #473: questionnaire research snapshots predate the apply audit
             # fields.  CREATE TABLE IF NOT EXISTS leaves those old tables
             # untouched, so keep the migration explicitly idempotent.

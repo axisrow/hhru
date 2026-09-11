@@ -8,11 +8,43 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import uuid
 from datetime import datetime
 
 from .history_lease import CommandRunBusy, _row_is_live
-from .history_schema import LEGACY_UNKNOWN_SCOPE
+from .history_schema import LEGACY_UNKNOWN_SCOPE, _ensure_column
+from .market_norm import fold_key, split_roles
+from .market_schema import COMPETITOR_RESUME_ROLES_STATEMENTS
+
+
+def ensure_competitor_norm_columns(conn: sqlite3.Connection) -> None:
+    """Ключ-колонки нормализации и таблица ролей: идемпотентный добор схемы.
+
+    Свежие базы получают всё из DDL; здесь схему добирают старый market.db
+    (MarketStore.__init__) и легаси-history.db с рыночными таблицами
+    (History._init_schema). _ensure_column сам no-op при отсутствии таблицы —
+    свежий history.db (#1109) рыночных таблиц не имеет и не затрагивается.
+    Таблица ролей создаётся ЗДЕСЬ, а не в upsert: DDL на горячем пути записи
+    гонял бы no-op CREATE на каждый снимок (тысячи за collect-прогон).
+    """
+    market_tables = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+            " AND name IN ('competitor_resumes', 'competitor_resume_skills',"
+            "              'competitor_resume_queries')"
+        )
+    }
+    for table, column in (
+        ("competitor_resumes", "desired_role_key"),
+        ("competitor_resume_skills", "skill_key"),
+        ("competitor_resume_queries", "search_query_key"),
+    ):
+        _ensure_column(conn, table, column, "TEXT")
+    if market_tables:
+        for statement in COMPETITOR_RESUME_ROLES_STATEMENTS:
+            conn.execute(statement)
 
 
 class CompetitorsMixin:
@@ -284,6 +316,8 @@ class CompetitorsMixin:
         now = datetime.now().isoformat(timespec="seconds")
         resume_id = str(snapshot["resume_id"])
         content_hash = str(snapshot["content_hash"])
+        desired_role = str(snapshot["desired_role"])
+        desired_role_key = fold_key(desired_role) or None
         json_fields = (
             "specializations",
             "employment_types",
@@ -309,15 +343,16 @@ class CompetitorsMixin:
             )
             conn.execute(
                 """INSERT INTO competitor_resumes
-                   (resume_id, resume_url, desired_role, area, relocation,
+                   (resume_id, resume_url, desired_role, desired_role_key, area, relocation,
                     business_trips, metro_station, salary_from, salary_to,
                     salary_currency, experience_months, specializations, employment_types,
                     work_formats, languages, education, experience_summary, achievements,
                     content_hash, first_seen_at, last_seen_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(resume_id) DO UPDATE SET
                      resume_url = excluded.resume_url,
                      desired_role = excluded.desired_role,
+                     desired_role_key = excluded.desired_role_key,
                      area = excluded.area,
                      relocation = excluded.relocation,
                      business_trips = excluded.business_trips,
@@ -341,7 +376,8 @@ class CompetitorsMixin:
                 (
                     resume_id,
                     snapshot["resume_url"],
-                    snapshot["desired_role"],
+                    desired_role,
+                    desired_role_key,
                     snapshot.get("area"),
                     snapshot.get("relocation"),
                     snapshot.get("business_trips"),
@@ -378,22 +414,74 @@ class CompetitorsMixin:
                     continue
                 conn.execute(
                     """INSERT INTO competitor_resume_skills
-                       (resume_id, skill, proficiency, first_seen_at, last_seen_at)
-                       VALUES (?, ?, ?, ?, ?)""",
-                    (resume_id, name, skill.get("proficiency"), old_skills.get(name, now), now),
+                       (resume_id, skill, skill_key, proficiency, first_seen_at, last_seen_at)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (
+                        resume_id,
+                        name,
+                        fold_key(name) or None,
+                        skill.get("proficiency"),
+                        old_skills.get(name, now),
+                        now,
+                    ),
                 )
+
+            self._rebuild_competitor_roles(conn, resume_id, desired_role, now)
 
             conn.execute(
                 """INSERT INTO competitor_resume_queries
-                   (resume_id, search_query, search_in, auth_mode,
+                   (resume_id, search_query, search_query_key, search_in, auth_mode,
                     search_rank, first_seen_at, last_seen_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(resume_id, search_query, search_in, auth_mode) DO UPDATE SET
                      search_rank = excluded.search_rank,
+                     search_query_key = excluded.search_query_key,
                      last_seen_at = excluded.last_seen_at""",
-                (resume_id, search_query, search_in, auth_mode, search_rank, now, now),
+                (
+                    resume_id,
+                    search_query,
+                    fold_key(str(search_query)) or None,
+                    search_in,
+                    auth_mode,
+                    search_rank,
+                    now,
+                    now,
+                ),
             )
         return outcome
+
+    def _rebuild_competitor_roles(
+        self, conn: sqlite3.Connection, resume_id: str, desired_role: str, now: str
+    ) -> None:
+        """Пересобирает разбор составной desired_role одного резюме.
+
+        Контракт skills: DELETE+INSERT, first_seen сохраняется по role_key
+        (сырые части churn'ятся между снимками). Таблицу создаёт
+        ensure_competitor_norm_columns при открытии базы, не путь записи.
+        """
+        old_roles = {
+            row["role_key"]: row["first_seen_at"]
+            for row in conn.execute(
+                "SELECT role_key, first_seen_at FROM competitor_resume_roles WHERE resume_id = ?",
+                (resume_id,),
+            )
+        }
+        conn.execute("DELETE FROM competitor_resume_roles WHERE resume_id = ?", (resume_id,))
+        for position, part in enumerate(split_roles(desired_role)):
+            role_key = fold_key(part)
+            conn.execute(
+                """INSERT OR IGNORE INTO competitor_resume_roles
+                   (resume_id, role, role_key, is_primary, first_seen_at, last_seen_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    resume_id,
+                    part,
+                    role_key,
+                    1 if position == 0 else 0,
+                    old_roles.get(role_key, now),
+                    now,
+                ),
+            )
 
     def list_competitor_resumes(
         self,

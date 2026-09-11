@@ -314,3 +314,48 @@ order by company;
 ```
 ./scripts/run.sh query "$(grep -v '^--' scripts/queries/mature_ai_employers.sql)"
 ```
+
+## Фолд-ключи: нормализованные роли и навыки
+
+`desired_role`/`skill` хранятся дословно, как их набрал владелец резюме:
+«Оператор 1C» (латиница), «Оператор 1С» (кириллица), «Оператор 1 с» (пробел) —
+три разные строки. Для агрегатов используйте производные ключ-колонки
+`desired_role_key` / `skill_key` / `search_query_key` и таблицу
+`competitor_resume_roles` (составная должность «Оператор 1C, кладовщик»
+разобрана на части; резюме учитывается в каждой своей роли, `is_primary = 1`
+у первой). Правило ключа: casefold + гомоглифы кириллица→латиница
+(«С»→«c», «е»→«e»…) + удаление пунктуации и пробелов; транслитерации нет
+(«чатGPT» — отдельный ключ от «ChatGPT»). Читаемые имена групп — словарь
+`CANONICAL_DISPLAY` в `src/hhru_bot/market_norm.py`.
+
+Топ ролей по всем резюме (по разбору составных должностей):
+
+```
+./scripts/run.sh --history data/market.db query "
+  SELECT role_key, COUNT(DISTINCT resume_id) AS resumes
+  FROM competitor_resume_roles GROUP BY role_key ORDER BY resumes DESC LIMIT 15"
+```
+
+Топ навыков без расщепления по написанию («1С: Бухгалтерия» и
+«1C: Бухгалтерия» — один ключ):
+
+```
+./scripts/run.sh --history data/market.db query "
+  SELECT skill_key, COUNT(DISTINCT resume_id) AS resumes
+  FROM competitor_resume_skills GROUP BY skill_key ORDER BY resumes DESC LIMIT 15"
+```
+
+Сколько резюме владеют конкретным навыком (ключ можно получить из любого
+написания: `SELECT fold`-эквивалент в SQL не нужен — берите готовый
+`skill_key` из базы или из `market_norm.fold_key` в Python):
+
+```
+./scripts/run.sh --history data/market.db query "
+  SELECT COUNT(DISTINCT resume_id) FROM competitor_resume_skills
+  WHERE skill_key = 'chatgpt'"
+```
+
+Срез выборки для отчёта (`--text`) при этом остаётся по литеральному
+равенству `search_query` — прогон сбора идентичен своей строке запроса;
+`search_query_key` служит агрегатам, склеивающим разные написания одного
+запроса.

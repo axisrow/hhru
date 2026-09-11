@@ -25,9 +25,10 @@ from datetime import datetime
 from pathlib import Path
 
 from .history_analytics import AnalyticsMixin
-from .history_competitors import CompetitorsMixin
+from .history_competitors import CompetitorsMixin, ensure_competitor_norm_columns
 from .history_vacancies import VacanciesMixin
-from .market_schema import MIGRATION_MARKER_KEY, SCHEMA
+from .market_norm import fold_key, split_roles
+from .market_schema import BACKFILL_MARKER_KEY, MIGRATION_MARKER_KEY, SCHEMA
 
 logger = logging.getLogger("hhru_bot.market")
 
@@ -55,7 +56,9 @@ class MarketStore(AnalyticsMixin, VacanciesMixin, CompetitorsMixin):
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(SCHEMA)
+            ensure_competitor_norm_columns(conn)
             self._migrate_from_history(conn)
+            self._backfill_normalized_keys(conn)
 
     @contextmanager
     def _connect(self):
@@ -108,6 +111,101 @@ class MarketStore(AnalyticsMixin, VacanciesMixin, CompetitorsMixin):
             conn.execute(
                 "INSERT OR REPLACE INTO market_meta (key, value) VALUES (?, ?)",
                 (MIGRATION_MARKER_KEY, datetime.now().isoformat(timespec="seconds")),
+            )
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+
+    def backfill_normalized_keys(self) -> None:
+        """Публичная обёртка бэкфилла: тесты и ручной перезапуск (сняв маркер)."""
+        with self._connect() as conn:
+            self._backfill_normalized_keys(conn)
+
+    def _backfill_normalized_keys(self, conn: sqlite3.Connection) -> None:
+        """Одноразовое заполнение фолд-ключей и таблицы ролей (маркер в market_meta).
+
+        Автостарт из __init__ — тот же паттерн, что _migrate_from_history:
+        без него SQL-рецепты по *_key (docs/market-recipes.md) видели бы NULL
+        до ручного скрипта. Одна BEGIN IMMEDIATE: крах в любой точке =
+        ROLLBACK без маркера = чистый перезапуск при следующем открытии.
+        Идёт ПОСЛЕ _migrate_from_history: скопированные из легаси-источников
+        строки (с NULL-ключами) попадают в этот же проход.
+        """
+        done = conn.execute(
+            "SELECT value FROM market_meta WHERE key = ?", (BACKFILL_MARKER_KEY,)
+        ).fetchone()
+        if done is not None:
+            return
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            # Повторяющихся имён на порядок больше, чем уникальных: один кэш
+            # на проход вместо сотен тысяч повторных fold_key (~360k строк).
+            cache: dict[str, str] = {}
+
+            def cached_key(value: str) -> str | None:
+                key = cache.get(value)
+                if key is None:
+                    key = fold_key(value)
+                    cache[value] = key
+                return key or None
+
+            resumes = conn.execute(
+                "SELECT resume_id, desired_role FROM competitor_resumes"
+            ).fetchall()
+            conn.executemany(
+                "UPDATE competitor_resumes SET desired_role_key=? WHERE resume_id=?",
+                ((cached_key(str(row["desired_role"])), row["resume_id"]) for row in resumes),
+            )
+            skills = conn.execute(
+                "SELECT resume_id, skill FROM competitor_resume_skills"
+            ).fetchall()
+            conn.executemany(
+                "UPDATE competitor_resume_skills SET skill_key=? WHERE resume_id=? AND skill=?",
+                ((cached_key(str(row["skill"])), row["resume_id"], row["skill"]) for row in skills),
+            )
+            queries = conn.execute(
+                """SELECT resume_id, search_query, search_in, auth_mode
+                   FROM competitor_resume_queries"""
+            ).fetchall()
+            conn.executemany(
+                """UPDATE competitor_resume_queries SET search_query_key=?
+                   WHERE resume_id=? AND search_query=? AND search_in=? AND auth_mode=?""",
+                (
+                    (
+                        cached_key(str(row["search_query"])),
+                        row["resume_id"],
+                        row["search_query"],
+                        row["search_in"],
+                        row["auth_mode"],
+                    )
+                    for row in queries
+                ),
+            )
+            # Роли пересобираются с нуля напрямую, без по-строчного
+            # SELECT/DELETE _rebuild_competitor_roles: маркера нет — таблица
+            # пуста (прошлый запуск откатился), first_seen сохранять нечего,
+            # а ~30k пустых SELECT+DELETE — секунды чистого waste.
+            now = datetime.now().isoformat(timespec="seconds")
+            conn.execute("DELETE FROM competitor_resume_roles")
+            for row in resumes:
+                for position, part in enumerate(split_roles(str(row["desired_role"]))):
+                    conn.execute(
+                        """INSERT OR IGNORE INTO competitor_resume_roles
+                           (resume_id, role, role_key, is_primary, first_seen_at, last_seen_at)
+                           VALUES (?, ?, ?, ?, ?, ?)""",
+                        (
+                            row["resume_id"],
+                            part,
+                            cached_key(part),
+                            1 if position == 0 else 0,
+                            now,
+                            now,
+                        ),
+                    )
+            conn.execute(
+                "INSERT OR REPLACE INTO market_meta (key, value) VALUES (?, ?)",
+                (BACKFILL_MARKER_KEY, now),
             )
             conn.execute("COMMIT")
         except BaseException:
