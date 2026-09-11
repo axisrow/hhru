@@ -144,3 +144,20 @@ class MarketStore(AnalyticsMixin, VacanciesMixin, CompetitorsMixin):
                 )
         finally:
             source.close()
+
+
+def open_market() -> MarketStore | None:
+    """Открывает общую рыночную базу; None — мягкая деградация (#1106/#1109).
+
+    Единая точка открытия для команд (search/funnel/skipped/adaptive-report/
+    reply-employers/learn): невозможность открыть market.db не должна валить
+    команду — личная история пишется и анализируется независимо, карточные
+    поля (title/зарплата/запрос) при этом честно пустуют. Вызывающий передаёт
+    полученный инстанс (или None) в методы аналитики параметром — глобального
+    синглтона нет (Wave 0).
+    """
+    try:
+        return MarketStore()
+    except Exception as e:  # noqa: BLE001 — рынок не должен валить команду
+        logger.warning("Не открыть общую рыночную базу market.db: %s", e)
+        return None

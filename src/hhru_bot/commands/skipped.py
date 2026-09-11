@@ -1,7 +1,8 @@
 """Команда skipped (#392): read-view журнала отсева вакансий.
 
-Браузер не нужен: команда читает локальную SQLite-историю и связывает
-записи skipped с уже сохранёнными карточками vacancies_seen.
+Браузер не нужен: команда читает локальную SQLite-историю (записи skipped) и
+связывает их с карточками вакансий из общей market.db (#1109); недоступна —
+карточные поля честно пустуют.
 """
 
 from __future__ import annotations
@@ -29,5 +30,8 @@ def register(subparsers) -> None:
 
 def run(args: argparse.Namespace) -> None:
     """Печатает записи skipped без изменения локальной истории."""
+    from ..market_store import open_market
+
     history = History(args.history)
-    print(format_skipped(history.list_skipped(args.reason)))
+    market = open_market()
+    print(format_skipped(history.list_skipped(args.reason, market=market)))

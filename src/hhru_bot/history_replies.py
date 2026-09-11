@@ -7,6 +7,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from typing import TYPE_CHECKING
+
+from .history_analytics import _market_vacancies
+
+if TYPE_CHECKING:
+    # Только для аннотаций; рантайм-хелпер чтения рынка — из history_analytics.
+    from .market_store import MarketStore
 
 #: Ключ настройки-водяного знака ``responses --alert-new`` (см. #176/#13).
 RESPONSES_ALERT_CHECKPOINT = "responses.alert_new.last_success_at"
@@ -345,7 +352,28 @@ class RepliesMixin:
             )
             return int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
 
-    def reply_candidates(self, limit: int | None = None) -> list[dict]:
+    @staticmethod
+    def _with_market_titles(candidates: list[dict], market: MarketStore | None) -> list[dict]:
+        """Прежняя семантика ``COALESCE(v.title, r.vacancy_id)`` (#1109).
+
+        Названия вакансий берутся из ОБЩЕЙ market.db (в history.db таблица
+        vacancies_seen больше не создаётся): для vacancy_id берётся title
+        самой свежей карточки (list_vacancies_seen отдаёт строки по убыванию
+        last_seen_at). Нет карточки или market.db недоступен — title остаётся
+        vacancy_id, как раньше у чатов мимо команды ``search``; дальнейший
+        резолв (SSR-карточка negotiations → страница вакансии) делает
+        вызывающий.
+        """
+        titles: dict[str, str | None] = {}
+        for card in _market_vacancies(market):
+            titles.setdefault(card["vacancy_id"], card["title"])
+        for candidate in candidates:
+            candidate["title"] = titles.get(candidate["vacancy_id"]) or candidate["vacancy_id"]
+        return candidates
+
+    def reply_candidates(
+        self, limit: int | None = None, market: MarketStore | None = None
+    ) -> list[dict]:
         """Return account-wide chat candidates using only local history.
 
         Чаты с бейджем «Отказ» (``responses.status == 'discard'``) исключаются
@@ -362,10 +390,9 @@ class RepliesMixin:
         perform the final duplicate check.
         """
         sql = """
-            SELECT r.vacancy_id, r.topic, COALESCE(v.title, r.vacancy_id) AS title,
+            SELECT r.vacancy_id, r.topic,
                    COALESCE(r.employer, '') AS employer
               FROM responses AS r
-              LEFT JOIN vacancies_seen AS v ON v.vacancy_id = r.vacancy_id
              WHERE r.topic IS NOT NULL
                AND r.status != 'discard'
              GROUP BY r.vacancy_id, r.topic
@@ -376,9 +403,12 @@ class RepliesMixin:
             sql += " LIMIT ?"
             params.append(limit)
         with self._connect() as conn:
-            return [dict(row) for row in conn.execute(sql, params).fetchall()]
+            candidates = [dict(row) for row in conn.execute(sql, params).fetchall()]
+        return self._with_market_titles(candidates, market)
 
-    def follow_up_candidates(self, after_days: int, limit: int | None = None) -> list[dict]:
+    def follow_up_candidates(
+        self, after_days: int, limit: int | None = None, market: MarketStore | None = None
+    ) -> list[dict]:
         """Account-wide chats whose status has been stale for at least N days (#710).
 
         ``status IN ('response', 'read')`` и с тех пор ничего не изменилось:
@@ -399,10 +429,9 @@ class RepliesMixin:
         """
         cutoff = (datetime.now() - timedelta(days=after_days)).isoformat()
         sql = """
-            SELECT r.vacancy_id, r.topic, COALESCE(v.title, r.vacancy_id) AS title,
+            SELECT r.vacancy_id, r.topic,
                    COALESCE(r.employer, '') AS employer, r.status_changed_at
               FROM responses AS r
-              LEFT JOIN vacancies_seen AS v ON v.vacancy_id = r.vacancy_id
              WHERE r.topic IS NOT NULL
                AND r.status IN ('response', 'read')
                AND r.status_changed_at <= ?
@@ -414,7 +443,8 @@ class RepliesMixin:
             sql += " LIMIT ?"
             params.append(limit)
         with self._connect() as conn:
-            return [dict(row) for row in conn.execute(sql, params).fetchall()]
+            candidates = [dict(row) for row in conn.execute(sql, params).fetchall()]
+        return self._with_market_titles(candidates, market)
 
     def record_reply_and_action(
         self,

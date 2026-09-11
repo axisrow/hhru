@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from hhru_bot.history import History
+from hhru_bot.market_store import MarketStore
 
 pytestmark = pytest.mark.unit
 
@@ -36,7 +36,7 @@ def _seen(h, vacancy_id, search_query, tier, salary_to):
 
 def test_estimate_returns_tier_median_when_enough_data(tmp_path):
     """Достаточно данных по tier (n>=5) → медиана salary_to по (query, tier)."""
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     # top_tech: 100, 200, 300, 400, 500 → медиана 300
     for i, s in enumerate([100, 200, 300, 400, 500]):
         _seen(h, f"t{i}", "python", "top_tech", s)
@@ -53,7 +53,7 @@ def test_estimate_falls_back_to_sphere_when_tier_too_few(tmp_path):
 
     Мало данных по tier → медиана шумная → честнее сфера целиком.
     """
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     # top_tech: только 2 значения (мало) — 1000, 2000
     _seen(h, "t0", "python", "top_tech", 1000)
     _seen(h, "t1", "python", "top_tech", 2000)
@@ -71,13 +71,13 @@ def test_estimate_falls_back_to_sphere_when_tier_too_few(tmp_path):
 
 def test_estimate_returns_none_when_sphere_empty(tmp_path):
     """Данных по сфере нет вообще → None (оценки не существует)."""
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     assert h.estimate_salary("python", "top_tech") is None
 
 
 def test_estimate_returns_none_when_no_salary_data(tmp_path):
     """В сфере есть вакансии, но все без ЗП → None."""
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     h.upsert_vacancy_seen(
         vacancy_id="1",
         search_query="python",
@@ -95,7 +95,7 @@ def test_estimate_top_tech_can_be_lower_than_unknown_from_data(tmp_path):
     top_tech реально платит МЕНЬШЕ unknown — estimate для top_tech будет НИЖЕ.
     Это и есть проверка гипотезы пользователя «известные платят меньше» на
     практике, а не априорная константа «top_tech × 1.5»."""
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     # top_tech: 100..500 → медиана 300 (Яндекс/Сбер, гипотеза «платят меньше»)
     for i, s in enumerate([100, 200, 300, 400, 500]):
         _seen(h, f"t{i}", "python", "top_tech", s)
@@ -118,7 +118,7 @@ def test_estimate_top_tech_can_be_higher_when_data_says_so(tmp_path):
     """Обратный случай: если данные говорят top_tech > unknown — оценка выше.
     Доказывает, что коэффициенты берутся ИЗ ДАННЫХ, а не захардкожены в одну
     сторону (иначе это была бы априорная константа, что #93 запрещает)."""
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     for i, s in enumerate([600, 700, 800, 900, 1000]):
         _seen(h, f"t{i}", "python", "top_tech", s)
     for i, s in enumerate([100, 200, 300, 400, 500]):
@@ -139,7 +139,7 @@ def test_estimate_top_tech_can_be_higher_when_data_says_so(tmp_path):
 
 def test_estimate_isolated_per_search_query(tmp_path):
     """Медиана считается в рамках ОДНОЙ сферы, не смешивается с другими."""
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     for i, s in enumerate([100, 200, 300, 400, 500]):
         _seen(h, f"p{i}", "python", "unknown", s)
     for i, s in enumerate([1000, 2000, 3000, 4000, 5000]):
@@ -157,7 +157,7 @@ def test_estimate_isolated_per_search_query(tmp_path):
 
 def test_estimate_raw_marks_it_as_estimated(tmp_path):
     """Оценка честно помечается в raw (derived-view, отличать от реальной ЗП)."""
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     for i, s in enumerate([100, 200, 300, 400, 500]):
         _seen(h, f"t{i}", "python", "top_tech", s)
     est = h.estimate_salary("python", "top_tech")

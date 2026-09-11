@@ -3,7 +3,9 @@
 search СОБИРАЕТ карточки с зарплатой (#34), но раньше НЕ писал их в БД — рынок
 был не из чего анализировать. vacancies_seen = побочный эффект сбора: одна
 строка на (vacancy_id, search_query), upsert по свежему scrape (обновляет
-зарплату, двигает last_seen_at). Без браузера — только SQLite.
+зарплату, двигает last_seen_at). С #1109 таблица живёт только в общей
+market.db — хост тестов MarketStore (те же миксины; History остаётся в одном
+тесте доводки легаси-схемы #51). Без браузера — только SQLite.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from hhru_bot.history import History
+from hhru_bot.market_store import MarketStore
 
 pytestmark = pytest.mark.unit
 
@@ -21,7 +24,7 @@ pytestmark = pytest.mark.unit
 
 
 def test_upsert_inserts_new_vacancy(tmp_path):
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     h.upsert_vacancy_seen(
         vacancy_id="123",
         title="Backend",
@@ -46,7 +49,7 @@ def test_upsert_inserts_new_vacancy(tmp_path):
 
 
 def test_upsert_updates_existing_vacancy_keeps_first_seen(tmp_path):
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     h.upsert_vacancy_seen(vacancy_id="123", title="Old", company="X", search_query="python")
     first_seen = h.list_vacancies_seen()[0]["first_seen_at"]
 
@@ -73,7 +76,7 @@ def test_upsert_updates_existing_vacancy_keeps_first_seen(tmp_path):
 def test_upsert_stores_extra_card_fields(tmp_path):
     """Доп. признаки карточки для статистики/ML (#517): address, is_remote,
     experience, snippet_requirement, snippet_responsibility, side_job, no_resume."""
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     h.upsert_vacancy_seen(
         vacancy_id="123",
         title="Backend",
@@ -107,7 +110,7 @@ def test_upsert_stores_extra_card_fields(tmp_path):
 
 def test_upsert_extra_card_fields_default_to_null(tmp_path):
     """Опциональные блоки карточки — не роняем upsert, если их не передали."""
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     h.upsert_vacancy_seen(vacancy_id="123", title="T", company="C", search_query="python")
     row = h.list_vacancies_seen()[0]
     assert row["address"] is None
@@ -124,7 +127,7 @@ def test_upsert_extra_card_fields_default_to_null(tmp_path):
 
 
 def test_empty_metro_snapshot_is_persisted_and_missing_snapshot_is_preserved(tmp_path):
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     h.upsert_vacancy_seen(vacancy_id="123", search_query="python", metro_stations='["Динамо"]')
     h.upsert_vacancy_seen(vacancy_id="123", search_query="python", metro_stations="[]")
     assert h.list_vacancies_seen()[0]["metro_stations"] == "[]"
@@ -136,7 +139,7 @@ def test_empty_metro_snapshot_is_persisted_and_missing_snapshot_is_preserved(tmp
 def test_upsert_refreshes_extra_card_fields_with_new_nonempty_value(tmp_path):
     """При повторном scrape новое НЕпустое значение address перезаписывает
     старое (карточка могла реально поменять город/формат работы)."""
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     h.upsert_vacancy_seen(
         vacancy_id="123",
         title="T",
@@ -164,7 +167,7 @@ def test_upsert_keeps_previous_text_fields_when_scrape_misses_block(tmp_path):
     ранее собранное значение NULL'ом — COALESCE, как у published_at.
     is_remote — тристейтный сигнал: None означает «не удалось прочитать», а
     явный False остаётся валидным наблюдением."""
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     h.upsert_vacancy_seen(
         vacancy_id="123",
         title="T",
@@ -215,7 +218,7 @@ def test_upsert_keeps_previous_text_fields_when_scrape_misses_block(tmp_path):
 
 
 def test_upsert_refreshes_optional_card_badges(tmp_path):
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     h.upsert_vacancy_seen(
         vacancy_id="123",
         title="T",
@@ -239,7 +242,7 @@ def test_upsert_refreshes_optional_card_badges(tmp_path):
 
 def test_upsert_keeps_all_known_fields_when_scrape_returns_empty_values(tmp_path):
     """Дрейф селектора не должен стирать best-known карточку (#532)."""
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     h.upsert_vacancy_seen(
         vacancy_id="123",
         search_query="python",
@@ -293,7 +296,7 @@ def test_upsert_keeps_all_known_fields_when_scrape_returns_empty_values(tmp_path
 
 def test_upsert_replaces_salary_bounds_as_one_observation(tmp_path):
     """Частичная новая вилка не должна смешиваться со старой границей."""
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     h.upsert_vacancy_seen(
         vacancy_id="123",
         search_query="python",
@@ -318,7 +321,7 @@ def test_upsert_replaces_salary_bounds_as_one_observation(tmp_path):
 def test_upsert_same_vacancy_different_query_keeps_both(tmp_path):
     """UNIQUE(vacancy_id, search_query): одна вакансия по разным запросам —
     отдельные строки (рынок хочет видеть, по каким запросам что находится)."""
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     h.upsert_vacancy_seen(vacancy_id="123", title="T", company="C", search_query="python")
     h.upsert_vacancy_seen(vacancy_id="123", title="T", company="C", search_query="django")
     rows = h.list_vacancies_seen()
@@ -328,7 +331,7 @@ def test_upsert_same_vacancy_different_query_keeps_both(tmp_path):
 def test_upsert_accepts_null_salary(tmp_path):
     """Вакансия без зарплаты (parse_salary → None) тоже пишется — для полноты
     картины рынка (доля без зарплаты по сфере)."""
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     h.upsert_vacancy_seen(
         vacancy_id="1",
         title="No salary",
@@ -345,7 +348,7 @@ def test_upsert_accepts_null_salary(tmp_path):
 
 
 def test_upsert_persists_vacancy_text_for_learning_report(tmp_path):
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     h.upsert_vacancy_seen("1", "python", vacancy_text="Python and Docker")
     h.upsert_vacancy_seen("1", "backend", vacancy_text="Python and Docker")
     h.upsert_vacancy_seen("2", "python", vacancy_text="Python and SQL")
@@ -357,7 +360,7 @@ def test_upsert_persists_vacancy_text_for_learning_report(tmp_path):
 
 def test_upsert_records_employer_tier(tmp_path):
     """#93: tier работодателя пишется в vacancies_seen для estimate_salary."""
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     h.upsert_vacancy_seen(
         vacancy_id="1",
         title="Backend",
@@ -374,7 +377,7 @@ def test_upsert_records_employer_tier(tmp_path):
 
 def test_upsert_updates_employer_tier_on_rescrape(tmp_path):
     """#93: при повторном scrape tier обновляется (компания получила trusted/отзывы)."""
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     h.upsert_vacancy_seen(vacancy_id="1", title="T", company="C", search_query="python")
     assert h.list_vacancies_seen()[0]["employer_tier"] is None
 
@@ -434,7 +437,7 @@ def test_market_salary_by_query_returns_median(tmp_path):
     рядом ``median_from`` (медиана нижних границ), см. test_market_bounds.py:
     здесь у всех вакансий from == to, поэтому обе медианы совпадают.
     """
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     # python: 100, 200, 300, 400, 500 → медиана 300
     for i, s in enumerate([100, 200, 300, 400, 500]):
         h.upsert_vacancy_seen(
@@ -474,7 +477,7 @@ def test_market_salary_ignores_null_salary_in_median(tmp_path):
     нижней («от N») теперь считается данными и попадает в with_salary и в
     медиану «от» (см. test_market_bounds.py).
     """
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     h.upsert_vacancy_seen(vacancy_id="1", title="T", company="C", search_query="python")
     h.upsert_vacancy_seen(
         vacancy_id="2",
@@ -503,14 +506,14 @@ def test_market_salary_ignores_null_salary_in_median(tmp_path):
 
 
 def test_market_salary_empty_when_no_data(tmp_path):
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     assert h.market_salary_by_query() == []
 
 
 def test_market_salary_sorted_by_median_desc(tmp_path):
     """Сферы с ВЫШЕ доходом — наверху: это и есть цель «максимизация дохода»,
     выгода должна бросаться в глаза первой."""
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     h.upsert_vacancy_seen(
         vacancy_id="1",
         title="T",
@@ -537,7 +540,7 @@ def test_market_salary_sorted_by_median_desc(tmp_path):
 def test_market_salary_even_count_averages_two_middle(tmp_path):
     """Чётное число значений: медиана = среднее двух центральных (как в SQLite
     percentile через AVG двух центральных строк)."""
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     # 100, 200, 300, 400 → медиана = (200+300)/2 = 250
     for i, s in enumerate([100, 200, 300, 400]):
         h.upsert_vacancy_seen(
@@ -557,7 +560,7 @@ def test_market_salary_even_count_averages_two_middle(tmp_path):
 
 
 def test_list_vacancies_seen_orders_recent_first(tmp_path):
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     h.upsert_vacancy_seen(vacancy_id="old", title="T", company="C", search_query="python")
     h.upsert_vacancy_seen(vacancy_id="new", title="T", company="C", search_query="python")
     rows = h.list_vacancies_seen()
@@ -568,7 +571,7 @@ def test_list_vacancies_seen_orders_recent_first(tmp_path):
 def test_market_aggregates_visible_to_readonly_query(tmp_path):
     """query (#45) открывает БД в read-only: таблица должна быть доступна
     произвольному SELECT без прав на запись."""
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     h.upsert_vacancy_seen(
         vacancy_id="1",
         title="T",
@@ -578,7 +581,7 @@ def test_market_aggregates_visible_to_readonly_query(tmp_path):
         salary_currency="RUB",
         search_query="python",
     )
-    conn = sqlite3.connect(f"file:{tmp_path / 'h.db'}?mode=ro", uri=True)
+    conn = sqlite3.connect(f"file:{tmp_path / 'market.db'}?mode=ro", uri=True)
     try:
         row = conn.execute(
             "SELECT search_query, COUNT(*) AS n FROM vacancies_seen GROUP BY search_query"
@@ -595,7 +598,7 @@ def test_market_aggregates_visible_to_readonly_query(tmp_path):
 def test_market_salary_default_excludes_estimates(tmp_path):
     """#93: по умолчанию include_estimates=False — вакансии без ЗП в медиану не
     идут, поле estimated=False (медиана реальная)."""
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     # top_tech: реальные ЗП 100..500 → медиана 300.
     for i, s in enumerate([100, 200, 300, 400, 500]):
         h.upsert_vacancy_seen(
@@ -627,7 +630,7 @@ def test_market_salary_default_excludes_estimates(tmp_path):
 def test_market_salary_with_estimates_fills_zero_median(tmp_path):
     """#93: include_estimates=True — сфера, где ВСЕ без ЗП, получает оценочную
     медиану по tier'ам (если по tier есть данные с ЗП в той же сфере)."""
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     # top_tech с ЗП: 100..500 → медиана 300 (источник оценки).
     for i, s in enumerate([100, 200, 300, 400, 500]):
         h.upsert_vacancy_seen(
@@ -663,7 +666,7 @@ def test_market_salary_with_estimates_fills_zero_median(tmp_path):
 def test_market_salary_with_estimates_marks_estimated_flag(tmp_path):
     """#93: флаг estimated=True только когда в медиану реально вошли оценки
     (есть вакансии без ЗП и нашлась оценка). Без вакансий без ЗП — False."""
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     for i, s in enumerate([100, 200, 300, 400, 500]):
         h.upsert_vacancy_seen(
             vacancy_id=f"t{i}",
@@ -684,7 +687,7 @@ def test_market_salary_with_estimates_marks_estimated_flag(tmp_path):
 
 
 def test_upsert_stores_published_at(tmp_path):
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     h.upsert_vacancy_seen(
         vacancy_id="1",
         title="T",
@@ -700,7 +703,7 @@ def test_upsert_missing_published_at_preserves_previous_value(tmp_path):
     """Регрессия (code review PR #430): дата публикации неизменна, повторный
     scrape без даты (селектор не сработал/отсутствует) не должен затирать
     уже известное значение NULL'ом."""
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     h.upsert_vacancy_seen(
         vacancy_id="1",
         title="T",
@@ -721,7 +724,7 @@ def test_upsert_missing_published_at_preserves_previous_value(tmp_path):
 
 def test_upsert_new_published_at_overwrites_previous_value(tmp_path):
     """Селектор снова сработал со свежим значением — новое значение побеждает."""
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     h.upsert_vacancy_seen(
         vacancy_id="1",
         title="T",
@@ -743,7 +746,7 @@ def test_upsert_new_published_at_overwrites_previous_value(tmp_path):
 def test_vacancy_age_distribution_counts_each_vacancy_once(tmp_path):
     """Регрессия (code review PR #430): UNIQUE — (vacancy_id, search_query),
     одна и та же вакансия по нескольким запросам не должна считаться дважды."""
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     now = datetime(2026, 8, 20, 12, 0, 0)
     h.upsert_vacancy_seen(
         vacancy_id="1",
@@ -765,7 +768,7 @@ def test_vacancy_age_distribution_counts_each_vacancy_once(tmp_path):
 
 
 def test_vacancy_age_distribution_buckets_by_age(tmp_path):
-    h = History(tmp_path / "h.db")
+    h = MarketStore(tmp_path / "market.db")
     now = datetime(2026, 8, 20, 12, 0, 0)
     ages_days = {"a": 0, "b": 3, "c": 15, "d": 45}
     for vacancy_id, days_ago in ages_days.items():

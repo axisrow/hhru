@@ -6,10 +6,30 @@ import pytest
 
 from hhru_bot.commands import reply_employers as command
 from hhru_bot.history import History
+from hhru_bot.market_store import MarketStore
 from hhru_bot.negotiations_chat import ChatMessage, NoReplyForm
 from hhru_bot.negotiations_probe import TopicRef
 
 pytestmark = pytest.mark.integration
+
+# Карточки вакансий для названий кандидатов живут в общей market.db (#1109):
+# держим per-test инстанс, который видят и сид-хелперы, и команда (open_market).
+_MARKET: dict = {"store": None}
+
+
+@pytest.fixture(autouse=True)
+def _fresh_market(tmp_path, monkeypatch):
+    """Свежая market.db на каждый тест + redirect дефолтного пути open_market."""
+    _MARKET["store"] = MarketStore(tmp_path / "market.db")
+    monkeypatch.setattr("hhru_bot.market_store.DEFAULT_MARKET_PATH", tmp_path / "market.db")
+    yield
+    _MARKET["store"] = None
+
+
+def _market() -> MarketStore:
+    store = _MARKET["store"]
+    assert store is not None, "autouse-фикстура _fresh_market обязана была создать store"
+    return store
 
 
 def _args(**overrides):
@@ -67,7 +87,7 @@ class _Page:
 
 def _seed_response(history: History, *, vacancy_id: str, topic: str, title: str = "Python dev"):
     history.upsert_response(vacancy_id, "Acme", "read", None, topic=topic)
-    history.upsert_vacancy_seen(vacancy_id, "q", title=title)
+    _market().upsert_vacancy_seen(vacancy_id, "q", title=title)
 
 
 def _patch_common(
@@ -931,7 +951,7 @@ def test_no_verdict_keeps_heuristic_gates(tmp_path, monkeypatch, capsys):
 
 
 def _seed_response_without_title(history: History, *, vacancy_id: str, topic: str):
-    """Чат мимо команды search: нет строки vacancies_seen, COALESCE отдаёт id."""
+    """Чат мимо команды search: нет карточки в market.db, title деградирует в id."""
     history.upsert_response(vacancy_id, "Acme", "read", None, topic=topic)
 
 
@@ -1275,11 +1295,12 @@ def test_reply_candidates_exclude_discard_status(tmp_path):
     history = History(tmp_path / "history.db")
     _seed_response(history, vacancy_id="1", topic="tp1")
     history.upsert_response("2", "Acme", "discard", None, topic="tp2")
-    history.upsert_vacancy_seen("2", "q", title="Discarded dev")
+    _market().upsert_vacancy_seen("2", "q", title="Discarded dev")
 
-    candidates = history.reply_candidates()
+    candidates = history.reply_candidates(market=_market())
 
     assert [c["vacancy_id"] for c in candidates] == ["1"]
+    assert [c["title"] for c in candidates] == ["Python dev"]
 
 
 def _discard_card_html(vacancy_id: str) -> str:

@@ -7,7 +7,9 @@ READ-only анализ рынка с целью **максимизация до�
 ## Откуда данные
 
 Команда `search` при каждом запуске пишет собранные карточки вакансий в таблицу
-`vacancies_seen` (побочный эффект сбора, не трогает отбор/скоринг/вывод).
+`vacancies_seen` общей рыночной базы `data/market.db` (#1106; с #1109 в
+per-account `history.db` этой таблицы больше нет — рынок один на все аккаунты)
+— побочный эффект сбора, не трогает отбор/скоринг/вывод.
 Поля: `vacancy_id`, `title`, `company`, `salary_from`, `salary_to`,
 `salary_currency`, `search_query` (по какому тексту найдено),
 `first_seen_at`, `last_seen_at`. Ключ `UNIQUE(vacancy_id, search_query)` — одна
@@ -24,7 +26,8 @@ READ-only анализ рынка с целью **максимизация до�
 ./scripts/run.sh --account marketing search --resume <id> --max-pages 5
 ```
 
-Дальше — всё через `query` (read-only SELECT к `history.db`):
+Дальше — всё через `query` (read-only SELECT; для рыночных таблиц — с
+`--history data/market.db`, потому что `vacancies_seen` живёт там, #1109):
 
 ```
 ./scripts/run.sh query "<SQL отсюда>"
@@ -33,10 +36,11 @@ READ-only анализ рынка с целью **максимизация до�
 ```
 
 `--config`/`--history` — глобальные флаги (до подкоманды), по умолчанию
-`data/config.yaml` и `data/history.db`:
+`data/config.yaml` и `data/history.db`; рыночные SQL-рецепты ниже читают
+`data/market.db`:
 
 ```
-./scripts/run.sh --history data/history.db query "<SQL>"
+./scripts/run.sh --history data/market.db query "<SQL>"
 ```
 
 Для отдельного аккаунта достаточно одного флага (он также должен стоять до
