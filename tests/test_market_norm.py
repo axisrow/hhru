@@ -52,6 +52,8 @@ def test_fold_key_keeps_language_symbols():
     assert fold_key("C++") == "c++"
     assert fold_key("C#") == "c#"
     assert fold_key("C") == "c"
+    # Музыкальная диеза — зрительный гомоглиф решётки: C♯ пишут вместо C#.
+    assert fold_key("C♯") == fold_key("C#")
     assert len({fold_key("C"), fold_key("C#"), fold_key("C++")}) == 3
     # Разделители по-прежнему фолдятся.
     assert fold_key("1С: Предприятие 8") == fold_key("1С:Предприятие 8")

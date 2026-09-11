@@ -589,6 +589,37 @@ def test_report_is_deterministic_and_warns_about_limited_coverage():
     assert "Добавляйте навык только если он подтверждён" in report
 
 
+def test_report_counts_each_role_and_skill_once_per_resume():
+    # Дублирующиеся варианты одной роли/навыка внутри одного резюме считаются
+    # один раз: отчёт не должен расходиться с PK-дедупом
+    # competitor_resume_roles (resume_id, role_key).
+    rows = [
+        {
+            "desired_role": "Оператор 1C, Оператор 1С",
+            "specializations": [],
+            "skills": [{"name": "QA Engineer"}, {"name": "qa engineer"}],
+            "experience_months": 12,
+            "salary_to": 60_000,
+            "salary_currency": "RUB",
+        },
+        {
+            "desired_role": "Кладовщик",
+            "specializations": [],
+            "skills": [{"name": "1C: Бухгалтерия"}, {"name": "1С: Бухгалтерия"}],
+            "experience_months": 24,
+            "salary_to": 50_000,
+            "salary_currency": "RUB",
+        },
+    ]
+    report = report_competitors(rows, top=10)
+    assert "1  Оператор 1С" in report
+    assert "1  QA Engineer" in report
+    assert "1  Кладовщик" in report
+    assert "1  1С: Бухгалтерия" in report
+    # Сочетание пар всё равно считается по множеству ключей резюме.
+    assert "1  QA Engineer + qa" not in report
+
+
 def test_report_dedupes_buckets_by_fold_key_and_splits_compound_roles():
     rows = [
         {

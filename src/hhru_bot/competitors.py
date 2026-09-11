@@ -733,8 +733,15 @@ def report_competitors(rows: list[dict], *, top: int, limited_runs: int = 0) -> 
     for row in rows:
         raw_role = row.get("desired_role")
         if raw_role:
+            # Роль считается один раз на (резюме, ключ): резюме с «Оператор
+            # 1C, Оператор 1С» не должно давать двойную частоту — иначе отчёт
+            # разойдётся с PK-дедупом competitor_resume_roles.
+            row_role_keys: set[str] = set()
             for part in split_roles(str(raw_role)):
-                role_forms.setdefault(cached_fold(part), Counter())[part] += 1
+                key = cached_fold(part)
+                if key not in row_role_keys:
+                    row_role_keys.add(key)
+                    role_forms.setdefault(key, Counter())[part] += 1
         amount = row.get("salary_to") or row.get("salary_from")
         currency = row.get("salary_currency")
         if amount and currency:
@@ -745,7 +752,8 @@ def report_competitors(rows: list[dict], *, top: int, limited_runs: int = 0) -> 
             if not name:
                 continue
             key = cached_fold(str(name))
-            skill_forms.setdefault(key, Counter())[str(name)] += 1
+            if key not in row_skill_keys:
+                skill_forms.setdefault(key, Counter())[str(name)] += 1
             row_skill_keys.add(key)
         ordered_keys = sorted(row_skill_keys)
         for index, first in enumerate(ordered_keys):

@@ -232,4 +232,5 @@ MIGRATION_MARKER_KEY = "migrated_from_history"
 # иначе материализованные в БД ключи останутся по старым правилам навсегда,
 # а отчёт будет считать по новым, и числа разъедутся молча.
 # v2 — сохранение # + . в ключе (C#/C++ больше не сливаются с C).
-BACKFILL_MARKER_KEY = "competitor_norm_backfill:v2"
+# v3 — гомоглиф ♯→# (C♯ не сливается с C).
+BACKFILL_MARKER_KEY = "competitor_norm_backfill:v3"
