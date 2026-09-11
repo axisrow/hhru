@@ -47,6 +47,25 @@ def test_fold_key_treats_nbsp_family_like_space():
     assert fold_key("Оператор\u202f1С") == fold_key("Оператор 1С")
 
 
+def test_fold_key_keeps_language_symbols():
+    # C#, C++, C♯ несут символ как часть имени и не должны сливаться с C.
+    assert fold_key("C++") == "c++"
+    assert fold_key("C#") == "c#"
+    assert fold_key("C") == "c"
+    assert len({fold_key("C"), fold_key("C#"), fold_key("C++")}) == 3
+    # Разделители по-прежнему фолдятся.
+    assert fold_key("1С: Предприятие 8") == fold_key("1С:Предприятие 8")
+    assert fold_key("CI/CD") == fold_key("CI CD")
+
+
+def test_split_roles_keeps_symbol_languages():
+    # Составная роль «C/C++» разбирается: «C++» выживает (ключ «c++» длиннее
+    # символа фильтра), одиночная «C» остаётся в мусор-фильтре осознанно —
+    # одиночно-буквенных ролей в живой базе нет.
+    assert split_roles("C/C++") == ["C++"]
+    assert split_roles("C#") == ["C#"]
+
+
 def test_fold_key_resolves_yo_to_e():
     assert fold_key("ёлка") == fold_key("елка")
 

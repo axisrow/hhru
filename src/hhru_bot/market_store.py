@@ -43,6 +43,7 @@ _MIGRATION_TABLES = (
     "competitor_resumes",
     "competitor_resume_skills",
     "competitor_resume_queries",
+    "competitor_resume_roles",
     "competitor_collection_runs",
     "vacancies_seen",
 )
@@ -183,13 +184,22 @@ class MarketStore(AnalyticsMixin, VacanciesMixin, CompetitorsMixin):
                 ),
             )
             # Роли пересобираются с нуля напрямую, без по-строчного
-            # SELECT/DELETE _rebuild_competitor_roles: маркера нет — таблица
-            # пуста (прошлый запуск откатился), first_seen сохранять нечего,
-            # а ~30k пустых SELECT+DELETE — секунды чистого waste.
+            # SELECT/DELETE _rebuild_competitor_roles (~30k пустых пар —
+            # секунды чистого waste). first_seen при этом переживает
+            # пересборку: перед бэкфиллом миграция могла привезти строки из
+            # легаси-источника с историческими датами первой встречи —
+            # «пусто до маркера» верно только до этого копирования.
             now = datetime.now().isoformat(timespec="seconds")
+            old_roles = {
+                (row["resume_id"], row["role_key"]): row["first_seen_at"]
+                for row in conn.execute(
+                    "SELECT resume_id, role_key, first_seen_at FROM competitor_resume_roles"
+                )
+            }
             conn.execute("DELETE FROM competitor_resume_roles")
             for row in resumes:
                 for position, part in enumerate(split_roles(str(row["desired_role"]))):
+                    role_key = cached_key(part)
                     conn.execute(
                         """INSERT OR IGNORE INTO competitor_resume_roles
                            (resume_id, role, role_key, is_primary, first_seen_at, last_seen_at)
@@ -197,9 +207,9 @@ class MarketStore(AnalyticsMixin, VacanciesMixin, CompetitorsMixin):
                         (
                             row["resume_id"],
                             part,
-                            cached_key(part),
+                            role_key,
                             1 if position == 0 else 0,
-                            now,
+                            old_roles.get((row["resume_id"], role_key), now),
                             now,
                         ),
                     )

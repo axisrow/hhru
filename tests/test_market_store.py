@@ -19,7 +19,7 @@ import pytest
 
 from hhru_bot.history import History
 from hhru_bot.market_norm import fold_key
-from hhru_bot.market_schema import MARKET_TABLES_DDL
+from hhru_bot.market_schema import BACKFILL_MARKER_KEY, MARKET_TABLES_DDL
 from hhru_bot.market_store import DEFAULT_MARKET_PATH, MarketStore
 
 pytestmark = pytest.mark.integration
@@ -322,9 +322,40 @@ def test_backfill_fills_keys_on_pre_norm_schema_and_is_idempotent(tmp_path):
         ).fetchall()
         assert len(roles) == 2
         marker = conn.execute(
-            "SELECT COUNT(*) FROM market_meta WHERE key='competitor_norm_backfill:v1'"
+            "SELECT COUNT(*) FROM market_meta WHERE key=?", (BACKFILL_MARKER_KEY,)
         ).fetchone()[0]
         assert marker == 1
+
+
+def test_migration_carries_roles_and_backfill_preserves_first_seen(tmp_path):
+    # Легаси-history.db с ролями (first_seen из прошлых прогонов): миграция
+    # переносит их в market.db, а пересборка при бэкфилле не затирает
+    # first_seen датой прогона.
+    history = _make_legacy_history(tmp_path / "history.db")
+    with history._connect() as conn:
+        conn.execute(
+            """INSERT INTO competitor_resumes
+               (resume_id, resume_url, desired_role, content_hash,
+                first_seen_at, last_seen_at, updated_at)
+               VALUES ('00001', 'https://hh.ru/resume/00001', 'Оператор 1C', 'h',
+                       '2026-01-01T00:00:00', '2026-01-01T00:00:00', '2026-01-01T00:00:00')"""
+        )
+        conn.execute(
+            "INSERT INTO competitor_resume_roles VALUES (?, ?, ?, 1, ?, ?)",
+            (
+                "00001",
+                "Оператор 1C",
+                fold_key("Оператор 1C"),
+                "2026-01-01T00:00:00",
+                "2026-01-01T00:00:00",
+            ),
+        )
+    MarketStore(tmp_path / "market.db")  # __init__: миграция + бэкфилл
+    with sqlite3.connect(tmp_path / "market.db") as conn:
+        first_seen = conn.execute(
+            "SELECT first_seen_at FROM competitor_resume_roles WHERE resume_id='00001'"
+        ).fetchone()[0]
+    assert first_seen == "2026-01-01T00:00:00"
 
 
 def test_upsert_after_backfill_writes_keys_without_new_backfill(tmp_path):
