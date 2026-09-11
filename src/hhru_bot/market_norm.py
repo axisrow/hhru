@@ -192,6 +192,7 @@ CANONICAL_DISPLAY = {
         "Adobe After Effects",
         "Adobe Premiere Pro",
         "Материальная ответственность",
+        "Windows",
     )
 } | {
     # Имена кластеров профессий: id кластера — читаемый литерал (не fold-ключ),

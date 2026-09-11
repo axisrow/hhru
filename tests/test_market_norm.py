@@ -112,6 +112,9 @@ def test_key_aliases_v7_audit_pairs():
     assert fold_key("Adobe Premier Pro") == fold_key("Adobe Premiere Pro")
     assert fold_key("Материальная отвественность") == fold_key("Материальная ответственность")
     assert fold_key("Windows 7") == fold_key("Windows")
+    # Витрина канона «Windows» закреплена: без записи в словаре бакет мог
+    # называться «Windows 7» по частоте сырых форм.
+    assert canonical_display(fold_key("Windows"), Counter({"Windows 7": 3})) == "Windows"
     # Витрина слитой группы — словарное имя, а не самая частая опечатка.
     assert canonical_display(
         fold_key("Adobe After Effects"), Counter({"Adobe After Effect": 3})
