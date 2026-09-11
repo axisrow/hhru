@@ -94,22 +94,29 @@ def run(args: argparse.Namespace) -> None:
         since = None
 
     history = History(args.history)
-    # #1109: карточки вакансий (атрибуция по запросу, зарплата в отказах)
-    # читаются из общей market.db; недоступна — аналитика деградирует мягко.
-    from ..market_store import open_market
-
-    market = open_market()
 
     if getattr(args, "rejections", False):
+        # #1109: зарплаты отказов читаются из общей market.db; недоступна —
+        # аналитика деградирует мягко (отказы с пустыми карточными полями).
+        from ..market_store import open_market
+
+        market = open_market()
         rejections = history.rejections_by_employer(since=since, resume_id=resume_id, market=market)
         print(format_rejections(rejections, args.format))
         return
 
     if args.dead:
         # «мёртвая зона»: доля откликов без ответа старше --dead-days.
+        # market.db не нужен: этап считается только по actions × responses.
         dead = history.dead_responses(days=args.dead_days, resume_id=resume_id)
         print(format_dead(dead, args.format))
         return
+
+    # #1109: карточки вакансий (атрибуция по запросу) читаются из общей
+    # market.db; недоступна — аналитика деградирует мягко.
+    from ..market_store import open_market
+
+    market = open_market()
 
     # На пустой истории воронка печатает шапку таблицы (формат стабилен, как
     # format_actions в report.py) — пользователь видит структуру даже без данных.

@@ -457,12 +457,6 @@ def run(args: argparse.Namespace) -> bool:
 
     config = load_config_or_exit(args.config)
     history = History(args.history)
-    # #1106/#1109: общая рыночная база для записи собранных карточек. Открытие
-    # мягкое (open_market возвращает None при сбое): невозможность открыть
-    # market.db не должна мешать поиску (personal-история пишется независимо).
-    from ..market_store import open_market
-
-    market = open_market()
     saved_mode_failed = _run_saved_search_modes(args, config)
     if saved_mode_failed is not None:
         # Режимы --save/--list-saved завершают команду: обычный поиск
@@ -491,6 +485,14 @@ def run(args: argparse.Namespace) -> bool:
     else:
         resumes = _resumes_for_search(config, args)
 
+    # #1106/#1109: общая рыночная база для записи собранных карточек. Открытие
+    # мягкое (open_market возвращает None при сбое): невозможность открыть
+    # market.db не должна мешать поиску (personal-история пишется независимо).
+    # Рынок нужен только самому прогону поиска, поэтому открывается ПОСЛЕ
+    # завершающих режимов --save/--list-saved и guard'а --saved — им он не нужен.
+    from ..market_store import open_market
+
+    market = open_market()
     failed = False
     with launch_context(
         config.storage_state_file, headless=args.headless, user_agent=config.user_agent
