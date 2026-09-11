@@ -14,7 +14,7 @@ from datetime import datetime
 
 from .history_lease import CommandRunBusy, _row_is_live
 from .history_schema import LEGACY_UNKNOWN_SCOPE, _ensure_column
-from .market_norm import fold_key, split_roles
+from .market_norm import ROLE_CLUSTERS, fold_key, split_roles
 from .market_schema import COMPETITOR_RESUME_ROLES_STATEMENTS
 
 
@@ -40,6 +40,7 @@ def ensure_competitor_norm_columns(conn: sqlite3.Connection) -> None:
         ("competitor_resumes", "desired_role_key"),
         ("competitor_resume_skills", "skill_key"),
         ("competitor_resume_queries", "search_query_key"),
+        ("competitor_resume_roles", "role_cluster"),
     ):
         _ensure_column(conn, table, column, "TEXT")
     if market_tables:
@@ -471,12 +472,14 @@ class CompetitorsMixin:
             role_key = fold_key(part)
             conn.execute(
                 """INSERT OR IGNORE INTO competitor_resume_roles
-                   (resume_id, role, role_key, is_primary, first_seen_at, last_seen_at)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                   (resume_id, role, role_key, role_cluster, is_primary,
+                    first_seen_at, last_seen_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (
                     resume_id,
                     part,
                     role_key,
+                    ROLE_CLUSTERS.get(role_key),
                     1 if position == 0 else 0,
                     old_roles.get(role_key, now),
                     now,

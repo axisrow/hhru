@@ -19,7 +19,7 @@ bump маркера) или точечно (запись в KEY_ALIASES в marke
 индексе; пары с разницей в два и более символов сеть не видит — это
 осознанный компромисс полноты против объёма.
 
-Read-only, только stdlib:
+Read-only; запускается из окружения проекта (нужен установленный `hhru`):
 
     python3 scripts/audit_key_dupes.py [путь-к-market.db]
 """
@@ -28,7 +28,12 @@ import sqlite3
 import sys
 from collections import defaultdict
 
+from hhru_bot.market_norm import resolve_cluster
+
 MIN_LEN = 6
+# Порог-выброс: кандидаты с min-count ниже порога не показываются и не
+# попадают в сводки — это осознанный мусорный хвост, а не «по настроению».
+MIN_COUNT = 50
 TOP_PAIRS = 15
 TOP_DIGIT_GROUPS = 8
 
@@ -87,20 +92,27 @@ def digit_groups(counts):
     return sorted(groups, key=lambda g: -min(counts[k] for k in g))
 
 
-def report(title, counts, rawforms):
+def report(title, counts, rawforms, *, roles):
     print(f"=== {title}: {len(counts)} ключей, {sum(counts.values())} резюме-упоминаний ===")
-    pairs = deletion_pairs(counts)
+    # Порог-выброс и семантический слой: ниже MIN_COUNT — мусорный хвост,
+    # пары одного кластера уже склеены на уровне профессий.
+    pairs = [
+        p
+        for p in deletion_pairs(counts)
+        if min(counts[p[0]], counts[p[1]]) >= MIN_COUNT
+        and (not roles or resolve_cluster(p[0]) != resolve_cluster(p[1]))
+    ]
     touched = sum(min(counts[a], counts[b]) for a, b in pairs)
     print(
-        f"кандидаты-близнецы (расстояние <=2, ключи >= {MIN_LEN} символов): "
-        f"{len(pairs)} пар, ~{touched} резюме по меньшему бакету"
+        f"кандидаты-близнецы (расстояние <=2, ключи >= {MIN_LEN} символов, "
+        f"min-count >= {MIN_COUNT}): {len(pairs)} пар, ~{touched} резюме по меньшему бакету"
     )
     for a, b in pairs[:TOP_PAIRS]:
         print(
             f"  {min(counts[a], counts[b]):5} | "
             f"{top_raw(rawforms, a)} [{counts[a]}] <-> {top_raw(rawforms, b)} [{counts[b]}]"
         )
-    groups = digit_groups(counts)
+    groups = [g for g in digit_groups(counts) if min(counts[k] for k in g) >= MIN_COUNT]
     dtouched = sum(min(counts[k] for k in g) for g in groups)
     print(f"цифровые варианты (версии): {len(groups)} групп, ~{dtouched} резюме")
     for g in groups[:TOP_DIGIT_GROUPS]:
@@ -117,10 +129,12 @@ def main():
         report(
             "РОЛИ (competitor_resume_roles)",
             *load(conn, "competitor_resume_roles", "role_key", "role"),
+            roles=True,
         )
         report(
             "НАВЫКИ (competitor_resume_skills)",
             *load(conn, "competitor_resume_skills", "skill_key", "skill"),
+            roles=False,
         )
     finally:
         conn.close()

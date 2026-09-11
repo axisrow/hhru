@@ -345,7 +345,10 @@ def test_migration_carries_roles_and_backfill_preserves_first_seen(tmp_path):
                        '2026-01-01T00:00:00', '2026-01-01T00:00:00', '2026-01-01T00:00:00')"""
         )
         conn.execute(
-            "INSERT INTO competitor_resume_roles VALUES (?, ?, ?, 1, ?, ?)",
+            """INSERT INTO competitor_resume_roles
+               (resume_id, role, role_key, role_cluster, is_primary,
+                first_seen_at, last_seen_at)
+               VALUES (?, ?, ?, NULL, 1, ?, ?)""",
             (
                 "00001",
                 "Оператор 1C",
@@ -382,7 +385,10 @@ def test_backfill_preserves_first_seen_across_alias_rename(tmp_path):
                        '2026-02-02T00:00:00', '2026-02-02T00:00:00', '2026-02-02T00:00:00')"""
         )
         conn.execute(
-            "INSERT INTO competitor_resume_roles VALUES (?, ?, ?, 1, ?, ?)",
+            """INSERT INTO competitor_resume_roles
+               (resume_id, role, role_key, role_cluster, is_primary,
+                first_seen_at, last_seen_at)
+               VALUES (?, ?, ?, NULL, 1, ?, ?)""",
             (
                 "00004",
                 "Нейросеть",
@@ -402,6 +408,54 @@ def test_backfill_preserves_first_seen_across_alias_rename(tmp_path):
     assert row[0] == fold_key("Нейросеть")  # алиасный ключ «Нейросети»
     assert row[0] != _fold_text("Нейросеть")  # ключ действительно сменился
     assert row[1] == "2026-01-05T00:00:00"  # история пережила переименование
+
+
+def test_upsert_writes_role_cluster(tmp_path):
+    store = MarketStore(tmp_path / "market.db")
+    store.upsert_competitor_resume(
+        {
+            "resume_id": "00005",
+            "resume_url": "https://hh.ru/resume/00005",
+            "desired_role": "QA Engineer",
+            "salary_from": None,
+            "salary_to": None,
+            "salary_currency": None,
+            "experience_months": None,
+            "specializations": [],
+            "employment_types": [],
+            "work_formats": [],
+            "languages": [],
+            "education": [],
+            "experience_summary": None,
+            "achievements": None,
+            "skills": [],
+            "content_hash": "hash:00005",
+        },
+        search_query="QA",
+        search_rank=1,
+        search_in="position",
+    )
+    with sqlite3.connect(tmp_path / "market.db") as conn:
+        row = conn.execute(
+            "SELECT role_key, role_cluster FROM competitor_resume_roles WHERE resume_id='00005'"
+        ).fetchone()
+    assert row[0] == fold_key("QA Engineer")
+    assert row[1] == "тестировщик"
+
+
+def test_backfill_fills_role_cluster(tmp_path):
+    db = tmp_path / "market.db"
+    _make_pre_norm_market(db)
+    MarketStore(db)
+    with sqlite3.connect(db) as conn:
+        # «Оператор 1C» без кластера; легаси-строки получают кластер
+        # пересборкой.
+        rows = dict(
+            conn.execute(
+                "SELECT role, role_cluster FROM competitor_resume_roles ORDER BY resume_id"
+            )
+        )
+    assert rows["Оператор 1C"] is None
 
 
 def test_upsert_after_backfill_writes_keys_without_new_backfill(tmp_path):
