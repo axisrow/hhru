@@ -328,6 +328,10 @@ order by company;
 («чатGPT» — отдельный ключ от «ChatGPT»). Читаемые имена групп — словарь
 `CANONICAL_DISPLAY` в `src/hhru_bot/market_norm.py`.
 
+Роли агрегируются по КЛАСТЕРАМ профессий (`role_cluster`, словарь
+`ROLE_CLUSTERS` там же): QA Engineer, Тестировщик ПО и Тестер — одна
+профессия «тестировщик»; без кластера — сам `role_key`.
+
 Готовый читаемый топ по всей базе — `./scripts/run.sh competitors report`
 (витрина через словарь `CANONICAL_DISPLAY`); SQL ниже — когда нужна своя
 агрегация или экспорт, а его витрина «самая частая сырая форма» —
@@ -338,9 +342,11 @@ order by company;
 ```
 ./scripts/run.sh --history data/market.db query "
   WITH top AS (
-    SELECT role_key, COUNT(DISTINCT resume_id) AS resumes
-    FROM competitor_resume_roles GROUP BY role_key ORDER BY resumes DESC LIMIT 15)
-  SELECT (SELECT r.role FROM competitor_resume_roles r WHERE r.role_key = t.role_key
+    SELECT COALESCE(role_cluster, role_key) AS prof,
+           COUNT(DISTINCT resume_id) AS resumes
+    FROM competitor_resume_roles GROUP BY prof ORDER BY resumes DESC LIMIT 15)
+  SELECT (SELECT r.role FROM competitor_resume_roles r
+          WHERE COALESCE(r.role_cluster, r.role_key) = t.prof
           GROUP BY r.role ORDER BY COUNT(*) DESC, r.role LIMIT 1) AS role, t.resumes
   FROM top t ORDER BY t.resumes DESC"
 ```
@@ -389,9 +395,11 @@ order by company;
 python3 scripts/audit_key_dupes.py
 ```
 
-Как читать: min-count пары — размер меньшего бакета; крупные пары смотрит
-человек и закрывает: целый класс (раскладка, регистр, ё/э, символы, точка)
-— правилом в `market_norm.fold_key` + bump маркера бэкфилла; одиночную
-пару (версии платформы, число слова) — записью в `KEY_ALIASES` там же.
+Порог-выброс: кандидаты с min-count ниже `MIN_COUNT` (50) — мусорный хвост,
+аудит их не показывает. Парная семантика ролей уже закрыта кластерами:
+пары из одной профессии аудит не предлагает. Как закрывать находки:
+целый класс (раскладка, регистр, ё/э, символы, точка, категории прав) —
+правилом в `market_norm.fold_key` + bump маркера бэкфилла; одиночную пару
+(версии платформы, число слова) — записью в `KEY_ALIASES` там же.
 Короткие ключи (<6 символов) аудит исключает: на аббревиатурах
 (AI/QA/UI/HR) сеть расстояний даёт только ложные пары.
