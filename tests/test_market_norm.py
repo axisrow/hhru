@@ -88,6 +88,27 @@ def test_fold_key_resolves_yo_to_e():
     assert fold_key("ёлка") == fold_key("елка")
 
 
+def test_fold_key_resolves_e_to_e_spelling_variants():
+    # Варианты написания через а/э/е (v5): «брэнд» и «бренд» — одна сущность.
+    assert fold_key("Брэнд") == fold_key("Бренд")
+
+
+def test_key_aliases_merge_audit_pairs():
+    # Алиасы закрывают пары, невыразимые правилом фолда без ложных склеек:
+    # версии платформы и число слова (решения владельца по аудиту).
+    assert fold_key("1С: Предприятие 7") == fold_key("1С: Предприятие 8")
+    assert fold_key("Нейросеть") == fold_key("Нейросети")
+    assert fold_key("Мерчандайзинг") == fold_key("Мерчендайзинг")
+
+
+def test_key_aliases_do_not_merge_distinct_things():
+    # Границы разумного: близкие по написанию, но разные сущности остаются
+    # разными — алиасы точечные, правило фолда широкие классы не трогает.
+    assert fold_key("Java EE") != fold_key("Java SE")
+    assert fold_key("2D") != fold_key("3D")
+    assert fold_key("B2B") != fold_key("B2C")
+
+
 def test_fold_key_drops_emoji_and_punctuation_only():
     assert fold_key("🎥 🎬") == ""
     assert fold_key("—") == ""
