@@ -235,4 +235,6 @@ MIGRATION_MARKER_KEY = "migrated_from_history"
 # v3 — гомоглиф ♯→# (C♯ не сливается с C).
 # v4 — точка удалена из ключа (решение владельца: сохранять её ради
 #      разделения версий не нужно), она дробила роли с точкой на конце.
-BACKFILL_MARKER_KEY = "competitor_norm_backfill:v4"
+# v5 — э→e (брэнд/бренд) и механизм KEY_ALIASES (версии платформы,
+#      число слова, парные написания — по аудиту дубликатов).
+BACKFILL_MARKER_KEY = "competitor_norm_backfill:v5"

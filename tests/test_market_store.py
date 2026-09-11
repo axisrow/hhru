@@ -18,8 +18,12 @@ from pathlib import Path
 import pytest
 
 from hhru_bot.history import History
-from hhru_bot.market_norm import fold_key
-from hhru_bot.market_schema import BACKFILL_MARKER_KEY, MARKET_TABLES_DDL
+from hhru_bot.market_norm import _fold_text, fold_key
+from hhru_bot.market_schema import (
+    BACKFILL_MARKER_KEY,
+    COMPETITOR_RESUME_ROLES_STATEMENTS,
+    MARKET_TABLES_DDL,
+)
 from hhru_bot.market_store import DEFAULT_MARKET_PATH, MarketStore
 
 pytestmark = pytest.mark.integration
@@ -356,6 +360,48 @@ def test_migration_carries_roles_and_backfill_preserves_first_seen(tmp_path):
             "SELECT first_seen_at FROM competitor_resume_roles WHERE resume_id='00001'"
         ).fetchone()[0]
     assert first_seen == "2026-01-01T00:00:00"
+
+
+def test_backfill_preserves_first_seen_across_alias_rename(tmp_path):
+    # Роль, записанная ДО введения алиаса (ключ без канонизации), при
+    # пересборке матчится по СЫРОЙ форме через текущий fold_key:
+    # переименование ключа алиасом не затирает first_seen.
+    db = tmp_path / "market.db"
+    _make_pre_norm_market(db)
+    conn = sqlite3.connect(db)
+    try:
+        # Легаси-база имеет roles-таблицу (созданную до алиасов), в отличие
+        # от pre-norm: восстанавливаем её после даунгрейда хелпера.
+        for statement in COMPETITOR_RESUME_ROLES_STATEMENTS:
+            conn.execute(statement)
+        conn.execute(
+            """INSERT INTO competitor_resumes
+               (resume_id, resume_url, desired_role, content_hash,
+                first_seen_at, last_seen_at, updated_at)
+               VALUES ('00004', 'https://hh.ru/resume/00004', 'Нейросеть', 'h4',
+                       '2026-02-02T00:00:00', '2026-02-02T00:00:00', '2026-02-02T00:00:00')"""
+        )
+        conn.execute(
+            "INSERT INTO competitor_resume_roles VALUES (?, ?, ?, 1, ?, ?)",
+            (
+                "00004",
+                "Нейросеть",
+                _fold_text("Нейросеть"),
+                "2026-01-05T00:00:00",
+                "2026-01-05T00:00:00",
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    MarketStore(db)  # v5-бэкфилл: ключ роли становится алиасным
+    with sqlite3.connect(db) as conn:
+        row = conn.execute(
+            "SELECT role_key, first_seen_at FROM competitor_resume_roles WHERE resume_id='00004'"
+        ).fetchone()
+    assert row[0] == fold_key("Нейросеть")  # алиасный ключ «Нейросети»
+    assert row[0] != _fold_text("Нейросеть")  # ключ действительно сменился
+    assert row[1] == "2026-01-05T00:00:00"  # история пережила переименование
 
 
 def test_upsert_after_backfill_writes_keys_without_new_backfill(tmp_path):
