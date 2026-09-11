@@ -77,6 +77,12 @@ CREATE TABLE IF NOT EXISTS competitor_resumes (
     resume_id TEXT PRIMARY KEY,
     resume_url TEXT NOT NULL,
     desired_role TEXT NOT NULL,
+    -- Фолд-ключ желаемой должности (market_norm.fold_key): дедупликация
+    -- вариантов написания («1C»/«1С»/«1 с» — один ключ). Nullable: NOT NULL
+    -- невозможен на строках до бэкфилла, а пустой после фолда (emoji-only)
+    -- ключа не имеет вовсе. Сырое поле — источник истины; индекса нет,
+    -- полным сканом по 30k строк агрегаты устраивают.
+    desired_role_key TEXT,
     area TEXT,
     relocation TEXT,
     business_trips TEXT,
@@ -101,6 +107,9 @@ CREATE TABLE IF NOT EXISTS competitor_resumes (
 CREATE TABLE IF NOT EXISTS competitor_resume_skills (
     resume_id TEXT NOT NULL,
     skill TEXT NOT NULL,
+    -- Фолд-ключ имени навыка (см. комментарий в competitor_resumes):
+    -- «1С: Бухгалтерия» и «1C: Бухгалтерия» — один ключ.
+    skill_key TEXT,
     proficiency TEXT,
     first_seen_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
@@ -117,6 +126,11 @@ CREATE TABLE IF NOT EXISTS competitor_resume_skills (
 CREATE TABLE IF NOT EXISTS competitor_resume_queries (
     resume_id TEXT NOT NULL,
     search_query TEXT NOT NULL,
+    -- Фолд-ключ текста запроса (см. комментарий в competitor_resumes):
+    -- для агрегатов и рецептов «промпт-инженер» и «промпт инженер» — одна
+    -- сущность. Срез выборки (--text) при этом остаётся по сырому равенству:
+    -- прогон сбора идентифицируется своей литеральной строкой запроса.
+    search_query_key TEXT,
     search_in TEXT NOT NULL DEFAULT 'full_text',
     -- 'unknown' (LEGACY_UNKNOWN_SCOPE), а не 'anonymous': режим сессии был
     -- выбираемым до #669 и в членстве не записывался, поэтому у легаси-строк
@@ -160,6 +174,40 @@ CREATE INDEX IF NOT EXISTS idx_competitor_runs_query
     ON competitor_collection_runs(search_query, started_at);
 """
 
+# competitor_resume_roles — составная желаемая должность, разобранная на
+# части («Оператор 1C, кладовщик» → 2 строки; резюме учитывается в каждой
+# своей роли). Контракт competitor_resume_skills: DELETE+INSERT при каждом
+# upsert снимка; first_seen_at сохраняется по role_key (сырые части
+# churn'ятся между снимками; PK (resume_id, role_key) дедуплицирует части,
+# фолдящиеся в один ключ). Отдельные константы, а не один скрипт — для
+# lazy-создания на легаси-history.db: executescript внутри открытой
+# транзакции upsert сделал бы неявный COMMIT, conn.execute по одной
+# инструкции — нет.
+COMPETITOR_RESUME_ROLES_TABLE_DDL = """\
+CREATE TABLE IF NOT EXISTS competitor_resume_roles (
+    resume_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    role_key TEXT NOT NULL,
+    is_primary INTEGER NOT NULL DEFAULT 0,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    PRIMARY KEY (resume_id, role_key)
+);
+"""
+
+COMPETITOR_RESUME_ROLES_INDEX_DDL = """\
+CREATE INDEX IF NOT EXISTS idx_competitor_roles_key ON competitor_resume_roles(role_key);
+"""
+
+COMPETITOR_RESUME_ROLES_STATEMENTS = (
+    COMPETITOR_RESUME_ROLES_TABLE_DDL,
+    COMPETITOR_RESUME_ROLES_INDEX_DDL,
+)
+
+MARKET_TABLES_DDL = (
+    MARKET_TABLES_DDL + COMPETITOR_RESUME_ROLES_TABLE_DDL + COMPETITOR_RESUME_ROLES_INDEX_DDL
+)
+
 # market_meta — служебная таблица market.db: ключ-значение для маркеров
 # одноразовой миграции из per-account history.db (#1106).
 SCHEMA = (
@@ -176,3 +224,13 @@ CREATE TABLE IF NOT EXISTS market_meta (
 # делает повторное открытие no-op (копирование идемпотентно, но гонять его на
 # каждом открытии незачем).
 MIGRATION_MARKER_KEY = "migrated_from_history"
+
+# Маркер бэкфилла фолд-ключей и таблицы ролей, с версией схемы фолда: его
+# наличие делает повторные открытия MarketStore no-op (один SELECT вместо
+# пересчёта ~400k строк). Смена семантики fold_key/split_roles (расширение
+# разделителей, гомоглифов, keep-set символов) обязана поднять суффикс —
+# иначе материализованные в БД ключи останутся по старым правилам навсегда,
+# а отчёт будет считать по новым, и числа разъедутся молча.
+# v2 — сохранение # + . в ключе (C#/C++ больше не сливаются с C).
+# v3 — гомоглиф ♯→# (C♯ не сливается с C).
+BACKFILL_MARKER_KEY = "competitor_norm_backfill:v3"

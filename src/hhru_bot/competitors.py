@@ -14,6 +14,7 @@ from playwright.sync_api import Page
 
 from .apply.antibot import raise_for_antibot
 from .browser import HH_BASE_URL, goto_hh, require_authenticated_page, resume_identity_matches
+from .market_norm import canonical_display, fold_key, split_roles
 from .search import parse_salary
 from .selector_groups import competitor_resume as sel
 
@@ -703,26 +704,68 @@ def fetch_competitor_resume(
 
 
 def report_competitors(rows: list[dict], *, top: int, limited_runs: int = 0) -> str:
-    """Build a deterministic report from latest stored snapshots."""
-    roles = Counter(str(row["desired_role"]) for row in rows if row.get("desired_role"))
-    skills = Counter(
-        skill["name"] for row in rows for skill in row.get("skills", []) if skill.get("name")
-    )
+    """Build a deterministic report from latest stored snapshots.
+
+    Роли и навыки группируются по фолд-ключу (market_norm.fold_key): «1C»,
+    «1С» и «1 с» — один бакет, читаемое имя бакета даёт canonical_display.
+    Ключи пересчитываются из сырых строк — отчёт остаётся чистой функцией
+    и работает до бэкфилла ключей в БД. Составная желаемая должность режется
+    split_roles: резюме учитывается в каждой своей роли.
+    """
+    role_forms: dict[str, Counter] = {}
+    skill_forms: dict[str, Counter] = {}
     specializations = Counter(
         value for row in rows for value in row.get("specializations", []) if value
     )
     experience = [int(row["experience_months"]) for row in rows if row.get("experience_months")]
     salaries: dict[str, list[int]] = {}
     skill_pairs: Counter[tuple[str, str]] = Counter()
+    # Одно имя навыка повторяется в сотнях резюме: кэш вместо повторных фолдов.
+    fold_cache: dict[str, str] = {}
+
+    def cached_fold(value: str) -> str:
+        key = fold_cache.get(value)
+        if key is None:
+            key = fold_key(value)
+            fold_cache[value] = key
+        return key
+
     for row in rows:
+        raw_role = row.get("desired_role")
+        if raw_role:
+            # Роль считается один раз на (резюме, ключ): резюме с «Оператор
+            # 1C, Оператор 1С» не должно давать двойную частоту — иначе отчёт
+            # разойдётся с PK-дедупом competitor_resume_roles.
+            row_role_keys: set[str] = set()
+            for part in split_roles(str(raw_role)):
+                key = cached_fold(part)
+                if key not in row_role_keys:
+                    row_role_keys.add(key)
+                    role_forms.setdefault(key, Counter())[part] += 1
         amount = row.get("salary_to") or row.get("salary_from")
         currency = row.get("salary_currency")
         if amount and currency:
             salaries.setdefault(str(currency), []).append(int(amount))
-        names = sorted({skill["name"] for skill in row.get("skills", []) if skill.get("name")})
-        for index, first in enumerate(names):
-            for second in names[index + 1 :]:
+        row_skill_keys: set[str] = set()
+        for skill in row.get("skills", []):
+            name = skill.get("name")
+            if not name:
+                continue
+            key = cached_fold(str(name))
+            if key not in row_skill_keys:
+                skill_forms.setdefault(key, Counter())[str(name)] += 1
+            row_skill_keys.add(key)
+        ordered_keys = sorted(row_skill_keys)
+        for index, first in enumerate(ordered_keys):
+            for second in ordered_keys[index + 1 :]:
                 skill_pairs[(first, second)] += 1
+
+    # Два разных ключа, отображённых в один display, слились бы в один бакет;
+    # уникальность display словаря канонов стражит test_market_norm.
+    role_display = {key: canonical_display(key, forms) for key, forms in role_forms.items()}
+    skill_display = {key: canonical_display(key, forms) for key, forms in skill_forms.items()}
+    roles = Counter({role_display[key]: sum(f.values()) for key, f in role_forms.items()})
+    skills = Counter({skill_display[key]: sum(f.values()) for key, f in skill_forms.items()})
 
     lines = [f"Резюме в выборке: {len(rows)}"]
     if limited_runs:
@@ -742,7 +785,7 @@ def report_competitors(rows: list[dict], *, top: int, limited_runs: int = 0) -> 
     lines.append("\nЧастые сочетания навыков:")
     if skill_pairs:
         for (first, second), count in skill_pairs.most_common(top):
-            lines.append(f"  {count}  {first} + {second}")
+            lines.append(f"  {count}  {skill_display[first]} + {skill_display[second]}")
     else:
         lines.append("  (нет данных)")
     if experience:

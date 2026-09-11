@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from hhru_bot.history import CommandRunBusy, History
+from hhru_bot.market_norm import fold_key
 from hhru_bot.market_schema import MARKET_TABLES_DDL
 from hhru_bot.market_store import MarketStore
 
@@ -186,7 +187,9 @@ def test_existing_skill_privacy_schema_is_migrated_away(tmp_path):
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='competitor_resume_skills'"
         ).fetchone()[0]
         conn.execute(
-            "INSERT INTO competitor_resume_skills VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO competitor_resume_skills"
+            " (resume_id, skill, proficiency, first_seen_at, last_seen_at)"
+            " VALUES (?, ?, ?, ?, ?)",
             ("new", "test@example.com", None, "2026-01-02", "2026-01-02"),
         )
         rows = conn.execute(
@@ -925,3 +928,88 @@ def test_coverage_warning_follows_the_same_legacy_scope_as_membership(tmp_path):
         # Предупреждение о покрытии — свойство ТОЙ ЖЕ выборки, что и строки:
         # пустая выборка не предупреждает, непустая легаси-выборка предупреждает.
         assert bool(limited) == bool(rows), f"{scope}: rows={len(rows)} limited={limited}"
+
+
+def test_upsert_writes_keys_and_roles(tmp_path):
+    store = MarketStore(tmp_path / "market.db")
+    store.upsert_competitor_resume(
+        _snapshot(
+            role="Оператор 1C, кладовщик",
+            skills=[{"name": "1С: Бухгалтерия", "proficiency": None}],
+        ),
+        search_query="1С",
+        search_rank=1,
+        search_in="position",
+    )
+    with sqlite3.connect(tmp_path / "market.db") as conn:
+        role_key = conn.execute(
+            "SELECT desired_role_key FROM competitor_resumes WHERE resume_id='r1'"
+        ).fetchone()[0]
+        assert role_key == fold_key("Оператор 1C, кладовщик")
+        skill_key = conn.execute(
+            "SELECT skill_key FROM competitor_resume_skills WHERE resume_id='r1'"
+        ).fetchone()[0]
+        assert skill_key == fold_key("1С: Бухгалтерия")
+        query_key = conn.execute(
+            "SELECT search_query_key FROM competitor_resume_queries WHERE resume_id='r1'"
+        ).fetchone()[0]
+        assert query_key == fold_key("1С")
+        roles = conn.execute(
+            "SELECT role, role_key, is_primary FROM competitor_resume_roles"
+            " WHERE resume_id='r1' ORDER BY is_primary DESC"
+        ).fetchall()
+        assert [(row[0], row[2]) for row in roles] == [("Оператор 1C", 1), ("кладовщик", 0)]
+        assert roles[0][1] == fold_key("Оператор 1C")
+
+
+def test_upsert_replaces_roles_preserving_first_seen_by_fold_key(tmp_path):
+    store = MarketStore(tmp_path / "market.db")
+    store.upsert_competitor_resume(
+        _snapshot(role="Оператор 1C"), search_query="1С", search_rank=1, search_in="position"
+    )
+    with sqlite3.connect(tmp_path / "market.db") as conn:
+        first_seen = conn.execute(
+            "SELECT first_seen_at FROM competitor_resume_roles WHERE resume_id='r1'"
+        ).fetchone()[0]
+    store.upsert_competitor_resume(
+        _snapshot(role="Оператор 1С"), search_query="1С", search_rank=2, search_in="position"
+    )
+    with sqlite3.connect(tmp_path / "market.db") as conn:
+        rows = conn.execute(
+            "SELECT role_key, first_seen_at FROM competitor_resume_roles WHERE resume_id='r1'"
+        ).fetchall()
+    # Латинская и кириллическая версии — один role_key: строка одна,
+    # first_seen пережил замену снимка.
+    assert len(rows) == 1
+    assert rows[0][0] == fold_key("Оператор 1С")
+    assert rows[0][1] == first_seen
+
+
+def test_upsert_keys_do_not_affect_content_hash_outcome(tmp_path):
+    store = MarketStore(tmp_path / "market.db")
+    first = store.upsert_competitor_resume(
+        _snapshot(), search_query="AI", search_rank=1, search_in="position"
+    )
+    second = store.upsert_competitor_resume(
+        _snapshot(), search_query="AI", search_rank=1, search_in="position"
+    )
+    assert (first, second) == ("new", "unchanged")
+
+
+def test_reopen_creates_roles_table_on_legacy_history_db(tmp_path):
+    # Легаси-history.db: рыночные таблицы есть, roles ещё нет (как до
+    # нормализации). Таблицу создаёт ensure при ОТКРЫТИИ базы, не путь записи.
+    db = tmp_path / "history.db"
+    History(db)
+    with sqlite3.connect(db) as conn:
+        conn.executescript(MARKET_TABLES_DDL)
+        conn.execute("DROP INDEX IF EXISTS idx_competitor_roles_key")
+        conn.execute("DROP TABLE IF EXISTS competitor_resume_roles")
+    History(db).upsert_competitor_resume(
+        _snapshot(), search_query="AI", search_rank=1, search_in="position"
+    )
+    with sqlite3.connect(db) as conn:
+        roles = conn.execute(
+            "SELECT role FROM competitor_resume_roles WHERE resume_id='r1'"
+        ).fetchall()
+    assert [row[0] for row in roles] == ["AI Engineer"]

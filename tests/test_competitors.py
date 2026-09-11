@@ -587,3 +587,72 @@ def test_report_is_deterministic_and_warns_about_limited_coverage():
     assert "Медианный опыт: 42 мес." in report
     assert "RUB: 150000 (n=2)" in report
     assert "Добавляйте навык только если он подтверждён" in report
+
+
+def test_report_counts_each_role_and_skill_once_per_resume():
+    # Дублирующиеся варианты одной роли/навыка внутри одного резюме считаются
+    # один раз: отчёт не должен расходиться с PK-дедупом
+    # competitor_resume_roles (resume_id, role_key).
+    rows = [
+        {
+            "desired_role": "Оператор 1C, Оператор 1С",
+            "specializations": [],
+            "skills": [{"name": "QA Engineer"}, {"name": "qa engineer"}],
+            "experience_months": 12,
+            "salary_to": 60_000,
+            "salary_currency": "RUB",
+        },
+        {
+            "desired_role": "Кладовщик",
+            "specializations": [],
+            "skills": [{"name": "1C: Бухгалтерия"}, {"name": "1С: Бухгалтерия"}],
+            "experience_months": 24,
+            "salary_to": 50_000,
+            "salary_currency": "RUB",
+        },
+    ]
+    report = report_competitors(rows, top=10)
+    assert "1  Оператор 1С" in report
+    assert "1  QA Engineer" in report
+    assert "1  Кладовщик" in report
+    assert "1  1С: Бухгалтерия" in report
+    # Сочетание пар всё равно считается по множеству ключей резюме.
+    assert "1  QA Engineer + qa" not in report
+
+
+def test_report_dedupes_buckets_by_fold_key_and_splits_compound_roles():
+    rows = [
+        {
+            "desired_role": "Оператор 1C, кладовщик",
+            "specializations": [],
+            "skills": [{"name": "QA Engineer"}],
+            "experience_months": 12,
+            "salary_to": 60_000,
+            "salary_currency": "RUB",
+        },
+        {
+            "desired_role": "Оператор 1С",
+            "specializations": [],
+            "skills": [{"name": "qa engineer"}, {"name": "1C: Бухгалтерия"}],
+            "experience_months": 24,
+            "salary_to": 70_000,
+            "salary_currency": "RUB",
+        },
+        {
+            "desired_role": "кладовщик",
+            "specializations": [],
+            "skills": [{"name": "1С: Бухгалтерия"}],
+            "experience_months": 36,
+            "salary_to": 50_000,
+            "salary_currency": "RUB",
+        },
+    ]
+    report = report_competitors(rows, top=10)
+    # «Оператор 1C» и «Оператор 1С» — один бакет; display из словаря канонов.
+    assert "2  Оператор 1С" in report
+    # Составная роль разделена: «кладовщик» учтён и как самостоятельная роль.
+    assert "2  кладовщик" in report
+    # Регистр навыка склеен; канонический регистр продуктового имени из словаря.
+    assert "2  QA Engineer" in report
+    assert "2  1С: Бухгалтерия" in report
+    assert "Резюме в выборке: 3" in report

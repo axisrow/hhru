@@ -18,7 +18,8 @@ from pathlib import Path
 import pytest
 
 from hhru_bot.history import History
-from hhru_bot.market_schema import MARKET_TABLES_DDL
+from hhru_bot.market_norm import fold_key
+from hhru_bot.market_schema import BACKFILL_MARKER_KEY, MARKET_TABLES_DDL
 from hhru_bot.market_store import DEFAULT_MARKET_PATH, MarketStore
 
 pytestmark = pytest.mark.integration
@@ -250,3 +251,120 @@ def test_market_store_schema_has_no_history_only_tables(tmp_path):
         }
     assert {"vacancies_seen", "market_meta"} <= tables
     assert "actions" not in tables
+
+
+def _make_pre_norm_market(db_path: Path) -> None:
+    """market.db в форме ДО нормализации: без *_key колонок и таблицы ролей.
+
+    MARKET_TABLES_DDL теперь содержит и их; downgrade до прежней формы
+    (DROP COLUMN доступен с SQLite 3.35) — чтобы бэкфилл в __init__ прошёл
+    по настоящей легаси-схеме, а не по уже готовой.
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(MARKET_TABLES_DDL)
+        conn.execute("DROP INDEX IF EXISTS idx_competitor_roles_key")
+        conn.execute("DROP TABLE IF EXISTS competitor_resume_roles")
+        conn.execute("ALTER TABLE competitor_resumes DROP COLUMN desired_role_key")
+        conn.execute("ALTER TABLE competitor_resume_skills DROP COLUMN skill_key")
+        conn.execute("ALTER TABLE competitor_resume_queries DROP COLUMN search_query_key")
+        now = "2026-09-01T00:00:00"
+        conn.execute(
+            """INSERT INTO competitor_resumes
+               (resume_id, resume_url, desired_role, content_hash,
+                first_seen_at, last_seen_at, updated_at)
+               VALUES ('00001', 'https://hh.ru/resume/00001', 'Оператор 1C', 'h1', ?, ?, ?)""",
+            (now, now, now),
+        )
+        conn.execute(
+            """INSERT INTO competitor_resumes
+               (resume_id, resume_url, desired_role, content_hash,
+                first_seen_at, last_seen_at, updated_at)
+               VALUES ('00002', 'https://hh.ru/resume/00002', 'Оператор 1С', 'h2', ?, ?, ?)""",
+            (now, now, now),
+        )
+        conn.execute(
+            """INSERT INTO competitor_resume_skills
+               (resume_id, skill, proficiency, first_seen_at, last_seen_at)
+               VALUES ('00001', '1С: Бухгалтерия', NULL, ?, ?)""",
+            (now, now),
+        )
+        conn.execute(
+            """INSERT INTO competitor_resume_queries
+               (resume_id, search_query, search_in, auth_mode, search_rank,
+                first_seen_at, last_seen_at)
+               VALUES ('00001', '1С', 'position', 'anonymous', 1, ?, ?)""",
+            (now, now),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_backfill_fills_keys_on_pre_norm_schema_and_is_idempotent(tmp_path):
+    db = tmp_path / "market.db"
+    _make_pre_norm_market(db)
+    MarketStore(db)  # __init__ сам делает ensure + бэкфилл
+    store = MarketStore(db)
+    # Маркер стоит: повторный вызов — no-op.
+    store.backfill_normalized_keys()
+    with sqlite3.connect(db) as conn:
+        keys = dict(conn.execute("SELECT desired_role, desired_role_key FROM competitor_resumes"))
+        # Латинская и кириллическая версии склеены в один ключ.
+        assert keys["Оператор 1C"] == keys["Оператор 1С"]
+        skill_key = conn.execute(
+            "SELECT skill_key FROM competitor_resume_skills WHERE resume_id='00001'"
+        ).fetchone()[0]
+        assert skill_key == fold_key("1С: Бухгалтерия")
+        # Повторный прогон не надублировал роли.
+        roles = conn.execute(
+            "SELECT role FROM competitor_resume_roles ORDER BY resume_id"
+        ).fetchall()
+        assert len(roles) == 2
+        marker = conn.execute(
+            "SELECT COUNT(*) FROM market_meta WHERE key=?", (BACKFILL_MARKER_KEY,)
+        ).fetchone()[0]
+        assert marker == 1
+
+
+def test_migration_carries_roles_and_backfill_preserves_first_seen(tmp_path):
+    # Легаси-history.db с ролями (first_seen из прошлых прогонов): миграция
+    # переносит их в market.db, а пересборка при бэкфилле не затирает
+    # first_seen датой прогона.
+    history = _make_legacy_history(tmp_path / "history.db")
+    with history._connect() as conn:
+        conn.execute(
+            """INSERT INTO competitor_resumes
+               (resume_id, resume_url, desired_role, content_hash,
+                first_seen_at, last_seen_at, updated_at)
+               VALUES ('00001', 'https://hh.ru/resume/00001', 'Оператор 1C', 'h',
+                       '2026-01-01T00:00:00', '2026-01-01T00:00:00', '2026-01-01T00:00:00')"""
+        )
+        conn.execute(
+            "INSERT INTO competitor_resume_roles VALUES (?, ?, ?, 1, ?, ?)",
+            (
+                "00001",
+                "Оператор 1C",
+                fold_key("Оператор 1C"),
+                "2026-01-01T00:00:00",
+                "2026-01-01T00:00:00",
+            ),
+        )
+    MarketStore(tmp_path / "market.db")  # __init__: миграция + бэкфилл
+    with sqlite3.connect(tmp_path / "market.db") as conn:
+        first_seen = conn.execute(
+            "SELECT first_seen_at FROM competitor_resume_roles WHERE resume_id='00001'"
+        ).fetchone()[0]
+    assert first_seen == "2026-01-01T00:00:00"
+
+
+def test_upsert_after_backfill_writes_keys_without_new_backfill(tmp_path):
+    db = tmp_path / "market.db"
+    _make_pre_norm_market(db)
+    store = MarketStore(db)
+    _seed_resume(store, "00003")
+    with sqlite3.connect(db) as conn:
+        role_key = conn.execute(
+            "SELECT desired_role_key FROM competitor_resumes WHERE resume_id='00003'"
+        ).fetchone()[0]
+    assert role_key == fold_key("Инженер по тестированию")
