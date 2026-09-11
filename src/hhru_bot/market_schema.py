@@ -244,4 +244,6 @@ MIGRATION_MARKER_KEY = "migrated_from_history"
 #      число слова, парные написания — по аудиту дубликатов).
 # v6 — правило категорий прав и семантические кластеры ролей
 #      (role_cluster).
-BACKFILL_MARKER_KEY = "competitor_norm_backfill:v6"
+# v7 — алиасы аудита: «1С: Предприятие» и «8.3» → «…8», After Effect →
+#      After Effects (опечатка без S).
+BACKFILL_MARKER_KEY = "competitor_norm_backfill:v7"

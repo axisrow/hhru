@@ -102,6 +102,28 @@ def test_key_aliases_merge_audit_pairs():
     assert fold_key("Мерчандайзинг") == fold_key("Мерчендайзинг")
 
 
+def test_key_aliases_v7_audit_pairs():
+    # v7 по аудиту: «1С: Предприятие» без версии и «8.3» — канон «…8»;
+    # After Effect без S и Premier без e — опечатки от словарных имён;
+    # «отвественность» — пропущенная буква; «Windows 7» — версия навыка.
+    assert fold_key("1С: Предприятие") == fold_key("1С: Предприятие 8")
+    assert fold_key("1С: Предприятие 8.3") == fold_key("1С: Предприятие 8")
+    assert fold_key("Adobe After Effect") == fold_key("Adobe After Effects")
+    assert fold_key("Adobe Premier Pro") == fold_key("Adobe Premiere Pro")
+    assert fold_key("Материальная отвественность") == fold_key("Материальная ответственность")
+    assert fold_key("Windows 7") == fold_key("Windows")
+    # Витрина канона «Windows» закреплена: без записи в словаре бакет мог
+    # называться «Windows 7» по частоте сырых форм.
+    assert canonical_display(fold_key("Windows"), Counter({"Windows 7": 3})) == "Windows"
+    # Витрина слитой группы — словарное имя, а не самая частая опечатка.
+    assert canonical_display(
+        fold_key("Adobe After Effects"), Counter({"Adobe After Effect": 3})
+    ) == ("Adobe After Effects")
+    assert canonical_display(
+        fold_key("Материальная ответственность"), Counter({"Материальная отвественность": 3})
+    ) == ("Материальная ответственность")
+
+
 def test_key_aliases_do_not_merge_distinct_things():
     # Границы разумного: близкие по написанию, но разные сущности остаются
     # разными — алиасы точечные, правило фолда широкие классы не трогает.
