@@ -101,8 +101,14 @@ def fold_key(value: str) -> str:
 # прямой ключ, не другой алиас.
 KEY_ALIASES = {
     _fold_text("1С: Предприятие 7"): _fold_text("1С: Предприятие 8"),
+    _fold_text("1С: Предприятие"): _fold_text("1С: Предприятие 8"),
+    _fold_text("1С: Предприятие 8.3"): _fold_text("1С: Предприятие 8"),
     _fold_text("Нейросеть"): _fold_text("Нейросети"),
     _fold_text("Мерчандайзинг"): _fold_text("Мерчендайзинг"),
+    _fold_text("Adobe After Effect"): _fold_text("Adobe After Effects"),
+    _fold_text("Adobe Premier Pro"): _fold_text("Adobe Premiere Pro"),
+    _fold_text("Материальная отвественность"): _fold_text("Материальная ответственность"),
+    _fold_text("Windows 7"): _fold_text("Windows"),
 }
 
 # Семантический слой: кластеры профессий. Фолд склеивает НАПИСАНИЯ, кластер —
@@ -183,6 +189,9 @@ CANONICAL_DISPLAY = {
         "1С: Бухгалтерия",
         "промпт-инженер",
         "MS Excel",
+        "Adobe After Effects",
+        "Adobe Premiere Pro",
+        "Материальная ответственность",
     )
 } | {
     # Имена кластеров профессий: id кластера — читаемый литерал (не fold-ключ),
