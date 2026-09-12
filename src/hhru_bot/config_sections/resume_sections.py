@@ -9,6 +9,11 @@ from ._registry import register
 
 _MODES = ("from_scratch", "prefill")
 _BLOCKS = ("attestations", "recommendations")
+# Manual-only блоки (#1118): CLI-флаги --contact/--certificate/--portfolio/--link.
+# LLM их не генерирует и в `blocks` их включать нельзя — финальные схемы
+# фиксирует census блоковых ишью (#1119-1122). Значения — зарезервированные
+# per-block отображения (будущая политика dedup/ключей), сейчас пустые.
+_MANUAL_BLOCKS = ("contacts", "certificates", "portfolio", "links")
 
 
 @dataclass
@@ -23,6 +28,7 @@ class ResumeSectionsConfig:
     mode: str = "from_scratch"
     blocks: list[str] = field(default_factory=lambda: list(_BLOCKS))
     context: str = ""
+    manual: dict[str, dict] = field(default_factory=dict)
 
 
 @register("resume_sections")
@@ -43,4 +49,24 @@ def parse_resume_sections(raw, context: str) -> ResumeSectionsConfig | None:
     source = raw.get("context", "")
     if not isinstance(source, str):
         raise ConfigError(f"Поле 'context' в '{context}' должно быть строкой")
-    return ResumeSectionsConfig(mode=mode, blocks=list(dict.fromkeys(blocks)), context=source)
+    manual_raw = raw.get("manual", {})
+    if not isinstance(manual_raw, dict):
+        raise ConfigError(f"Поле 'manual' в '{context}' должно быть отображением блоков")
+    unknown_manual = sorted(set(manual_raw) - set(_MANUAL_BLOCKS))
+    if unknown_manual:
+        raise ConfigError(
+            f"Неподдерживаемые manual-блоки в '{context}': {', '.join(unknown_manual)} "
+            f"(ожидаемые: {', '.join(_MANUAL_BLOCKS)})"
+        )
+    bad_values = sorted(k for k, v in manual_raw.items() if not isinstance(v, dict))
+    if bad_values:
+        raise ConfigError(
+            f"Значения manual-блоков в '{context}' должны быть отображениями: "
+            f"{', '.join(bad_values)}"
+        )
+    return ResumeSectionsConfig(
+        mode=mode,
+        blocks=list(dict.fromkeys(blocks)),
+        context=source,
+        manual={k: dict(v) for k, v in manual_raw.items()},
+    )
