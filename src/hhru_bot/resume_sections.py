@@ -196,26 +196,29 @@ def _dedupe(block: str, items: list, key_of) -> tuple[list, list[RowOutcome]]:
 
 def plan_from_rows(rows: list[ManualRow]) -> tuple[ResumeSectionsPlan, list[RowOutcome]]:
     """Build a manual plan without LLM (#1118). Тот же ResumeSectionsPlan, что
-    и у LLM-пути; LLM-путь (build_messages/generate_plan) не затрагивается."""
+    и у LLM-пути; LLM-путь (build_messages/generate_plan) не затрагивается.
+    Дедуп — один канон `_dedupe`, прогнанный per-block (cycle-review PR #1125);
+    исходы сохраняют исходный порядок строк."""
     plan = ResumeSectionsPlan()
-    outcomes: list[RowOutcome] = []
-    seen: dict[tuple, int] = {}
+    outcomes: list[RowOutcome | None] = [None] * len(rows)
+    by_block: dict[str, list[int]] = {}
     for index, row in enumerate(rows):
         if row.block not in MANUAL_BLOCK_SCHEMAS:
-            outcomes.append(
-                RowOutcome(row.block, index, OUTCOME_FAILED, f"неизвестный блок {row.block!r}")
+            outcomes[index] = RowOutcome(
+                row.block, index, OUTCOME_FAILED, f"неизвестный блок {row.block!r}"
             )
-            continue
-        key = (row.block, tuple(sorted(row.fields.items())))
-        if key in seen:
-            outcomes.append(
-                RowOutcome(row.block, index, OUTCOME_DUPLICATE, f"повтор строки {seen[key]}")
-            )
-            continue
-        seen[key] = index
-        plan.manual.append(row)
-        outcomes.append(RowOutcome(row.block, index, OUTCOME_PLANNED))
-    return plan, outcomes
+        else:
+            by_block.setdefault(row.block, []).append(index)
+    for block, indices in by_block.items():
+        kept, block_outcomes = _dedupe(
+            block,
+            [rows[index] for index in indices],
+            lambda row: tuple(sorted(row.fields.items())),
+        )
+        plan.manual.extend(kept)
+        for local_index, outcome in zip(indices, block_outcomes, strict=True):
+            outcomes[local_index] = RowOutcome(block, local_index, outcome.status, outcome.reason)
+    return plan, [outcome for outcome in outcomes if outcome is not None]
 
 
 def fail_tail(outcomes: list[RowOutcome] | None, block: str, start: int, reason: str) -> None:
