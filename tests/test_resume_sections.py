@@ -673,6 +673,15 @@ def test_duplicate_typed_rows_yield_duplicate_outcome() -> None:
     assert [o.status for o in outcomes] == [OUTCOME_PLANNED, OUTCOME_DUPLICATE]
 
 
+def test_non_duplicate_outcomes_align_with_plan_rows() -> None:
+    """cycle-review PR #1125: duplicate-исходы не попадают в карту _apply_rows —
+    там исходы выровнены по строкам ПЛАНА, а дубли в план не входят."""
+    attestation = '{"name": "AWS", "organization": "Amazon", "specialty": "Cloud", "year": "2024"}'
+    plan, outcomes = _parse_manual_sections(_manual_args(attestation=[attestation, attestation]))
+    apply_map = [o for o in outcomes if o.status != OUTCOME_DUPLICATE]
+    assert len(apply_map) == len(plan.attestations) == 1
+
+
 def test_no_manual_flags_is_an_error() -> None:
     with pytest.raises(ValueError, match="хотя бы один ручной флаг"):
         _parse_manual_sections(_manual_args())

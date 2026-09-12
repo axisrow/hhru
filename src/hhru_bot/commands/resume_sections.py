@@ -218,6 +218,7 @@ def run(args: argparse.Namespace) -> None:
     from ..browser import launch_context
     from ..config import ConfigError, load_config_or_exit
     from ..resume_sections import (
+        OUTCOME_DUPLICATE,
         OUTCOME_FAILED,
         OUTCOME_PLANNED,
         RowOutcome,
@@ -311,9 +312,22 @@ def run(args: argparse.Namespace) -> None:
     if supported:
         outcome_map = None
         if outcomes is not None:
+            # Дубли отсеяны ещё на этапе плана: в _apply_rows исходы выровнены
+            # по СТРОКАМ ПЛАНА, поэтому duplicate-исходы в карту не попадают —
+            # они остаются только в полной таблице _print_outcomes (иначе
+            # ValueError о несогласованности длин посреди боевого прохода,
+            # cycle-review PR #1125).
             outcome_map = {
-                "attestations": [o for o in outcomes if o.block == "attestations"],
-                "recommendations": [o for o in outcomes if o.block == "recommendations"],
+                "attestations": [
+                    o
+                    for o in outcomes
+                    if o.block == "attestations" and o.status != OUTCOME_DUPLICATE
+                ],
+                "recommendations": [
+                    o
+                    for o in outcomes
+                    if o.block == "recommendations" and o.status != OUTCOME_DUPLICATE
+                ],
             }
         with launch_context(
             config.storage_state_file, headless=args.headless, user_agent=config.user_agent
