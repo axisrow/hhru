@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from argparse import Namespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -9,9 +10,24 @@ from playwright.sync_api import Error as PlaywrightError
 
 import hhru_bot.resume_sections as resume_sections
 from hhru_bot.browser import RESUME_ERROR_BANNER
+from hhru_bot.commands.resume_sections import _parse_manual_sections
 from hhru_bot.config import ConfigError
 from hhru_bot.config_sections.resume_sections import parse_resume_sections
-from hhru_bot.resume_sections import Recommendation, ResumeSectionsPlan, apply_plan, parse_plan
+from hhru_bot.resume_sections import (
+    MANUAL_BLOCK_SCHEMAS,
+    OUTCOME_APPENDED,
+    OUTCOME_DUPLICATE,
+    OUTCOME_FAILED,
+    OUTCOME_PLANNED,
+    ManualRow,
+    Recommendation,
+    ResumeSectionsPlan,
+    RowOutcome,
+    apply_plan,
+    fail_tail,
+    parse_plan,
+    plan_from_rows,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -590,3 +606,132 @@ def test_empty_section_route_guard_rejects_other_resume(monkeypatch) -> None:
 
     assert len(errors) == 1
     assert "первая строка открыта не для того резюме" in errors[0]
+
+
+# --- ручной per-row контракт (#1118) -----------------------------------------
+
+_MANUAL_FLAG_NAMES = (
+    "attestation",
+    "recommendation",
+    "contact",
+    "certificate",
+    "portfolio",
+    "link",
+)
+
+
+def _manual_args(**flags: list[str] | None) -> Namespace:
+    values = {name: None for name in _MANUAL_FLAG_NAMES}
+    values.update(flags)
+    return Namespace(**values)
+
+
+def test_manual_flags_build_plan_and_planned_outcomes() -> None:
+    args = _manual_args(
+        contact=['{"name": "Telegram", "value": "@user"}'],
+        link=['{"name": "GitHub", "url": "https://github.com/x"}'],
+    )
+    plan, outcomes = _parse_manual_sections(args)
+    assert [row.block for row in plan.manual] == ["contact", "link"]
+    assert plan.manual[0].fields == {"name": "Telegram", "value": "@user"}
+    assert [o.status for o in outcomes] == [OUTCOME_PLANNED, OUTCOME_PLANNED]
+
+
+def test_manual_flag_unknown_field_is_explicit_error_with_expected_fields() -> None:
+    args = _manual_args(contact=['{"typo": "x"}'])
+    with pytest.raises(ValueError, match="неизвестные поля typo.*name, value"):
+        _parse_manual_sections(args)
+
+
+def test_manual_flag_invalid_json_and_non_object_fail() -> None:
+    with pytest.raises(ValueError, match="валидный JSON"):
+        _parse_manual_sections(_manual_args(contact=["{broken"]))
+    with pytest.raises(ValueError, match="JSON-объект"):
+        _parse_manual_sections(_manual_args(contact=['"[not, an object]"']))
+
+
+def test_manual_flag_empty_record_is_rejected() -> None:
+    with pytest.raises(ValueError, match="пустую запись"):
+        _parse_manual_sections(_manual_args(portfolio=['{"name": "", "url": " "}']))
+
+
+def test_duplicate_manual_rows_yield_duplicate_outcome_without_second_row() -> None:
+    args = _manual_args(
+        contact=['{"name": "Phone", "value": "+7"}', '{"value": "+7", "name": "Phone"}'],
+    )
+    plan, outcomes = _parse_manual_sections(args)
+    assert len(plan.manual) == 1
+    assert [o.status for o in outcomes] == [OUTCOME_PLANNED, OUTCOME_DUPLICATE]
+    assert outcomes[1].reason == "повтор строки 0"
+
+
+def test_duplicate_typed_rows_yield_duplicate_outcome() -> None:
+    attestation = '{"name": "AWS", "organization": "Amazon", "specialty": "Cloud", "year": "2024"}'
+    args = _manual_args(attestation=[attestation, attestation])
+    plan, outcomes = _parse_manual_sections(args)
+    assert len(plan.attestations) == 1
+    assert [o.status for o in outcomes] == [OUTCOME_PLANNED, OUTCOME_DUPLICATE]
+
+
+def test_non_duplicate_outcomes_align_with_plan_rows() -> None:
+    """cycle-review PR #1125: duplicate-исходы не попадают в карту _apply_rows —
+    там исходы выровнены по строкам ПЛАНА, а дубли в план не входят."""
+    attestation = '{"name": "AWS", "organization": "Amazon", "specialty": "Cloud", "year": "2024"}'
+    plan, outcomes = _parse_manual_sections(_manual_args(attestation=[attestation, attestation]))
+    apply_map = [o for o in outcomes if o.status != OUTCOME_DUPLICATE]
+    assert len(apply_map) == len(plan.attestations) == 1
+
+
+def test_no_manual_flags_is_an_error() -> None:
+    with pytest.raises(ValueError, match="хотя бы один ручной флаг"):
+        _parse_manual_sections(_manual_args())
+
+
+def test_plan_from_rows_rejects_unknown_block() -> None:
+    plan, outcomes = plan_from_rows([ManualRow(block="vacancies", fields={"name": "x"})])
+    assert plan.manual == []
+    assert outcomes == [RowOutcome("vacancies", 0, OUTCOME_FAILED, "неизвестный блок 'vacancies'")]
+
+
+def test_fail_tail_marks_remaining_rows_failed() -> None:
+    outcomes = [
+        RowOutcome("contact", 0, OUTCOME_APPENDED),
+        RowOutcome("contact", 1, OUTCOME_PLANNED),
+        RowOutcome("contact", 2, OUTCOME_PLANNED),
+    ]
+    fail_tail(outcomes, "contact", 1, "запись блока остановлена")
+    assert [o.status for o in outcomes] == [
+        OUTCOME_APPENDED,
+        OUTCOME_FAILED,
+        OUTCOME_FAILED,
+    ]
+    assert outcomes[2].reason == "запись блока остановлена"
+
+
+def test_manual_block_schemas_are_known_and_unique() -> None:
+    # Страж схемы (#1118): каждый ручной блок непуст и поля уникальны,
+    # чтобы check_fields/дедуп не сталкивались с повторяющимися ключами.
+    for block, fields in MANUAL_BLOCK_SCHEMAS.items():
+        assert fields, block
+        assert len(set(fields)) == len(fields), block
+
+
+def test_config_accepts_manual_only_blocks() -> None:
+    config = parse_resume_sections(
+        {"manual": {"contacts": {}, "links": {"dedup": "all-fields"}}},
+        "resumes[0].resume_sections",
+    )
+    assert config.manual == {"contacts": {}, "links": {"dedup": "all-fields"}}
+    assert config.blocks == ["attestations", "recommendations"]
+
+
+def test_config_rejects_unknown_manual_block() -> None:
+    with pytest.raises(ConfigError, match="Неподдерживаемые manual-блоки"):
+        parse_resume_sections({"manual": {"vacancies": {}}}, "resumes[0].resume_sections")
+
+
+def test_config_rejects_malformed_manual_section() -> None:
+    with pytest.raises(ConfigError, match="должно быть отображением блоков"):
+        parse_resume_sections({"manual": ["contacts"]}, "resumes[0].resume_sections")
+    with pytest.raises(ConfigError, match="должны быть отображениями"):
+        parse_resume_sections({"manual": {"contacts": "x"}}, "resumes[0].resume_sections")

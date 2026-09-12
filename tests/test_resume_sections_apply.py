@@ -12,10 +12,22 @@ codex: до фикса такое исключение вылетало нару
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from hhru_bot.resume_sections import Attestation, _apply_rows
+import hhru_bot.resume_sections as resume_sections
+from hhru_bot.resume_sections import (
+    OUTCOME_APPENDED,
+    OUTCOME_FAILED,
+    OUTCOME_PLANNED,
+    Attestation,
+    Recommendation,
+    RowOutcome,
+    _apply_rows,
+    apply_plan,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -167,3 +179,91 @@ def test_all_rows_hydrate_and_save_without_errors():
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# --- per-row контракт исходов (#1118) ----------------------------------------
+
+
+class FakeCancel:
+    def count(self):
+        return 1
+
+    def click(self):
+        pass
+
+
+class DryRunPage(FakePage):
+    """FakePage + подтверждённая кнопка отмены (dry-run выходит из редактора)."""
+
+    def locator(self, selector: str):
+        if selector == "[data-qa='resume-partial-edit-cancel']":
+            return FakeCancel()
+        return super().locator(selector)
+
+
+def test_outcomes_marked_appended_then_failed_on_hydration_timeout():
+    page = FakePage(trigger_count=2, ready_by_index={1: False})
+    items = [Attestation("A", "Org", "Spec", "2020"), Attestation("B", "Org", "Spec", "2021")]
+    outcomes = [RowOutcome("attestations", i, OUTCOME_PLANNED) for i in range(2)]
+
+    errors = _apply_rows(page, "attestations", items, _fill_row, dry_run=False, outcomes=outcomes)
+
+    assert page.saved_rows == [0]
+    assert len(errors) == 1
+    assert [o.status for o in outcomes] == [OUTCOME_APPENDED, OUTCOME_FAILED]
+    assert outcomes[1].reason == "гидратация не завершилась вовремя"
+
+
+def test_outcomes_stay_planned_in_dry_run():
+    page = DryRunPage(trigger_count=1)
+    outcomes = [RowOutcome("attestations", 0, OUTCOME_PLANNED)]
+
+    errors = _apply_rows(
+        page,
+        "attestations",
+        [Attestation("A", "Org", "Spec", "2020")],
+        _fill_row,
+        dry_run=True,
+        outcomes=outcomes,
+    )
+
+    assert errors == []
+    assert [o.status for o in outcomes] == [OUTCOME_PLANNED]
+
+
+def test_apply_plan_marks_all_outcomes_failed_on_login_form(monkeypatch):
+    """Ранний выход apply_plan честно помечает ВСЕ строки failed (#1118)."""
+    monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: False)
+    outcomes = {
+        "attestations": [RowOutcome("attestations", 0, OUTCOME_PLANNED)],
+        "recommendations": [RowOutcome("recommendations", 0, OUTCOME_PLANNED)],
+    }
+
+    errors = apply_plan(
+        MagicMock(),
+        "resume-id",
+        resume_sections.ResumeSectionsPlan(
+            attestations=[Attestation("A", "Org", "Spec", "2020")],
+            recommendations=[Recommendation(text="", company="Acme")],
+        ),
+        dry_run=False,
+        outcomes=outcomes,
+    )
+
+    assert errors == ["отсутствует auth cookie"]
+    assert all(o.status == OUTCOME_FAILED for block in outcomes.values() for o in block)
+
+
+def test_apply_plan_without_outcomes_keeps_old_contract():
+    page = FakePage(trigger_count=1)
+
+    errors = _apply_rows(
+        page,
+        "attestations",
+        [Attestation("A", "Org", "Spec", "2020")],
+        _fill_row,
+        dry_run=False,
+    )
+
+    assert errors == []
+    assert page.saved_rows == [0]
