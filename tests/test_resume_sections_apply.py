@@ -267,3 +267,28 @@ def test_apply_plan_without_outcomes_keeps_old_contract():
 
     assert errors == []
     assert page.saved_rows == [0]
+
+
+def test_certificate_rows_save_through_shared_apply_path():
+    """#1120: сертификаты идут по тому же per-row контракту _apply_rows,
+    что и attestations/recommendations — append + подтверждение close."""
+    from hhru_bot.resume_sections import Certificate
+
+    page = FakePage(trigger_count=2)
+    outcomes = [
+        RowOutcome("certificates", 0, OUTCOME_PLANNED),
+        RowOutcome("certificates", 1, OUTCOME_PLANNED),
+    ]
+
+    errors = _apply_rows(
+        page,
+        "certificates",
+        [Certificate("A", "2020", ""), Certificate("B", "2021", "https://x")],
+        _fill_row,
+        dry_run=False,
+        outcomes=outcomes,
+    )
+
+    assert errors == []
+    assert page.saved_rows == [0, 1]
+    assert [o.status for o in outcomes] == [OUTCOME_APPENDED, OUTCOME_APPENDED]
