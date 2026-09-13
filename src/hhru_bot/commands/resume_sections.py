@@ -139,6 +139,7 @@ def _parse_manual_sections(args: argparse.Namespace):
         MANUAL_BLOCK_SCHEMAS,
         ManualRow,
         ResumeSectionsPlan,
+        RowOutcome,
         _dedupe,
         _text,
         contacts_from_manual_rows,
@@ -182,7 +183,21 @@ def _parse_manual_sections(args: argparse.Namespace):
         for raw in getattr(args, flag[2:], None) or []:
             item = parse_item(flag, raw)
             check_fields(flag, item, fields)
-            values = {key: _text(item.get(key)) for key in fields}
+            # Строгая типизация (cycle-review PR #1127): _text() молча превращает
+            # не-строки в "", что для preferred означало тихую ложь. JSON-bool
+            # принимается явно (help рекламирует "preferred":true), прочие
+            # не-строки — понятная ошибка вместо молчаливой инверсии смысла.
+            values = {}
+            for key in fields:
+                raw_value = item.get(key)
+                if isinstance(raw_value, bool):
+                    if key != "preferred":
+                        raise ValueError(f"{flag}: поле {key} должно быть строкой")
+                    values[key] = "true" if raw_value else "false"
+                elif raw_value is None or isinstance(raw_value, str):
+                    values[key] = _text(raw_value)
+                else:
+                    raise ValueError(f"{flag}: поле {key} должно быть строкой")
             if not any(values.values()):
                 raise ValueError(f"{flag} содержит пустую запись")
             rows.append(ManualRow(block=block, fields=values))
@@ -201,7 +216,14 @@ def _parse_manual_sections(args: argparse.Namespace):
         contact_rows = [row for row in manual_plan.manual if row.block == "contact"]
         plan.contacts = contacts_from_manual_rows(contact_rows)
         plan.manual = [row for row in manual_plan.manual if row.block != "contact"]
-        outcomes.extend(manual_outcomes)
+        # Исходы контактных строк переименовываются в "contacts" — под этим
+        # именем блок читают outcome_map в run() и таблица итогов; ключ
+        # MANUAL_BLOCK_SCHEMAS ("contact") наружу не протекает
+        # (cycle-review PR #1127).
+        outcomes.extend(
+            RowOutcome("contacts", o.index, o.status, o.reason) if o.block == "contact" else o
+            for o in manual_outcomes
+        )
     return plan, outcomes
 
 
@@ -342,7 +364,7 @@ def run(args: argparse.Namespace) -> None:
                 "#1119-1122); запись не выполнялась",
             )
             if o.status == OUTCOME_PLANNED
-            and o.block in {b for b in _MANUAL_FLAGS.values()} - {"contact"}
+            and o.block in {b for b in _MANUAL_FLAGS.values()} - {"contact", "contacts"}
             else o
             for o in (outcomes or [])
         ]

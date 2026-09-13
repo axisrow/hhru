@@ -543,18 +543,22 @@ def _apply_contacts(
     if not items:
         return errors
 
-    def _fail_all(reason: str) -> None:
+    def _fail_all(status: str, reason: str) -> None:
         if outcomes is None:
             return
         # Перезаписываем только незавершённые (planned) строки: исходы, уже
         # зафиксированные readback-ом (updated/uncertain), честнее любого
         # обобщённого статуса (cycle-review PR #1127).
-        status = OUTCOME_UNCERTAIN if "uncertain" in reason else OUTCOME_FAILED
         for index, outcome in enumerate(outcomes):
             if outcome.status == OUTCOME_PLANNED:
                 outcomes[index] = RowOutcome("contacts", index, status, reason)
 
     edit_url = f"{HH_BASE_URL}/resume/edit/{resume_id}/contacts"
+    # Граница «клик мог уйти» — сам save.click(), а не подстрока в тексте
+    # исключения: таймаут readback-перехода после успешного клика — это
+    # #176-семантика (uncertain), ошибка до клика — обычный failed/retry
+    # (cycle-review PR #1127).
+    past_click = False
     try:
         goto_hh(page, edit_url)
         if not _on_contacts_route(page, resume_id):
@@ -591,6 +595,7 @@ def _apply_contacts(
             return errors
         try:
             save.click()
+            past_click = True
             save.wait_for(state="hidden", timeout=SAVE_TIMEOUT_MS)
         except (PlaywrightError, RuntimeError) as exc:
             raise PlaywrightError(
@@ -634,10 +639,15 @@ def _apply_contacts(
             listed = ", ".join(str(index) for index in uncertain)
             errors.append(f"contacts: readback не совпал для строк {listed} (uncertain)")
     except (PlaywrightError, RuntimeError) as exc:
-        # Ошибка до клика — обычный failed/retry; после клика save.click()
-        # причина уже несёт «uncertain» — сохраняем её формулировку честно.
-        _fail_all(str(exc))
-        errors.append(f"contacts: не подтверждено: {exc}")
+        # Ошибка до клика — обычный failed/retry; после save.click() — uncertain
+        # независимо от текста исключения (readback goto может упасть по таймауту
+        # без всякого «uncertain» в сообщении).
+        if past_click:
+            _fail_all(OUTCOME_UNCERTAIN, str(exc))
+            errors.append(f"contacts: не подтверждено (uncertain): {exc}")
+        else:
+            _fail_all(OUTCOME_FAILED, str(exc))
+            errors.append(f"contacts: не подтверждено: {exc}")
     return errors
 
 

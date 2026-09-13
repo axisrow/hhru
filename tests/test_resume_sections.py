@@ -787,6 +787,32 @@ def test_contact_preferred_parses_and_lands_on_row() -> None:
     assert plan.contacts == [resume_sections.Contact(type="email", value="a@b.c", preferred=True)]
 
 
+def test_contact_json_boolean_preferred_is_accepted() -> None:
+    # cycle-review PR #1127: help рекламирует "preferred":true — JSON-bool
+    # не должен молча превращаться в False через _text().
+    args = _manual_args(contact=['{"type": "phone", "value": "+7", "preferred": true}'])
+    plan, _ = _parse_manual_sections(args)
+    assert plan.contacts == [resume_sections.Contact(type="phone", value="+7", preferred=True)]
+
+
+def test_manual_non_string_field_is_explicit_error() -> None:
+    # cycle-review PR #1127: не-строка в поле ручного блока — понятная ошибка,
+    # а не молчаливое "" от _text().
+    args = _manual_args(contact=['{"type": 5, "value": "x"}'])
+    with pytest.raises(ValueError, match="поле type должно быть строкой"):
+        _parse_manual_sections(args)
+
+
+def test_contact_outcomes_carry_contacts_block_for_outcome_map() -> None:
+    # cycle-review PR #1127: outcome_map в run() фильтрует по block=="contacts";
+    # рассинхрон с block=="contact" из plan_from_rows давал пустую карту и
+    # неперехваченный ValueError о несовпадении длин в _apply_contacts.
+    args = _manual_args(contact=['{"type": "phone", "value": "+7"}'])
+    plan, outcomes = _parse_manual_sections(args)
+    apply_map = [o for o in outcomes if o.block == "contacts" and o.status != OUTCOME_DUPLICATE]
+    assert len(apply_map) == len(plan.contacts) == 1
+
+
 def test_contact_two_preferred_rows_rejected_before_browser() -> None:
     # radio предпочтительного способа связи на форме одна (census #1119)
     args = _manual_args(

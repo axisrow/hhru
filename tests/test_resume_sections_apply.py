@@ -355,6 +355,30 @@ def test_contacts_readback_mismatch_marks_rows_uncertain(contacts_page):
     assert outcomes[0].reason == "readback не совпал"
 
 
+def test_contacts_readback_goto_timeout_marks_uncertain(contacts_page, monkeypatch):
+    # cycle-review PR #1127: таймаут goto_hh при readback-переходе ПОСЛЕ
+    # успешного save.click() не содержит «uncertain» в тексте, но клик мог
+    # уйти — строки обязаны получить OUTCOME_UNCERTAIN по флагу past_click.
+    calls = {"count": 0}
+
+    def flaky_goto(page_arg, url):  # noqa: ARG001
+        calls["count"] += 1
+        if calls["count"] == 2:
+            raise PlaywrightTimeoutError("goto: TLS handshake timeout")
+        page_arg.url = url
+
+    monkeypatch.setattr(resume_sections, "goto_hh", flaky_goto)
+    items = [resume_sections.Contact(type="phone", value="+7 900")]
+    outcomes = [RowOutcome("contacts", 0, OUTCOME_PLANNED)]
+
+    errors = _apply_contacts(
+        contacts_page, "test-resume-id", items, dry_run=False, outcomes=outcomes
+    )
+
+    assert len(errors) == 1 and "uncertain" in errors[0]
+    assert [o.status for o in outcomes] == [OUTCOME_UNCERTAIN]
+
+
 def test_contacts_readback_error_keeps_already_updated_rows(contacts_page):
     # cycle-review PR #1127: исключение в цикле readback ПОСЛЕ зафиксированного
     # OUTCOME_UPDATED не перезаписывает готовые исходы — фейлится только
@@ -371,7 +395,8 @@ def test_contacts_readback_error_keeps_already_updated_rows(contacts_page):
     )
 
     assert len(errors) == 1
-    assert [o.status for o in outcomes] == [OUTCOME_UPDATED, OUTCOME_FAILED]
+    # Клик save уже был → исключение в readback даёт uncertain, а не failed.
+    assert [o.status for o in outcomes] == [OUTCOME_UPDATED, OUTCOME_UNCERTAIN]
 
 
 def test_contacts_wrong_resume_route_fails_closed(monkeypatch):
