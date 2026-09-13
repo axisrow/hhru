@@ -114,6 +114,119 @@ class ResumeSectionsPlan:
     attestations: list[Attestation] = field(default_factory=list)
     recommendations: list[Recommendation] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
+    # Ручные строки блоков #1118 (--contact/--certificate/--portfolio/--link).
+    # Блоковые ишью (#1119-1122) добавляют типизированные dataclass + fill-row
+    # и переносят свои строки из manual в типизированные поля выше.
+    manual: list[ManualRow] = field(default_factory=list)
+
+
+# --- ручной per-row контракт (#1118) ----------------------------------------
+
+# Статусы исхода строки. `updated` зарезервирован: обновление требует
+# readback существующих строк на странице резюме (доменная разведка — задача
+# блоковых ишью #1119-1122); этот фундамент update не выполняет никогда.
+OUTCOME_PLANNED = "planned"
+OUTCOME_APPENDED = "appended"
+OUTCOME_UPDATED = "updated"
+OUTCOME_DUPLICATE = "duplicate"
+OUTCOME_FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class ManualRow:
+    """Одна ручная строка произвольного поддержанного блока.
+
+    Поля уже строго провалидированы парсером команды: ключи совпадают со
+    схемой блока, значения — непустые либо отсутствуют.
+    """
+
+    block: str
+    fields: dict[str, str]
+
+
+# Предварительные схемы ручных блоков. Минимальные наборы из эпика #1117;
+# ТОЧНЫЕ поля фиксирует read-only census живой формы (#1119-1122) — блоковое
+# ишью сужает/расширяет кортеж по факту, парсер строг к лишним ключам уже
+# здесь, так что смена схемы не ослабляет валидацию.
+MANUAL_BLOCK_SCHEMAS: dict[str, tuple[str, ...]] = {
+    "contact": ("name", "value"),
+    "certificate": ("name", "organization", "year"),
+    "portfolio": ("name", "url"),
+    "link": ("name", "url"),
+}
+
+
+@dataclass(frozen=True)
+class RowOutcome:
+    """Исход одной строки плана (#1118, per-row контракт).
+
+    Честный итог команды: частичный успех одной строки не выдаётся за успех
+    всего блока — неудачная строка несёт status=failed с причиной, а команды
+    завершаются ненулевым кодом при любом failed.
+    """
+
+    block: str
+    index: int
+    status: str
+    reason: str = ""
+
+
+def _dedupe(block: str, items: list, key_of) -> tuple[list, list[RowOutcome]]:
+    """Append/dedup семантика #1118: полное совпадение ВСЕХ полей строки внутри
+    одного блока — это duplicate, вторая запись не планируется. Молчаливой
+    перезаписи/удаления существующих строк нет: обновление существующей строки
+    — только по явному ключу совпадения и только там, где блоковое ишью
+    реализует readback существующих строк; этот фундамент новые строки только
+    добавляет (appended/planned), никогда не переписывает."""
+    kept: list = []
+    outcomes: list[RowOutcome] = []
+    seen: dict = {}
+    for index, item in enumerate(items):
+        key = key_of(item)
+        if key in seen:
+            outcomes.append(
+                RowOutcome(block, index, OUTCOME_DUPLICATE, f"повтор строки {seen[key]}")
+            )
+        else:
+            seen[key] = index
+            kept.append(item)
+            outcomes.append(RowOutcome(block, index, OUTCOME_PLANNED))
+    return kept, outcomes
+
+
+def plan_from_rows(rows: list[ManualRow]) -> tuple[ResumeSectionsPlan, list[RowOutcome]]:
+    """Build a manual plan without LLM (#1118). Тот же ResumeSectionsPlan, что
+    и у LLM-пути; LLM-путь (build_messages/generate_plan) не затрагивается.
+    Дедуп — один канон `_dedupe`, прогнанный per-block (cycle-review PR #1125);
+    исходы сохраняют исходный порядок строк."""
+    plan = ResumeSectionsPlan()
+    outcomes: list[RowOutcome | None] = [None] * len(rows)
+    by_block: dict[str, list[int]] = {}
+    for index, row in enumerate(rows):
+        if row.block not in MANUAL_BLOCK_SCHEMAS:
+            outcomes[index] = RowOutcome(
+                row.block, index, OUTCOME_FAILED, f"неизвестный блок {row.block!r}"
+            )
+        else:
+            by_block.setdefault(row.block, []).append(index)
+    for block, indices in by_block.items():
+        kept, block_outcomes = _dedupe(
+            block,
+            [rows[index] for index in indices],
+            lambda row: tuple(sorted(row.fields.items())),
+        )
+        plan.manual.extend(kept)
+        for local_index, outcome in zip(indices, block_outcomes, strict=True):
+            outcomes[local_index] = RowOutcome(block, local_index, outcome.status, outcome.reason)
+    return plan, [outcome for outcome in outcomes if outcome is not None]
+
+
+def fail_tail(outcomes: list[RowOutcome] | None, block: str, start: int, reason: str) -> None:
+    """Пометить строки [start; конец] блока failed — запись блока остановлена."""
+    if outcomes is None:
+        return
+    for index in range(start, len(outcomes)):
+        outcomes[index] = RowOutcome(block, index, OUTCOME_FAILED, reason)
 
 
 def _profile_text(profile: AIProfile | None) -> str:
@@ -239,8 +352,11 @@ def _apply_rows(
     *,
     resume_id: str = "",
     dry_run: bool,
+    outcomes: list[RowOutcome] | None = None,
 ) -> list[str]:
     errors: list[str] = []
+    if outcomes is not None and len(outcomes) != len(items):
+        raise ValueError("outcomes должен быть выровнен по строкам блока")
     if resume_id and items:
         # A previous empty-section editor may leave the page on its own route
         # after cancel/save.  Re-open the resume before inspecting this block
@@ -255,10 +371,11 @@ def _apply_rows(
         # such rows before opening the editor so fail-closed handling cannot
         # leave a partially opened form behind (#367).
         if block == "recommendations" and getattr(item, "text", ""):
-            errors.append(
-                f"{block}: строка {index} не подтверждена: "
-                "текущая форма рекомендации не содержит поля текста; запись остановлена"
-            )
+            reason = "текущая форма рекомендации не содержит поля текста; запись остановлена"
+            errors.append(f"{block}: строка {index} не подтверждена: {reason}")
+            if outcomes is not None:
+                outcomes[index] = RowOutcome(block, index, OUTCOME_FAILED, reason)
+            fail_tail(outcomes, block, index + 1, "запись блока остановлена")
             break
         ready_selector = (
             f"[data-qa='{ATTESTATION_FIELDS[0]}']"
@@ -292,6 +409,10 @@ def _apply_rows(
                 page.locator(ready_selector).wait_for(state="visible", timeout=FORM_TIMEOUT_MS)
             elif index >= trigger_count:
                 errors.append(f"{block}: строка {index} отсутствует; добавление не подтверждено")
+                if outcomes is not None:
+                    outcomes[index] = RowOutcome(
+                        block, index, OUTCOME_FAILED, "строка отсутствует на странице"
+                    )
                 continue
             elif resume_id:
                 edit_path = SECTION_ROUTES[block](resume_id)
@@ -317,6 +438,11 @@ def _apply_rows(
             if not dry_run:
                 if save.count() != 1:
                     errors.append(f"{block}: неоднозначная кнопка сохранения")
+                    if outcomes is not None:
+                        outcomes[index] = RowOutcome(
+                            block, index, OUTCOME_FAILED, "неоднозначная кнопка сохранения"
+                        )
+                    fail_tail(outcomes, block, index + 1, "запись блока остановлена")
                     # The row editor is left open in this state; querying the
                     # next trigger against it would be unreliable (#331).
                     break
@@ -336,6 +462,10 @@ def _apply_rows(
                 try:
                     save.click()
                     save.wait_for(state="hidden", timeout=SAVE_TIMEOUT_MS)
+                    if outcomes is not None:
+                        outcomes[index] = RowOutcome(
+                            block, index, OUTCOME_APPENDED, "сохранение подтверждено"
+                        )
                 except (PlaywrightError, RuntimeError) as exc:
                     raise PlaywrightError(
                         f"сохранение не подтверждено (uncertain) после клика: {exc}"
@@ -350,6 +480,11 @@ def _apply_rows(
                 cancel = page.locator("[data-qa='resume-partial-edit-cancel']")
                 if cancel.count() != 1:
                     errors.append(f"{block}: неоднозначная кнопка отмены")
+                    if outcomes is not None:
+                        outcomes[index] = RowOutcome(
+                            block, index, OUTCOME_FAILED, "неоднозначная кнопка отмены"
+                        )
+                    fail_tail(outcomes, block, index + 1, "запись блока остановлена")
                     # Same reasoning as the save branch: the editor stays open,
                     # so stop this block instead of leaving it open (#331).
                     break
@@ -362,20 +497,46 @@ def _apply_rows(
             # letting the exception escape apply_plan and hide which earlier
             # rows already saved.
             errors.append(f"{block}: строка {index} не подтверждена: {exc}")
+            if outcomes is not None:
+                outcomes[index] = RowOutcome(block, index, OUTCOME_FAILED, str(exc))
+            fail_tail(outcomes, block, index + 1, "запись блока остановлена")
             break
     return errors
 
 
-def apply_plan(page: Page, resume_id: str, plan: ResumeSectionsPlan, *, dry_run: bool) -> list[str]:
-    """Apply rows, creating the first row through the confirmed empty-section route."""
+def apply_plan(
+    page: Page,
+    resume_id: str,
+    plan: ResumeSectionsPlan,
+    *,
+    dry_run: bool,
+    outcomes: dict[str, list[RowOutcome]] | None = None,
+) -> list[str]:
+    """Apply rows, creating the first row through the confirmed empty-section route.
+
+    outcomes (#1118) — необязательный per-row контракт: словарь «блок → список
+    RowOutcome, выровненный по строкам плана». Ранний выход (нет auth, форма
+    входа, сбойный экран) честно помечает ВСЕ строки failed — ни одна строка
+    не остаётся «planned» при ненулевом итоге команды.
+    """
+
+    def _fail_all(reason: str) -> None:
+        if outcomes is None:
+            return
+        for block in ("attestations", "recommendations"):
+            fail_tail(outcomes.get(block), block, 0, reason)
+
     if not has_auth_cookie(page):
+        _fail_all("отсутствует auth cookie")
         return ["отсутствует auth cookie"]
     goto_hh(page, f"{HH_BASE_URL}/resume/{resume_id}")
     if has_login_form(page):
+        _fail_all("hh.ru показал форму входа")
         return ["hh.ru показал форму входа"]
     # #972: сбойный экран /resume/{id} — внятный отказ вместо таймаута на
     # поиске триггеров секций. Pre-mutation, обычный failed/retry.
     if has_resume_error_banner(page):
+        _fail_all(RESUME_UNAVAILABLE_REASON)
         return [RESUME_UNAVAILABLE_REASON]
     errors = list(plan.skipped)
     errors += _apply_rows(
@@ -385,6 +546,7 @@ def apply_plan(page: Page, resume_id: str, plan: ResumeSectionsPlan, *, dry_run:
         _fill_attestation_row,
         resume_id=resume_id,
         dry_run=dry_run,
+        outcomes=None if outcomes is None else outcomes.get("attestations"),
     )
     errors += _apply_rows(
         page,
@@ -393,5 +555,6 @@ def apply_plan(page: Page, resume_id: str, plan: ResumeSectionsPlan, *, dry_run:
         _fill_recommendation_row,
         resume_id=resume_id,
         dry_run=dry_run,
+        outcomes=None if outcomes is None else outcomes.get("recommendations"),
     )
     return errors

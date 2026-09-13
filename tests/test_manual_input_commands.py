@@ -659,13 +659,15 @@ def test_edit_education_manual_conflicts_with_source(tmp_path, capsys):
 
 
 def test_resume_sections_parse_manual_plan():
+    # #1118: парсер возвращает (план, per-row исходы); обе строки planned.
     args = SimpleNamespace(
         attestation=['{"name": "IELTS", "organization": "Cambridge", "year": "2024"}'],
         recommendation=['{"text": "Рекомендует", "company": "ООО Тест"}'],
     )
-    plan = resume_sections_cmd._parse_manual_sections(args)
+    plan, outcomes = resume_sections_cmd._parse_manual_sections(args)
     assert plan.attestations[0].name == "IELTS"
     assert plan.recommendations[0].company == "ООО Тест"
+    assert [o.status for o in outcomes] == ["planned", "planned"]
 
 
 def test_resume_sections_parse_manual_plan_empty_record():
