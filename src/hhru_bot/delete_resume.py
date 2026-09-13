@@ -14,7 +14,12 @@ from dataclasses import dataclass
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page
 
-from .browser import RESUMES_FULL_LIST_URL, goto_hh, open_confirmed_resume
+from .browser import (
+    RESUMES_FULL_LIST_URL,
+    goto_hh,
+    open_confirmed_resume,
+    require_authenticated_page,
+)
 from .resume_ids import resume_card_locator
 from .selector_groups.resume_list import (
     RESUME_LIST_CARD,
@@ -105,6 +110,10 @@ def delete_resume_on_hh(
     """
     resume_id = resume.resume_id
     goto_hh(page, RESUMES_FULL_LIST_URL)
+    # #1129: единый auth-гейт ДО доменных проверок. Без него истёкшая сессия
+    # рендерит страницу входа без карточек, и команда маскировала её ложной
+    # доменной причиной «карточка не появилась после загрузки списка».
+    require_authenticated_page(page)
     card = resume_card_locator(page, resume_id)
     if card.count() == 0:
         try:

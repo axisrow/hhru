@@ -15,6 +15,7 @@ from typing import Any
 from ..browser import (
     census_table,
     goto_hh,
+    has_login_form,
     launch_context,
     rendered_controls_census,
 )
@@ -70,16 +71,33 @@ def run(args: argparse.Namespace) -> bool:
             # отрисовать её после ввода (паттерн «commit не значит отрисовано»).
             page.wait_for_timeout(1500)
         rows = rendered_controls_census(page)
+        # #1129: read-only census — «глаза» агента, и он НЕ должен принять
+        # страницу входа за целевую (живой кейс: census my_resumes при
+        # истёкшей сессии молча отрисовал форму login). Явная пометка и в
+        # текстовом, и в JSON-выводе; read-only команда ничего не «фейлит».
+        login_form_detected = has_login_form(page)
 
     visible_only = [r for r in rows if r.get("visible")]
     if getattr(args, "json", False):
         import json
 
         print("MACHINE_READABLE_JSON:")
-        print(json.dumps({"url": args.url, "controls": rows}, ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                {"url": args.url, "login_form": login_form_detected, "controls": rows},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return False
 
     print(f"URL: {args.url}")
+    if login_form_detected:
+        print(
+            "[INFO] ВНИМАНИЕ: на странице обнаружена форма входа hh.ru — "
+            "сессия, вероятно, недействительна, census ниже описывает СТРАНИЦУ "
+            "ВХОДА, а не целевую. Выполните login."
+        )
     print(f"Контролов всего: {len(rows)}, видимых: {len(visible_only)}")
     print(census_table(visible_only))
     print("[OK] census read-only; вхождения строк в HTML-дампе (JSON/i18n) — не поля")
