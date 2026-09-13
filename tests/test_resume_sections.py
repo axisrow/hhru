@@ -130,9 +130,10 @@ def test_recommendation_dry_run_cancels_partial_editor(monkeypatch) -> None:
         RESUME_ERROR_BANNER: _EMPTY_BANNER,
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: no_attestations,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: trigger,
+        resume_sections.RESUME_EDIT_BUTTON["certificates"]: trigger,
         "[data-qa='resume-partial-edit-cancel']": partial_cancel,
         "input[name='company']": ready,
-    }.get(selector, MagicMock())
+    }[selector]
     monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
     monkeypatch.setattr(resume_sections, "has_login_form", lambda _page: False)
@@ -164,8 +165,9 @@ def test_save_wait_timeout_is_recorded_as_row_error_not_raised(monkeypatch) -> N
         RESUME_ERROR_BANNER: _EMPTY_BANNER,
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: trigger,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_recommendations,
+        resume_sections.RESUME_EDIT_BUTTON["certificates"]: no_recommendations,
         f"[data-qa='{resume_sections.ATTESTATION_FIELDS[0]}']": ready,
-    }.get(selector, MagicMock())
+    }[selector]
     monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
     monkeypatch.setattr(resume_sections, "has_login_form", lambda _page: False)
@@ -202,8 +204,9 @@ def test_save_click_error_is_recorded_as_row_error_not_raised(monkeypatch) -> No
         RESUME_ERROR_BANNER: _EMPTY_BANNER,
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: trigger,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_recommendations,
+        resume_sections.RESUME_EDIT_BUTTON["certificates"]: no_recommendations,
         f"[data-qa='{resume_sections.ATTESTATION_FIELDS[0]}']": ready,
-    }.get(selector, MagicMock())
+    }[selector]
     monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
     monkeypatch.setattr(resume_sections, "has_login_form", lambda _page: False)
@@ -240,9 +243,10 @@ def test_cancel_click_error_is_recorded_as_row_error_not_raised(monkeypatch) -> 
         RESUME_ERROR_BANNER: _EMPTY_BANNER,
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: no_attestations,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: trigger,
+        resume_sections.RESUME_EDIT_BUTTON["certificates"]: trigger,
         "[data-qa='resume-partial-edit-cancel']": partial_cancel,
         "input[name='company']": ready,
-    }.get(selector, MagicMock())
+    }[selector]
     monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
     monkeypatch.setattr(resume_sections, "has_login_form", lambda _page: False)
@@ -276,8 +280,9 @@ def test_save_confirmation_does_not_rely_on_url_already_matched(monkeypatch) -> 
         RESUME_ERROR_BANNER: _EMPTY_BANNER,
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: no_attestations,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: trigger,
+        resume_sections.RESUME_EDIT_BUTTON["certificates"]: trigger,
         "input[name='company']": ready,
-    }.get(selector, MagicMock())
+    }[selector]
     monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
     monkeypatch.setattr(resume_sections, "has_login_form", lambda _page: False)
@@ -315,8 +320,9 @@ def test_unconfirmed_save_stops_block_instead_of_clicking_next_row(monkeypatch) 
         RESUME_ERROR_BANNER: _EMPTY_BANNER,
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: trigger,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_recommendations,
+        resume_sections.RESUME_EDIT_BUTTON["certificates"]: no_recommendations,
         f"[data-qa='{resume_sections.ATTESTATION_FIELDS[0]}']": ready,
-    }.get(selector, MagicMock())
+    }[selector]
     monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
     monkeypatch.setattr(resume_sections, "has_login_form", lambda _page: False)
@@ -357,8 +363,9 @@ def test_ambiguous_save_button_stops_block_instead_of_leaving_editor_open(monkey
         RESUME_ERROR_BANNER: _EMPTY_BANNER,
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: trigger,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_recommendations,
+        resume_sections.RESUME_EDIT_BUTTON["certificates"]: no_recommendations,
         f"[data-qa='{resume_sections.ATTESTATION_FIELDS[0]}']": ready,
-    }.get(selector, MagicMock())
+    }[selector]
     monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
     monkeypatch.setattr(resume_sections, "has_login_form", lambda _page: False)
@@ -463,7 +470,7 @@ def test_empty_section_opens_first_row_via_resume_scoped_route(
         resume_sections.EMPTY_SECTION_MARKERS["certificates"]: empty_marker,
         resume_sections.BLOCK_READY_SELECTORS[block]: ready,
         "[data-qa='resume-partial-edit-cancel']": cancel,
-    }.get(selector, MagicMock())
+    }[selector]
     visited = []
 
     def goto(_page, url):
@@ -513,7 +520,7 @@ def test_both_empty_sections_reset_to_resume_before_each_block(monkeypatch) -> N
         "input[name='company']": ready,
         resume_sections.BLOCK_READY_SELECTORS["certificates"]: ready,
         "[data-qa='resume-partial-edit-cancel']": cancel,
-    }.get(selector, MagicMock())
+    }[selector]
     visited = []
 
     def goto(_page, url):
@@ -562,7 +569,7 @@ def test_empty_section_requires_unique_live_marker(monkeypatch, marker_count) ->
         resume_sections.EMPTY_SECTION_MARKERS["attestations"]: marker,
         resume_sections.EMPTY_SECTION_MARKERS["recommendations"]: marker,
         resume_sections.EMPTY_SECTION_MARKERS["certificates"]: marker,
-    }.get(selector, MagicMock())
+    }[selector]
     monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
     monkeypatch.setattr(resume_sections, "has_login_form", lambda _page: False)
@@ -596,7 +603,7 @@ def test_empty_section_route_guard_rejects_other_resume(monkeypatch) -> None:
         resume_sections.EMPTY_SECTION_MARKERS["attestations"]: marker,
         resume_sections.EMPTY_SECTION_MARKERS["recommendations"]: marker,
         resume_sections.EMPTY_SECTION_MARKERS["certificates"]: marker,
-    }.get(selector, MagicMock())
+    }[selector]
 
     def goto(_page, url):
         page.url = url.replace("resume-id", "other-resume")
@@ -844,9 +851,11 @@ def test_certificate_empty_marker_unconfirmed_stays_fail_closed(monkeypatch) -> 
     absent_marker.count.return_value = 0
     page.locator.side_effect = lambda selector: {
         RESUME_ERROR_BANNER: _EMPTY_BANNER,
+        resume_sections.RESUME_EDIT_BUTTON["attestations"]: no_rows,
+        resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_rows,
         resume_sections.RESUME_EDIT_BUTTON["certificates"]: no_rows,
         resume_sections.EMPTY_SECTION_MARKERS["certificates"]: absent_marker,
-    }.get(selector, MagicMock())
+    }[selector]
     monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
     monkeypatch.setattr(resume_sections, "has_login_form", lambda _page: False)
