@@ -720,6 +720,16 @@ def test_plan_from_rows_rejects_unknown_block() -> None:
     assert outcomes == [RowOutcome("vacancies", 0, OUTCOME_FAILED, "неизвестный блок 'vacancies'")]
 
 
+def test_print_outcomes_counts_uncertain_as_failure() -> None:
+    # cycle-review PR #1127: uncertain-исход обязан давать ненулевой итог
+    # команды, иначе [FAIL] (uncertain) печатается, а exit code == 0.
+    from hhru_bot.commands.resume_sections import _print_outcomes
+    from hhru_bot.resume_sections import OUTCOME_UNCERTAIN
+
+    failed = _print_outcomes([RowOutcome("contacts", 0, OUTCOME_UNCERTAIN, "readback не совпал")])
+    assert failed == 1
+
+
 def test_fail_tail_marks_remaining_rows_failed() -> None:
     outcomes = [
         RowOutcome("contact", 0, OUTCOME_APPENDED),

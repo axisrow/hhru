@@ -236,7 +236,9 @@ def _print_outcomes(outcomes) -> int:
         "",
     ]
     print(_ascii_table(["Блок", "#", "Исход", "Причина"], rows, footer=footer))
-    return counts[OUTCOME_FAILED]
+    # uncertain (#176) — тоже неуспех команды: действие могло выполниться,
+    # повтор безопасен, но прогон обязан завершиться видимым отказом.
+    return counts[OUTCOME_FAILED] + counts[OUTCOME_UNCERTAIN]
 
 
 def _sync_row_outcomes(outcomes, outcome_map) -> None:

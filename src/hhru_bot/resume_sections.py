@@ -544,16 +544,15 @@ def _apply_contacts(
         return errors
 
     def _fail_all(reason: str) -> None:
-        if outcomes is not None:
-            fail_tail(outcomes, "contacts", 0, reason)
-            # Причина после клика save несёт «uncertain» (#176): исход строки —
-            # uncertain, а не failed, иначе повтор команды выглядел бы опасным.
-            if "uncertain" in reason:
-                for index, outcome in enumerate(outcomes):
-                    if outcome.status == OUTCOME_FAILED:
-                        outcomes[index] = RowOutcome(
-                            "contacts", index, OUTCOME_UNCERTAIN, outcome.reason
-                        )
+        if outcomes is None:
+            return
+        # Перезаписываем только незавершённые (planned) строки: исходы, уже
+        # зафиксированные readback-ом (updated/uncertain), честнее любого
+        # обобщённого статуса (cycle-review PR #1127).
+        status = OUTCOME_UNCERTAIN if "uncertain" in reason else OUTCOME_FAILED
+        for index, outcome in enumerate(outcomes):
+            if outcome.status == OUTCOME_PLANNED:
+                outcomes[index] = RowOutcome("contacts", index, status, reason)
 
     edit_url = f"{HH_BASE_URL}/resume/edit/{resume_id}/contacts"
     try:

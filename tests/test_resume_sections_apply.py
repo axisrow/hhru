@@ -204,6 +204,8 @@ class FakeContactField:
         return 1
 
     def input_value(self):
+        if self._qa == self._page.readback_raises:
+            raise PlaywrightTimeoutError("input_value недоступен")
         return self._page.readback_values.get(self._qa, self._page.filled.get(self._qa, ""))
 
     def get_attribute(self, name):  # noqa: ARG002
@@ -260,6 +262,7 @@ class FakeContactsPage:
         self.save_wait_times_out = save_wait_times_out
         self.filled: dict[str, str] = {}
         self.readback_values: dict[str, str] = {}
+        self.readback_raises: str = ""
         self.preferred = False
         self.saved = False
         self.closed = False
@@ -350,6 +353,25 @@ def test_contacts_readback_mismatch_marks_rows_uncertain(contacts_page):
     assert len(errors) == 1 and "uncertain" in errors[0]
     assert outcomes[0].status == OUTCOME_UNCERTAIN
     assert outcomes[0].reason == "readback не совпал"
+
+
+def test_contacts_readback_error_keeps_already_updated_rows(contacts_page):
+    # cycle-review PR #1127: исключение в цикле readback ПОСЛЕ зафиксированного
+    # OUTCOME_UPDATED не перезаписывает готовые исходы — фейлится только
+    # незавершённая (planned) строка.
+    contacts_page.readback_raises = "resume-editor-email-input"
+    items = [
+        resume_sections.Contact(type="phone", value="+7 900"),
+        resume_sections.Contact(type="email", value="a@b.c"),
+    ]
+    outcomes = [RowOutcome("contacts", i, OUTCOME_PLANNED) for i in range(2)]
+
+    errors = _apply_contacts(
+        contacts_page, "test-resume-id", items, dry_run=False, outcomes=outcomes
+    )
+
+    assert len(errors) == 1
+    assert [o.status for o in outcomes] == [OUTCOME_UPDATED, OUTCOME_FAILED]
 
 
 def test_contacts_wrong_resume_route_fails_closed(monkeypatch):
