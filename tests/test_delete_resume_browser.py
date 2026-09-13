@@ -10,6 +10,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page as PlaywrightPage
 
 import hhru_bot.delete_resume as delete
+from hhru_bot.browser import LOGIN_FORM
 from hhru_bot.selector_groups.resume_list import RESUME_LIST_CARD
 from hhru_bot.selector_groups.resume_page import RESUME_DELETE_BUTTON, RESUME_DELETE_CONFIRM
 
@@ -87,6 +88,9 @@ class Page:
         profile_count=0,
     ):
         self.url = delete.RESUMES_FULL_LIST_URL
+        # #1129: require_authenticated_page читает cookie hhtoken и форму
+        # входа — валидная сессия по умолчанию.
+        self.context = SimpleNamespace(cookies=lambda: [{"name": "hhtoken"}])
         self.dialog_opened = False
         self.clicked = False
         self.waited = None
@@ -112,6 +116,8 @@ class Page:
         self.recovery_hydration = True
 
     def locator(self, selector):
+        if selector == LOGIN_FORM:
+            return Locator(self, selector, count=0)
         if selector == RESUME_DELETE_BUTTON:
             return Locator(self, selector, self.profile_count)
         if selector == RESUME_DELETE_CONFIRM:

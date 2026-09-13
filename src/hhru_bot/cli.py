@@ -21,7 +21,12 @@ from playwright.sync_api import Error as PlaywrightError
 from . import commands as _commands_pkg
 from .accounts import AccountError, read_default_account, resolve_account_paths
 from .apply.antibot import AntiBotChallengeDetected
-from .browser import BrowserLaunchError, ResumeUnavailable, ThrottledChannelDetected
+from .browser import (
+    BrowserLaunchError,
+    NotAuthenticated,
+    ResumeUnavailable,
+    ThrottledChannelDetected,
+)
 from .exit_codes import CommandExitCode
 from .logging_setup import setup_logging
 from .write_lock import WriteLockBusy, acquire_write_lock
@@ -506,6 +511,14 @@ def _execute(args: argparse.Namespace) -> None:
         # #344: terminal apply/run state.  Do not render a traceback or continue
         # with another vacancy/resume (or bump in the combined ``run`` command).
         print(f"[FAIL] {exc}", file=sys.stderr)
+        sys.exit(1)
+    except NotAuthenticated as exc:
+        # #1129: единый auth-гейт на границе CLI. Команды, которые не поймали
+        # NotAuthenticated сами (те, что обязаны конвертировать его в
+        # uncertain post-click, ловят внутри и остаются при своём поведении),
+        # раньше утекали им в generic except Exception → сырой traceback.
+        # Теперь — единое понятное сообщение про авторизацию и единый exit 1.
+        print(f"[FAIL] Вы не авторизованы. Выполните login. ({exc})", file=sys.stderr)
         sys.exit(1)
     except ResumeUnavailable as exc:
         # #972 (PR #974 follow-up): пути, где детектор баннера бросает
