@@ -187,10 +187,11 @@ class ManualRow:
 # здесь, так что смена схемы не ослабляет валидацию.
 MANUAL_BLOCK_SCHEMAS: dict[str, tuple[str, ...]] = {
     "contact": ("name", "value"),
-    # #1120: сужено по census 2026-09-12 — организация в форме сертификатов
-    # отсутствует, вместо неё опциональная ссылка. Ключи схемы = поля
-    # dataclass Certificate, т.к. блок перенесён в типизированный путь.
-    "certificate": ("name", "year", "url"),
+    # Сертификата здесь больше нет (#1120 cycle-review): блок перенесён в
+    # типизированный путь (_TYPED_BLOCK_SPECS + dataclass Certificate), через
+    # ManualRow/plan_from_rows он недостижим — мёртвая запись схемы убрана.
+    # Имена ключей = _MANUAL_BLOCKS в config_sections (singular), схема
+    # сертификата сужена по census 2026-09-12: (name, year, url).
     "portfolio": ("name", "url"),
     "link": ("name", "url"),
 }

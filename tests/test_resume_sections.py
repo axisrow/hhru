@@ -728,10 +728,10 @@ def test_manual_block_schemas_are_known_and_unique() -> None:
 
 def test_config_accepts_manual_only_blocks() -> None:
     config = parse_resume_sections(
-        {"manual": {"contacts": {}, "links": {"dedup": "all-fields"}}},
+        {"manual": {"contact": {}, "link": {"dedup": "all-fields"}}},
         "resumes[0].resume_sections",
     )
-    assert config.manual == {"contacts": {}, "links": {"dedup": "all-fields"}}
+    assert config.manual == {"contact": {}, "link": {"dedup": "all-fields"}}
     assert config.blocks == ["attestations", "recommendations"]
 
 
@@ -744,7 +744,7 @@ def test_config_rejects_malformed_manual_section() -> None:
     with pytest.raises(ConfigError, match="должно быть отображением блоков"):
         parse_resume_sections({"manual": ["contacts"]}, "resumes[0].resume_sections")
     with pytest.raises(ConfigError, match="должны быть отображениями"):
-        parse_resume_sections({"manual": {"contacts": "x"}}, "resumes[0].resume_sections")
+        parse_resume_sections({"manual": {"contact": "x"}}, "resumes[0].resume_sections")
 
 
 # --- блок сертификатов (#1120, census 2026-09-12) ----------------------------
@@ -752,8 +752,13 @@ def test_config_rejects_malformed_manual_section() -> None:
 
 def test_certificate_schema_matches_live_census() -> None:
     """Census #1120: у формы сертификатов ровно три поля (название/год/ссылка);
-    организация и специализация в форме отсутствуют — схема сужена по факту."""
-    assert MANUAL_BLOCK_SCHEMAS["certificate"] == ("name", "year", "url")
+    организация и специализация в форме отсутствуют — схема сужена по факту.
+    Блок типизированный: ручной schema-записи и manual-конфиг-ключа у него нет
+    (#1120 cycle-review — мёртвая запись убрана)."""
+    from hhru_bot.commands.resume_sections import _TYPED_BLOCK_SPECS
+
+    assert "certificate" not in MANUAL_BLOCK_SCHEMAS
+    assert _TYPED_BLOCK_SPECS["--certificate"][1] == ("name", "year", "url")
     certificate = resume_sections.Certificate("N", "2024", "https://example.com")
     assert tuple(certificate.__dict__) == ("name", "year", "url")
 
