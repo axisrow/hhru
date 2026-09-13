@@ -391,6 +391,7 @@ def wall_clock_guard(seconds: float, *, what: str = "операция"):
     # Вложение: не продлеваем бюджет поверх внешнего капа (п.3 докстринга).
     remaining = previous_timer[0]
     budget = min(seconds, remaining) if remaining > 0 else seconds
+    started_at = time.monotonic()
     signal.setitimer(signal.ITIMER_REAL, budget)
     try:
         yield
@@ -398,7 +399,12 @@ def wall_clock_guard(seconds: float, *, what: str = "операция"):
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous_handler)
         if remaining > 0:
-            signal.setitimer(signal.ITIMER_REAL, remaining)
+            # Cycle-review PR #1136: восстанавливаем ФАКТИЧЕСКИ оставшееся
+            # время внешнего капа, а не captured-at-entry remaining — иначе
+            # каждый внутренний guard продлевал бы внешний бюджет на всё своё
+            # время работы (кап verify-фазы превысил бы свои 60с).
+            left = remaining - (time.monotonic() - started_at)
+            signal.setitimer(signal.ITIMER_REAL, max(left, 0.0))
 
 
 # #1130: wall-clock бэкстоп вокруг каждой попытки goto. Обычно не стреляет:

@@ -86,6 +86,17 @@ def test_wall_clock_guard_restores_timer_and_handler():
     assert signal.getsignal(signal.SIGALRM) is signal.SIG_DFL
 
 
+def test_nested_guard_decrements_outer_budget():
+    """Cycle-review PR #1136: внутренний guard расходует внешний кап, а не
+    восстанавливает его на полное время, захваченное на входе."""
+    with wall_clock_guard(1.0):
+        with wall_clock_guard(30.0):
+            time.sleep(0.3)
+        # Наружу должно остаться ~0.7с, а не исходная 1.0с.
+        left, _interval = signal.getitimer(signal.ITIMER_REAL)
+    assert 0.3 < left < 0.85
+
+
 def test_nested_guard_is_clamped_by_outer_budget():
     """Внутренний бюджет не продлевает внешний кап (#1130: кап verify > goto)."""
     started = time.monotonic()
