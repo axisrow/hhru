@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import logging
 import re
+import signal
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -336,6 +338,75 @@ _GOTO_MAX_ATTEMPTS = 3
 _GOTO_BACKOFF_SECONDS = 2.0
 
 
+class GotoWatchdogTimeout(Exception):
+    """#1130: wall-clock watchdog прервал блокированный вызов Playwright.
+
+    Driver-side таймеры Playwright — не жёсткая гарантия (инцидент 2026-09-13:
+    под memory pressure pending-вызов не получил ни ответа, ни ошибки, событийный
+    цикл стоял, процесс жил). Исключение НЕ подкласс PlaywrightError намеренно:
+    ретраи goto_hh и обработчики шагов классифицируют PlaywrightError как
+    обычный сетевой сбой и продолжают работать с той же страницей. После
+    срабатывания watchdog состояние драйвера/страницы недостоверно — исход
+    фатальный, ни один вызов не ретраится. Пересборка контекста выполняется
+    следующим запуском команды: CLI завершает прогон с понятным [FAIL] и
+    exit 1, а open-вакансии финализируются fail-closed uncertain.
+    """
+
+
+def _wall_clock_alarm(signum, frame) -> None:  # noqa: ARG001
+    raise GotoWatchdogTimeout(
+        "wall-clock watchdog: блокированный вызов браузера не вернулся "
+        "в отведённое время (#1130); состояние драйвера недостоверно"
+    )
+
+
+@contextmanager
+def wall_clock_guard(seconds: float, *, what: str = "операция"):
+    """Wall-clock предохранитель вокруг блокирующего вызова (#1130).
+
+    SIGALRM-based: единственный способ прервать зависший вызов синхронного
+    Playwright API, чьи driver-side таймеры под memory pressure могут не
+    сработать вовсе. Ограничения и семантика:
+
+    * работает только в главном потоке POSIX-процесса (там живёт sync API
+      этого проекта); вне главного потока или без SIGALRM — no-op (guard не
+      может дать гарантий, но и сломать работу не должен);
+    * чужой обработчик SIGALRM не отбирается: если уже установлен не наш и
+      не дефолтный обработчик, guard — no-op (вложенный вызов нашего же
+      guard'а обрабатывается штатно, см. ниже);
+    * вложенные guard'ы: внутренний бюджет обрезается до оставшегося времени
+      внешнего (кап verify-фазы в pipeline перекрывает бюджет попытки goto),
+      при выходе внешний таймер восстанавливается с остатком.
+    """
+    if not hasattr(signal, "SIGALRM") or threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    foreign = previous_handler not in (signal.SIG_DFL, signal.SIG_IGN, _wall_clock_alarm)
+    if foreign:
+        yield
+        return
+    previous_timer = signal.getitimer(signal.ITIMER_REAL)
+    signal.signal(signal.SIGALRM, _wall_clock_alarm)
+    # Вложение: не продлеваем бюджет поверх внешнего капа (п.3 докстринга).
+    remaining = previous_timer[0]
+    budget = min(seconds, remaining) if remaining > 0 else seconds
+    signal.setitimer(signal.ITIMER_REAL, budget)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+        if remaining > 0:
+            signal.setitimer(signal.ITIMER_REAL, remaining)
+
+
+# #1130: wall-clock бэкстоп вокруг каждой попытки goto. Обычно не стреляет:
+# driver-side таймаут (GOTO_TIMEOUT_MS) срабатывает раньше; watchdog —
+# предохранитель на случай его молчаливого отказа (инцидент 2026-09-13).
+_GOTO_WALL_CLOCK_SECONDS = 105.0
+
+
 def goto_hh(page: Page, url: str, *, ready_selector: str | None = None) -> None:
     """page.goto с retry и готовностью страницы hh.ru (#80).
 
@@ -398,7 +469,11 @@ def goto_hh(page: Page, url: str, *, ready_selector: str | None = None) -> None:
         try:
             try:
                 try:
-                    page.goto(url, wait_until="domcontentloaded")
+                    # #1130: wall-clock бэкстоп поверх driver-side таймаута —
+                    # GotoWatchdogTimeout (не PlaywrightError) не ретраится и
+                    # не классифицируется как сетевой сбой (см. докстринг).
+                    with wall_clock_guard(_GOTO_WALL_CLOCK_SECONDS, what="page.goto"):
+                        page.goto(url, wait_until="domcontentloaded")
                 except (PlaywrightTimeoutError, PlaywrightError) as exc:
                     # #749 code-review round 1: throttled-классификация
                     # применима ТОЛЬКО к самому goto() (докачке тела

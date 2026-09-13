@@ -23,6 +23,7 @@ from .accounts import AccountError, read_default_account, resolve_account_paths
 from .apply.antibot import AntiBotChallengeDetected
 from .browser import (
     BrowserLaunchError,
+    GotoWatchdogTimeout,
     NotAuthenticated,
     ResumeUnavailable,
     ThrottledChannelDetected,
@@ -510,6 +511,13 @@ def _execute(args: argparse.Namespace) -> None:
     except AntiBotChallengeDetected as exc:
         # #344: terminal apply/run state.  Do not render a traceback or continue
         # with another vacancy/resume (or bump in the combined ``run`` command).
+        print(f"[FAIL] {exc}", file=sys.stderr)
+        sys.exit(1)
+    except GotoWatchdogTimeout as exc:
+        # #1130: фатальная классификация wall-clock watchdog. Состояние
+        # драйвера/страницы недостоверно — продолжать нельзя; пересборка
+        # контекста произойдёт в следующем запуске. Без traceback: причина
+        # зафиксирована самим фактом срабатывания watchdog.
         print(f"[FAIL] {exc}", file=sys.stderr)
         sys.exit(1)
     except NotAuthenticated as exc:
