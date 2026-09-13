@@ -360,6 +360,10 @@ def _wall_clock_alarm(signum, frame) -> None:  # noqa: ARG001
     )
 
 
+#: Глубина вложения активных wall_clock_guard'ов (главный поток, один таймер).
+_GUARD_DEPTH = 0
+
+
 @contextmanager
 def wall_clock_guard(seconds: float, *, what: str = "операция"):
     """Wall-clock предохранитель вокруг блокирующего вызова (#1130).
@@ -372,12 +376,20 @@ def wall_clock_guard(seconds: float, *, what: str = "операция"):
       этого проекта); вне главного потока или без SIGALRM — no-op (guard не
       может дать гарантий, но и сломать работу не должен);
     * чужой обработчик SIGALRM не отбирается: если уже установлен не наш и
-      не дефолтный обработчик, guard — no-op (вложенный вызов нашего же
-      guard'а обрабатывается штатно, см. ниже);
-    * вложенные guard'ы: внутренний бюджет обрезается до оставшегося времени
-      внешнего (кап verify-фазы в pipeline перекрывает бюджет попытки goto),
-      при выходе внешний таймер восстанавливается с остатком.
+      не дефолтный обработчик, guard — no-op;
+    * вложенные guard'ы (кап verify-фазы в pipeline вокруг попыток goto):
+      таймер live только у ВНЕШНЕГО guard'а. Внутренние его не трогают и не
+      восстанавливают — внешний таймер срабатывает не позже любого
+      внутреннего бюджета, поэтому переустановка (и особенно ре-арм остатка
+      при выходе, cycle-review PR #1136) открывает гонку: будильник,
+      взведённый на микросекунды остатка, выстреливает уже ПОСЛЕ выхода из
+      всех guard'ов — во входе следующего guard'а или в чужом коде, и на
+      Python 3.12 оборачивается RuntimeError "generator raised StopIteration"
+      внутри contextlib (упало в CI linux/py3.12). Один таймер на самый
+      внешний бюджет: кап verify-фазы перекрывает бюджет попытки goto —
+      ровно требуемая семантика #1130.
     """
+    global _GUARD_DEPTH
     if not hasattr(signal, "SIGALRM") or threading.current_thread() is not threading.main_thread():
         yield
         return
@@ -386,25 +398,32 @@ def wall_clock_guard(seconds: float, *, what: str = "операция"):
     if foreign:
         yield
         return
-    previous_timer = signal.getitimer(signal.ITIMER_REAL)
-    signal.signal(signal.SIGALRM, _wall_clock_alarm)
-    # Вложение: не продлеваем бюджет поверх внешнего капа (п.3 докстринга).
-    remaining = previous_timer[0]
-    budget = min(seconds, remaining) if remaining > 0 else seconds
-    started_at = time.monotonic()
-    signal.setitimer(signal.ITIMER_REAL, budget)
+    _GUARD_DEPTH += 1
     try:
-        yield
+        if _GUARD_DEPTH > 1:
+            # Вложенный guard: внешний таймер уже живёт и сработает не позже.
+            yield
+            return
+        signal.signal(signal.SIGALRM, _wall_clock_alarm)
+        signal.setitimer(signal.ITIMER_REAL, seconds)
+        try:
+            yield
+        finally:
+            # Будильник может выстрелить в момент самого разоружения (гонка
+            # последнего тика с finally): если дать исключению выйти отсюда,
+            # оно срежет unwind генератора contextlib и на py3.12 оборачивается
+            # RuntimeError "generator raised StopIteration" (упало в CI
+            # linux/py3.12, PR #1136). Мы всё равно выходим — поздний тик
+            # глотаем и разоружаем до конца.
+            while True:
+                try:
+                    signal.setitimer(signal.ITIMER_REAL, 0)
+                    break
+                except GotoWatchdogTimeout:
+                    pass
+            signal.signal(signal.SIGALRM, previous_handler)
     finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, previous_handler)
-        if remaining > 0:
-            # Cycle-review PR #1136: восстанавливаем ФАКТИЧЕСКИ оставшееся
-            # время внешнего капа, а не captured-at-entry remaining — иначе
-            # каждый внутренний guard продлевал бы внешний бюджет на всё своё
-            # время работы (кап verify-фазы превысил бы свои 60с).
-            left = remaining - (time.monotonic() - started_at)
-            signal.setitimer(signal.ITIMER_REAL, max(left, 0.0))
+        _GUARD_DEPTH -= 1
 
 
 # #1130: wall-clock бэкстоп вокруг каждой попытки goto. Обычно не стреляет:

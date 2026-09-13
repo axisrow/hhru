@@ -86,15 +86,19 @@ def test_wall_clock_guard_restores_timer_and_handler():
     assert signal.getsignal(signal.SIGALRM) is signal.SIG_DFL
 
 
-def test_nested_guard_decrements_outer_budget():
-    """Cycle-review PR #1136: внутренний guard расходует внешний кап, а не
-    восстанавливает его на полное время, захваченное на входе."""
+def test_nested_guard_does_not_touch_outer_timer():
+    """Cycle-review PR #1136: вложенный guard не переустанавливает и не
+    ре-армит внешний таймер — ре-арм микросекундного остатка выстреливал
+    после выхода из всех guard'ов (RuntimeError в CI linux/py3.12)."""
     with wall_clock_guard(1.0):
         with wall_clock_guard(30.0):
             time.sleep(0.3)
-        # Наружу должно остаться ~0.7с, а не исходная 1.0с.
+        # Таймер внешний, не тронут внутренним: осталось ~0.7с реального времени.
         left, _interval = signal.getitimer(signal.ITIMER_REAL)
+        assert signal.getsignal(signal.SIGALRM) is not signal.SIG_DFL
     assert 0.3 < left < 0.85
+    assert signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0)
+    assert signal.getsignal(signal.SIGALRM) is signal.SIG_DFL
 
 
 def test_nested_guard_is_clamped_by_outer_budget():
