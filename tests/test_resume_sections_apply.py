@@ -22,9 +22,12 @@ from hhru_bot.resume_sections import (
     OUTCOME_APPENDED,
     OUTCOME_FAILED,
     OUTCOME_PLANNED,
+    OUTCOME_UNCERTAIN,
+    OUTCOME_UPDATED,
     Attestation,
     Recommendation,
     RowOutcome,
+    _apply_contacts,
     _apply_rows,
     apply_plan,
 )
@@ -179,6 +182,222 @@ def test_all_rows_hydrate_and_save_without_errors():
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# --- блок контактов (#1119): один заход в редактор, save + readback ----------
+
+CONTACTS_URL = "https://hh.ru/resume/edit/test-resume-id/contacts"
+
+
+class FakeContactField:
+    """Locator одного поля формы: count/input_value/fill/first."""
+
+    def __init__(self, page, qa: str):
+        self._page = page
+        self._qa = qa
+
+    @property
+    def first(self):
+        return self
+
+    def count(self):
+        return 1
+
+    def input_value(self):
+        return self._page.readback_values.get(self._qa, self._page.filled.get(self._qa, ""))
+
+    def get_attribute(self, name):  # noqa: ARG002
+        return (
+            "magritte-radio-input-unchecked"
+            if not self._page.preferred
+            else ("magritte-radio-input-checked")
+        )
+
+    def fill(self, value):
+        self._page.filled[self._qa] = value
+
+    def wait_for(self, *, state="visible", timeout=None):  # noqa: ARG002
+        if not self._page.ready:
+            raise PlaywrightTimeoutError("гидратация не завершилась вовремя")
+
+    def click(self):
+        self._page.preferred = True
+
+
+class FakeContactsSave:
+    def __init__(self, page):
+        self._page = page
+
+    def count(self):
+        return 1
+
+    def click(self):
+        self._page.saved = True
+
+    def wait_for(self, *, state="hidden", timeout=None):
+        if self._page.save_wait_times_out:
+            raise PlaywrightTimeoutError("редактор не закрылся")
+        self._page.closed = True
+
+
+class FakeContactsCancel:
+    def __init__(self, page):
+        self._page = page
+
+    def count(self):
+        return 1
+
+    def click(self):
+        self._page.cancelled = True
+
+
+class FakeContactsPage:
+    """Стаб формы контактов (#1119): телефон/email/комментарий, radio, save/cancel."""
+
+    def __init__(self, *, ready: bool = True, save_wait_times_out: bool = False):
+        self.url = CONTACTS_URL
+        self.ready = ready
+        self.save_wait_times_out = save_wait_times_out
+        self.filled: dict[str, str] = {}
+        self.readback_values: dict[str, str] = {}
+        self.preferred = False
+        self.saved = False
+        self.closed = False
+        self.cancelled = False
+
+    def locator(self, selector: str):
+        if selector == "[data-qa='resume-partial-edit-save']":
+            return FakeContactsSave(self)
+        if selector == "[data-qa='resume-partial-edit-cancel']":
+            return FakeContactsCancel(self)
+        qa = selector.removeprefix("[data-qa='").removesuffix("']")
+        return FakeContactField(self, qa)
+
+
+@pytest.fixture
+def contacts_page(monkeypatch):
+    """_apply_contacts ходит через goto_hh — подменяем на смену page.url."""
+    page = FakeContactsPage()
+
+    def fake_goto(page_arg, url):  # noqa: ARG001
+        page_arg.url = url
+
+    monkeypatch.setattr(resume_sections, "goto_hh", fake_goto)
+    return page
+
+
+def test_contacts_dry_run_fills_and_cancels_without_save(contacts_page):
+    items = [
+        resume_sections.Contact(type="phone", value="+7 900", comment="Вацап"),
+        resume_sections.Contact(type="email", value="a@b.c"),
+    ]
+    outcomes = [RowOutcome("contacts", i, OUTCOME_PLANNED) for i in range(2)]
+
+    errors = _apply_contacts(
+        contacts_page, "test-resume-id", items, dry_run=True, outcomes=outcomes
+    )
+
+    assert errors == []
+    assert contacts_page.filled == {
+        "resume-phone-cell_phone": "+7 900",
+        "resume-editor-phone-comment-input": "Вацап",
+        "resume-editor-email-input": "a@b.c",
+    }
+    assert contacts_page.cancelled and not contacts_page.saved
+    assert [o.status for o in outcomes] == [OUTCOME_PLANNED, OUTCOME_PLANNED]
+
+
+def test_contacts_save_confirmed_by_readback(contacts_page):
+    items = [
+        resume_sections.Contact(type="phone", value="+7 900", comment="Вацап", preferred=True),
+        resume_sections.Contact(type="email", value="a@b.c"),
+    ]
+    outcomes = [RowOutcome("contacts", i, OUTCOME_PLANNED) for i in range(2)]
+
+    errors = _apply_contacts(
+        contacts_page, "test-resume-id", items, dry_run=False, outcomes=outcomes
+    )
+
+    assert errors == []
+    assert contacts_page.saved and contacts_page.closed and contacts_page.preferred
+    assert [o.status for o in outcomes] == [OUTCOME_UPDATED, OUTCOME_UPDATED]
+    assert all("readback совпал" in o.reason for o in outcomes)
+
+
+def test_contacts_save_wait_timeout_marks_all_uncertain(contacts_page):
+    # Клик save мог уйти (#176): readback не выполняется, все строки uncertain.
+    contacts_page.save_wait_times_out = True
+    items = [resume_sections.Contact(type="phone", value="+7 900")]
+    outcomes = [RowOutcome("contacts", 0, OUTCOME_PLANNED)]
+
+    errors = _apply_contacts(
+        contacts_page, "test-resume-id", items, dry_run=False, outcomes=outcomes
+    )
+
+    assert len(errors) == 1 and "uncertain" in errors[0]
+    assert [o.status for o in outcomes] == [OUTCOME_UNCERTAIN]
+
+
+def test_contacts_readback_mismatch_marks_rows_uncertain(contacts_page):
+    contacts_page.readback_values = {"resume-phone-cell_phone": "+7 000"}
+    items = [resume_sections.Contact(type="phone", value="+7 900")]
+    outcomes = [RowOutcome("contacts", 0, OUTCOME_PLANNED)]
+
+    errors = _apply_contacts(
+        contacts_page, "test-resume-id", items, dry_run=False, outcomes=outcomes
+    )
+
+    assert len(errors) == 1 and "uncertain" in errors[0]
+    assert outcomes[0].status == OUTCOME_UNCERTAIN
+    assert outcomes[0].reason == "readback не совпал"
+
+
+def test_contacts_wrong_resume_route_fails_closed(monkeypatch):
+    page = FakeContactsPage()
+    page.url = "https://hh.ru/resume/edit/another-resume/contacts"
+    monkeypatch.setattr(
+        resume_sections, "goto_hh", lambda page_arg, _url: setattr(page_arg, "url", page_arg.url)
+    )
+    items = [resume_sections.Contact(type="phone", value="+7 900")]
+    outcomes = [RowOutcome("contacts", 0, OUTCOME_PLANNED)]
+
+    errors = _apply_contacts(page, "test-resume-id", items, dry_run=False, outcomes=outcomes)
+
+    assert len(errors) == 1 and "не для того резюме" in errors[0]
+    assert not page.saved
+    assert [o.status for o in outcomes] == [OUTCOME_FAILED]
+
+
+def test_contacts_hydration_timeout_fails_before_save(contacts_page):
+    contacts_page.ready = False
+    items = [resume_sections.Contact(type="phone", value="+7 900")]
+    outcomes = [RowOutcome("contacts", 0, OUTCOME_PLANNED)]
+
+    errors = _apply_contacts(
+        contacts_page, "test-resume-id", items, dry_run=False, outcomes=outcomes
+    )
+
+    assert not contacts_page.saved
+    assert len(errors) == 1
+    assert [o.status for o in outcomes] == [OUTCOME_FAILED]
+
+
+def test_apply_plan_early_exit_fails_contacts_rows(monkeypatch):
+    monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: False)
+    outcomes = {"contacts": [RowOutcome("contacts", 0, OUTCOME_PLANNED)]}
+
+    errors = apply_plan(
+        MagicMock(),
+        "resume-id",
+        resume_sections.ResumeSectionsPlan(
+            contacts=[resume_sections.Contact(type="phone", value="+7 900")],
+        ),
+        dry_run=False,
+        outcomes=outcomes,
+    )
+
+    assert errors == ["отсутствует auth cookie"]
+    assert outcomes["contacts"][0].status == OUTCOME_FAILED
 
 
 # --- per-row контракт исходов (#1118) ----------------------------------------

@@ -59,9 +59,11 @@ def register(subparsers) -> None:
         action="append",
         metavar="JSON",
         help=(
-            "Контакт JSON (#1118), можно несколько: "
-            '\'{"name":..., "value":...}\' (схема предварительная, до census '
-            "#1119). Боевой проход пока даёт [FAIL] для строки."
+            "Контакт JSON (#1119, census-схема), можно несколько: "
+            '\'{"type":"phone|email", "value":..., "comment":... '
+            '(только phone), "preferred":true|false}\'. Замещает значение '
+            "поля формы; preferred=True максимум у одной строки. "
+            "Селекторы подтверждены census 2026-09-12."
         ),
     )
     parser.add_argument(
@@ -139,6 +141,7 @@ def _parse_manual_sections(args: argparse.Namespace):
         ResumeSectionsPlan,
         _dedupe,
         _text,
+        contacts_from_manual_rows,
         plan_from_rows,
     )
 
@@ -191,7 +194,13 @@ def _parse_manual_sections(args: argparse.Namespace):
         )
     if rows:
         manual_plan, manual_outcomes = plan_from_rows(rows)
-        plan.manual = manual_plan.manual
+        # Блок contact (#1119): census-схема реализована — строки переносятся
+        # из manual в типизированные plan.contacts; конфликты схемы (два
+        # значения одного поля, два preferred) — явная ошибка до запуска
+        # браузера.
+        contact_rows = [row for row in manual_plan.manual if row.block == "contact"]
+        plan.contacts = contacts_from_manual_rows(contact_rows)
+        plan.manual = [row for row in manual_plan.manual if row.block != "contact"]
         outcomes.extend(manual_outcomes)
     return plan, outcomes
 
@@ -204,12 +213,21 @@ def _print_outcomes(outcomes) -> int:
         OUTCOME_DUPLICATE,
         OUTCOME_FAILED,
         OUTCOME_PLANNED,
+        OUTCOME_UNCERTAIN,
+        OUTCOME_UPDATED,
     )
 
     rows = [[o.block, str(o.index), o.status, o.reason] for o in outcomes]
     counts = {
         status: sum(1 for o in outcomes if o.status == status)
-        for status in (OUTCOME_APPENDED, OUTCOME_PLANNED, OUTCOME_DUPLICATE, OUTCOME_FAILED)
+        for status in (
+            OUTCOME_APPENDED,
+            OUTCOME_PLANNED,
+            OUTCOME_UPDATED,
+            OUTCOME_DUPLICATE,
+            OUTCOME_UNCERTAIN,
+            OUTCOME_FAILED,
+        )
     }
     footer = [
         "Итого",
@@ -311,6 +329,7 @@ def run(args: argparse.Namespace) -> None:
         outcomes = None
     # Блоки #1118 без реализованной формы: боевой проход честно failed —
     # частичный успех одного блока не выдаётся за успех всего (#1118 п.3).
+    # contact реализован census-схемой #1119 и в список unsupported не входит.
     if not args.dry_run:
         unsupported = [
             RowOutcome(
@@ -320,7 +339,8 @@ def run(args: argparse.Namespace) -> None:
                 "блок не реализован текущей формой (census — блоковые ишью "
                 "#1119-1122); запись не выполнялась",
             )
-            if o.status == OUTCOME_PLANNED and o.block in {b for b in _MANUAL_FLAGS.values()}
+            if o.status == OUTCOME_PLANNED
+            and o.block in {b for b in _MANUAL_FLAGS.values()} - {"contact"}
             else o
             for o in (outcomes or [])
         ]
@@ -329,6 +349,7 @@ def run(args: argparse.Namespace) -> None:
         f"[{'DRY-RUN' if args.dry_run else 'INFO'}] "
         f"Аттестаций: {len(plan.attestations)}, рекомендаций: {len(plan.recommendations)}, "
         f"сертификатов: {len(plan.certificates)}, "
+        f"контактов: {len(plan.contacts)}, "
         f"ручных строк новых блоков: {len(plan.manual)}"
     )
     for row in plan.manual:
@@ -337,7 +358,9 @@ def run(args: argparse.Namespace) -> None:
     if args.dry_run:
         print("[INFO] Ничего не отправлено.")
 
-    supported = bool(plan.attestations or plan.recommendations or plan.certificates)
+    supported = bool(
+        plan.attestations or plan.recommendations or plan.certificates or plan.contacts
+    )
     if not supported and not args.dry_run:
         # Браузер не запускаем: писать на hh.ru нечем.
         if outcomes is not None:
@@ -368,6 +391,9 @@ def run(args: argparse.Namespace) -> None:
                     o
                     for o in outcomes
                     if o.block == "certificates" and o.status != OUTCOME_DUPLICATE
+                ],
+                "contacts": [
+                    o for o in outcomes if o.block == "contacts" and o.status != OUTCOME_DUPLICATE
                 ],
             }
         with launch_context(
