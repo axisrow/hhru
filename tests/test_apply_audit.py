@@ -23,6 +23,40 @@ from hhru_bot.throttle import Throttle
 pytestmark = pytest.mark.integration
 
 
+def test_requested_resume_missing_from_account_never_enters_pipeline(tmp_path, monkeypatch):
+    resume = ResumeConfig(
+        id="requested",
+        resume_url="https://hh.ru/resume/01234567",
+        search=SearchFilters(text="Python"),
+    )
+    config = AppConfig(
+        storage_state_file=tmp_path / "unused.json",
+        throttle=ThrottleConfig(min_delay_seconds=0, max_delay_seconds=0),
+        cover_letter_default="Cover letter",
+        resumes=[resume],
+    )
+    history = History(tmp_path / "history.db")
+    monkeypatch.setattr(
+        apply_service, "resolve_numeric_resume_ids", lambda page: {"fedcba98": "200"}
+    )
+    monkeypatch.setattr(
+        apply_service, "apply_to_vacancy", lambda *a, **kw: pytest.fail("wrong resume dispatched")
+    )
+    assert (
+        apply_service._execute_apply_wave(
+            object(),
+            config,
+            resume,
+            history,
+            Throttle(config.throttle, history),
+            apply_service.ApplyRunParams(limit=1),
+            cards_override=[VacancyCard("1", "Dev", "Acme", "https://hh.ru/vacancy/1")],
+        )
+        is True
+    )
+    assert history.list_actions(None, "all") == []
+
+
 def test_apply_crash_after_planning_leaves_durable_uncertain_audit(tmp_path, monkeypatch):
     """A process-like crash must not leave a submit candidate absent from history."""
     resume = ResumeConfig(

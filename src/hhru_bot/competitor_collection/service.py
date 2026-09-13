@@ -105,7 +105,7 @@ def collect_pages(
     rank_offset_base = params.rank_offset_base
 
     def checkpoint() -> None:
-        lifecycle.checkpoint(state.snapshot())
+        lifecycle.checkpoint(state.snapshot)
 
     previous_handlers = install_termination_handlers()
 

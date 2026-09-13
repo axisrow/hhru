@@ -23,6 +23,8 @@ from hhru_bot.market_schema import (
     BACKFILL_MARKER_KEY,
     COMPETITOR_RESUME_ROLES_STATEMENTS,
     MARKET_TABLES_DDL,
+    MIGRATION_MARKER_KEY,
+    SCHEMA,
 )
 from hhru_bot.market_store import DEFAULT_MARKET_PATH, MarketStore
 
@@ -178,6 +180,69 @@ def test_record_seen_writes_only_to_market_db(tmp_path, monkeypatch):
             "SELECT name FROM sqlite_master WHERE type='table' AND name='vacancies_seen'"
         ).fetchone()
     assert row is None
+
+
+@pytest.mark.parametrize("already_migrated", [False, True])
+def test_migration_preserves_vacancies_with_colliding_source_ids(tmp_path, already_migrated):
+    sources = []
+    for relative, vacancy_id in (
+        ("history.db", "00001"),
+        ("accounts/alpha/history.db", "00002"),
+    ):
+        history = _make_legacy_history(tmp_path / relative)
+        history.upsert_vacancy_seen(vacancy_id, "Python", title=f"Legacy {vacancy_id}")
+        with history._connect() as conn:
+            assert conn.execute("SELECT id FROM vacancies_seen").fetchone()[0] == 1
+        sources.append((history.db_path, history.db_path.read_bytes()))
+
+    market_path = tmp_path / "market.db"
+    if already_migrated:
+        # The old migrator kept only the root account's id=1 and set its marker.
+        with sqlite3.connect(market_path) as conn:
+            conn.executescript(SCHEMA)
+            conn.execute(
+                "INSERT INTO vacancies_seen "
+                "(id, vacancy_id, search_query, title, first_seen_at, last_seen_at) "
+                "VALUES (1, '00001', 'Python', 'Fresh market title', '2026-09-01', '2026-09-12')"
+            )
+            conn.execute(
+                "INSERT INTO market_meta VALUES (?, '2026-09-01')", (MIGRATION_MARKER_KEY,)
+            )
+
+    market = MarketStore(market_path)
+    rows = {row["vacancy_id"]: row for row in market.list_vacancies_seen()}
+    assert set(rows) == {"00001", "00002"}
+    if already_migrated:
+        assert rows["00001"]["title"] == "Fresh market title"
+    assert MarketStore(market_path).list_vacancies_seen() == market.list_vacancies_seen()
+    for path, original in sources:
+        assert path.read_bytes() == original
+
+
+def test_vacancy_repair_rolls_back_and_can_retry(tmp_path, monkeypatch):
+    source = _make_legacy_history(tmp_path / "history.db")
+    source.upsert_vacancy_seen("00001", "Python")
+    source = _make_legacy_history(tmp_path / "accounts" / "alpha" / "history.db")
+    source.upsert_vacancy_seen("00002", "Python")
+    market_path = tmp_path / "market.db"
+    with sqlite3.connect(market_path) as conn:
+        conn.executescript(SCHEMA)
+        conn.execute("INSERT INTO market_meta VALUES (?, 'old')", (MIGRATION_MARKER_KEY,))
+
+    original = MarketStore._copy_market_tables
+
+    def fail_second_source(self, conn, path, **kwargs):
+        if path.parent.name == "alpha":
+            raise sqlite3.OperationalError("source temporarily unavailable")
+        return original(self, conn, path, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(MarketStore, "_copy_market_tables", fail_second_source)
+        with pytest.raises(sqlite3.OperationalError, match="temporarily unavailable"):
+            MarketStore(market_path)
+    with sqlite3.connect(market_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM vacancies_seen").fetchone()[0] == 0
+    assert len(MarketStore(market_path).list_vacancies_seen()) == 2
 
 
 def test_record_seen_without_market_is_a_noop(tmp_path):

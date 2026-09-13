@@ -28,7 +28,12 @@ from .history_analytics import AnalyticsMixin
 from .history_competitors import CompetitorsMixin, ensure_competitor_norm_columns
 from .history_vacancies import VacanciesMixin
 from .market_norm import ROLE_CLUSTERS, fold_key, split_roles
-from .market_schema import BACKFILL_MARKER_KEY, MIGRATION_MARKER_KEY, SCHEMA
+from .market_schema import (
+    BACKFILL_MARKER_KEY,
+    MIGRATION_MARKER_KEY,
+    SCHEMA,
+    VACANCY_MIGRATION_MARKER_KEY,
+)
 
 logger = logging.getLogger("hhru_bot.market")
 
@@ -89,9 +94,10 @@ class MarketStore(AnalyticsMixin, VacanciesMixin, CompetitorsMixin):
 
         КОПИРОВАНИЕМ, не переносом: источники не мутируются вовсе (правило
         «ничего не удалять»). Идемпотентно (INSERT OR IGNORE по тем же
-        PK/UNIQUE-ключам), но после успешного прохода маркер в market_meta
-        снимает работу с последующих открытий. Колонки берутся пересечением
-        PRAGMA table_info — легаси-источник может не иметь поздних колонок.
+        PK/UNIQUE-ключам). Парный маркер vacancies:v2 повторно просматривает
+        вакансии в старых market.db, где локальный AUTOINCREMENT id уже мог
+        потерять строки. Колонки берутся пересечением PRAGMA table_info —
+        легаси-источник может не иметь поздних колонок.
 
         При конфликте ключа между источниками побеждает ПЕРВЫЙ в порядке
         ``_history_sources`` (корневой history.db, потом аккаунты по алфавиту),
@@ -100,18 +106,30 @@ class MarketStore(AnalyticsMixin, VacanciesMixin, CompetitorsMixin):
         collect/search после неё, а гоняться за timestamp'ами между источниками
         ради строк, которые вот-вот перезапишет штатный upsert, незачем.
         """
-        done = conn.execute(
-            "SELECT value FROM market_meta WHERE key = ?", (MIGRATION_MARKER_KEY,)
-        ).fetchone()
-        if done is not None:
+        markers = {
+            row["key"]
+            for row in conn.execute(
+                "SELECT key FROM market_meta WHERE key IN (?, ?)",
+                (MIGRATION_MARKER_KEY, VACANCY_MIGRATION_MARKER_KEY),
+            )
+        }
+        if {MIGRATION_MARKER_KEY, VACANCY_MIGRATION_MARKER_KEY} <= markers:
             return
         conn.execute("BEGIN IMMEDIATE")
         try:
+            # Recheck after acquiring the transaction: another opener may have
+            # completed migration while this connection waited for the lock.
+            markers = {row["key"] for row in conn.execute("SELECT key FROM market_meta")}
+            if {MIGRATION_MARKER_KEY, VACANCY_MIGRATION_MARKER_KEY} <= markers:
+                conn.execute("COMMIT")
+                return
+            tables = ("vacancies_seen",) if MIGRATION_MARKER_KEY in markers else _MIGRATION_TABLES
             for source_path in self._history_sources():
-                self._copy_market_tables(conn, source_path)
-            conn.execute(
-                "INSERT OR REPLACE INTO market_meta (key, value) VALUES (?, ?)",
-                (MIGRATION_MARKER_KEY, datetime.now().isoformat(timespec="seconds")),
+                self._copy_market_tables(conn, source_path, tables=tables)
+            now = datetime.now().isoformat(timespec="seconds")
+            conn.executemany(
+                "INSERT OR IGNORE INTO market_meta (key, value) VALUES (?, ?)",
+                [(MIGRATION_MARKER_KEY, now), (VACANCY_MIGRATION_MARKER_KEY, now)],
             )
             conn.execute("COMMIT")
         except BaseException:
@@ -230,11 +248,17 @@ class MarketStore(AnalyticsMixin, VacanciesMixin, CompetitorsMixin):
             conn.execute("ROLLBACK")
             raise
 
-    def _copy_market_tables(self, conn: sqlite3.Connection, source_path: Path) -> None:
-        source = sqlite3.connect(f"file:{source_path}?mode=ro", uri=True)
+    def _copy_market_tables(
+        self,
+        conn: sqlite3.Connection,
+        source_path: Path,
+        *,
+        tables: tuple[str, ...] = _MIGRATION_TABLES,
+    ) -> None:
+        source = sqlite3.connect(source_path.resolve().as_uri() + "?mode=ro", uri=True)
         source.row_factory = sqlite3.Row
         try:
-            for table in _MIGRATION_TABLES:
+            for table in tables:
                 src_cols = {
                     row["name"] for row in source.execute(f"PRAGMA table_info({table})").fetchall()
                 }
@@ -243,20 +267,28 @@ class MarketStore(AnalyticsMixin, VacanciesMixin, CompetitorsMixin):
                 dst_cols = {
                     row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
                 }
-                common = [c for c in dst_cols if c in src_cols]
+                # id belongs to one SQLite file, not to the vacancy. Let the
+                # destination allocate it; (vacancy_id, search_query) is global.
+                common = sorted(
+                    c for c in dst_cols & src_cols if not (table == "vacancies_seen" and c == "id")
+                )
                 if not common:
                     continue
                 columns = ", ".join(common)
                 rows = source.execute(f"SELECT {columns} FROM {table}").fetchall()
                 if not rows:
                     continue
-                conn.executemany(
+                copied = conn.executemany(
                     f"INSERT OR IGNORE INTO {table} ({columns}) VALUES "
                     f"({', '.join('?' for _ in common)})",
                     [tuple(row) for row in rows],
                 )
                 logger.info(
-                    "market.db: мигрировано %d строк %s из %s", len(rows), table, source_path
+                    "market.db: мигрировано %d из %d строк %s из %s",
+                    copied.rowcount,
+                    len(rows),
+                    table,
+                    source_path,
                 )
         finally:
             source.close()

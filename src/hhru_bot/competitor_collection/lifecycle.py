@@ -55,8 +55,11 @@ class CollectionLifecycle:
         # checkpoint written by the main thread (#654 Codex review).
         self._checkpoint_lock = threading.Lock()
 
-    def checkpoint(self, snapshot: RunSnapshot) -> None:
+    def checkpoint(self, get_snapshot: Callable[[], RunSnapshot]) -> None:
         with self._checkpoint_lock:
+            # Capture inside the same lock as the write: a snapshot captured
+            # earlier by a delayed heartbeat must not overwrite newer progress.
+            snapshot = get_snapshot()
             self.history.checkpoint_competitor_collection(
                 self.run_id,
                 pages_fetched=snapshot.pages,
