@@ -16,6 +16,12 @@ VACANCY_RELOCATION_CONFIRM = _selector("vacancy_page.VACANCY_RELOCATION_CONFIRM"
 VACANCY_SIMILAR_VACANCIES_CLOSE = _selector("vacancy_page.VACANCY_SIMILAR_VACANCIES_CLOSE")
 VACANCY_DIRECT_APPLICATION_CANCEL = _selector("vacancy_page.VACANCY_DIRECT_APPLICATION_CANCEL")
 VACANCY_DIRECT_APPLICATION_ALERT = _selector("vacancy_page.VACANCY_DIRECT_APPLICATION_ALERT")
+# #1134 (дамп отказа 2026-09-13): НЕ совпал с реальным DOM отказа — живой дамп
+# не содержит ни data-qa-popup-error-code, ни отрисованного узла с текстом
+# отказа (строка есть только в i18n-словаре страницы, который одинаков на всех
+# страницах). Первичный детект отказа лимита — текстовый, см.
+# apply/blockers.py::LIMIT_REFUSAL_TEXT_MARKERS; селектор оставлен для
+# defense-in-depth до появления дампа с отрисованным попапом отказа.
 VACANCY_LIMIT_ERROR = _selector("vacancy_page.VACANCY_LIMIT_ERROR")
 VACANCY_RESPONSE_REJECT_WARNING = _selector("vacancy_page.VACANCY_RESPONSE_REJECT_WARNING")
 VACANCY_RESPONSE_ERROR = _selector("vacancy_page.VACANCY_RESPONSE_ERROR")

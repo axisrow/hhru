@@ -21,7 +21,13 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from ..logging_setup import LOG_DIR
 from ..selector_groups import vacancy_page
-from .blockers import PostClickBlocker, handle_post_click_blockers, raise_if_post_submit_limit
+from .blockers import (
+    PostClickBlocker,
+    handle_post_click_blockers,
+    limit_refusal_blocker,
+    limit_refusal_visible,
+    raise_if_post_submit_limit,
+)
 
 logger = logging.getLogger("hhru_bot.apply.steps")
 
@@ -380,12 +386,29 @@ def navigate_to_response_form(
             visible=True
         ).first.wait_for(state="visible", timeout=ready_timeout_ms)
     except PlaywrightError as exc:
+        # #1134: отказ лимита откликов рендерится текстом в клик-зоне вместо
+        # формы; мгновенный определённый вердикт (stop_run, без verify и без
+        # uncertain) вместо verify-пути серой зоны #207, сжигавшего вакансию.
+        if limit_refusal_visible(page):
+            logger.info(
+                "Клик по кнопке отклика получил отказ лимита откликов (#1134) — "
+                "текущий прогон остановлен"
+            )
+            return limit_refusal_blocker()
         if dump_diagnostics:
             _dump_navigation_diagnostics(page, "form_timeout", vacancy_id, run_id)
         # Форма не загрузилась — сообщаем pipeline отдельно от детекции вопросов,
         # чтобы таймаут рендера не выглядел как неверная граница <form>.
         logger.warning("Форма отклика не отрисовалась (%s)", exc)
         return False
+    # #1134: гонку мог выиграть попап отказа лимита — он проверяется первым,
+    # пока страница с текстом отказа ещё не покинута.
+    if limit_refusal_visible(page):
+        logger.info(
+            "Клик по кнопке отклика получил отказ лимита откликов (#1134) — "
+            "текущий прогон остановлен"
+        )
+        return limit_refusal_blocker()
     if post_response.filter(visible=True).count() > 0:
         # Маркер отрендерился ПОСЛЕ клика (перед кликом check_already_responded
         # его не видел, #247) — отклик отправлен самим кликом, без формы.

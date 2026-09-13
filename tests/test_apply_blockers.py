@@ -69,9 +69,35 @@ class _Page:
         self.clicked: list[str] = []
         self.waited: list[str] = []
         self.wait_timeouts: list[float] = []
+        # #1134: видимые текстовые маркеры (get_by_text) — ключ: подстрока.
+        self.visible_texts: set[str] = set()
 
     def locator(self, selector: str) -> _Locator:
         return _Locator(self, selector)
+
+    def get_by_text(self, text: str) -> _TextLocator:
+        return _TextLocator(self, (text,))
+
+
+class _TextLocator:
+    """get_by_text-локатор: or_ копит альтернативы, first/is_visible читает visible_texts."""
+
+    def __init__(self, page: _Page, texts: tuple[str, ...]) -> None:
+        self.page = page
+        self.texts = texts
+
+    def or_(self, other: _TextLocator) -> _TextLocator:
+        return _TextLocator(self.page, self.texts + other.texts)
+
+    def filter(self, *, visible: bool | None = None) -> _TextLocator:  # noqa: ARG002
+        return self
+
+    @property
+    def first(self) -> _TextLocator:
+        return self
+
+    def is_visible(self) -> bool:
+        return any(text in self.page.visible_texts for text in self.texts)
 
 
 def test_relocation_is_skipped_by_default_without_click():
@@ -129,6 +155,56 @@ def test_limit_is_checked_again_after_submit():
 
     with pytest.raises(PostSubmitLimitExceeded):
         raise_if_post_submit_limit(page)
+
+
+def test_limit_refusal_text_stops_run_without_verify():
+    # #1134: реальный DOM отказа (дамп apply_137189560_form_timeout.html) не
+    # содержит data-qa селектора — детектит только текст отказа. Вердикт
+    # определённый: post_navigation=False, verify по #207 не нужен.
+    page = _Page()
+    page.visible_texts.add("не более 200 откликов")
+
+    result = handle_post_click_blockers(page, allow_relocation=False, post_navigation=True)
+
+    assert result is not None
+    assert result.kind == "limit_exceeded"
+    assert result.stop_run is True
+    assert result.post_navigation is False
+
+
+def test_limit_refusal_text_is_checked_after_submit():
+    page = _Page()
+    page.visible_texts.add("исчерпали лимит откликов")
+
+    with pytest.raises(PostSubmitLimitExceeded):
+        raise_if_post_submit_limit(page)
+
+
+def test_limit_refusal_text_finalizes_without_verifier():
+    # Текст отказа = hh.ru сам сообщил «отклик не принят»: даже в серой зоне
+    # #207 verifier не вызывается, uncertain не пишется — иначе каждая
+    # попытка сверх лимита снова сжигала бы вакансию в навсегда заблокированный
+    # uncertain (боевой прогон a91546cc: 3 чистые вакансии).
+    from hhru_bot.apply.blockers import limit_refusal_blocker
+    from hhru_bot.apply.pipeline import _finalize_blocker
+
+    calls = []
+
+    def verifier(*args):
+        calls.append(args)
+        raise AssertionError("verifier must not be called on a definitive refusal")
+
+    ctx = _blocker_ctx(verifier=verifier)
+    blocker = limit_refusal_blocker()
+    assert blocker.post_navigation is False
+
+    result = _finalize_blocker(ctx, blocker)
+
+    assert calls == []
+    assert result.success is False
+    assert result.stop_run is True
+    assert result.uncertain is False
+    assert result.acted is False
 
 
 def test_response_warning_is_a_terminal_skip():

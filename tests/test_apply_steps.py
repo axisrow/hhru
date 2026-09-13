@@ -18,6 +18,7 @@ from playwright.sync_api import Error, sync_playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from hhru_bot.apply import steps
+from hhru_bot.apply.blockers import PostClickBlocker
 from hhru_bot.selector_groups import apply_form, vacancy_page
 
 pytestmark = pytest.mark.integration
@@ -1353,3 +1354,79 @@ def test_fill_form_resume_trigger_click_error_does_not_submit():
 def test_optional_field_timeout_is_short():
     # Опциональные поля ждут недолго: отсутствие — это норма, не долгоиграющая ошибка.
     assert steps.OPTIONAL_FIELD_TIMEOUT_MS < steps.APPLY_TIMEOUT_MS
+
+
+# --- #1134: текстовый детект отказа лимита в клик-зоне ---
+
+
+class _FakeTextLocator:
+    """Минимальный get_by_text-локатор: or_/filter/first/is_visible."""
+
+    def __init__(self, page: _RefusalStepsPage, texts: tuple[str, ...]) -> None:
+        self.page = page
+        self.texts = texts
+
+    def or_(self, other: _FakeTextLocator) -> _FakeTextLocator:
+        return _FakeTextLocator(self.page, self.texts + other.texts)
+
+    def filter(self, *, visible: bool | None = None) -> _FakeTextLocator:  # noqa: ARG002
+        return self
+
+    @property
+    def first(self) -> _FakeTextLocator:
+        return self
+
+    def is_visible(self) -> bool:
+        return self.page.refusal_visible
+
+
+class _RefusalStepsPage(FakeStepsPage):
+    """FakeStepsPage с видимым текстом отказа лимита (без реального get_by_text)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.refusal_visible = False
+
+    def get_by_text(self, text: str) -> _FakeTextLocator:
+        return _FakeTextLocator(self, (text,))
+
+
+def test_navigate_form_timeout_with_limit_refusal_stops_run():
+    # #1134: hh.ru отказал по лимиту вместо рендера формы — вердикт должен быть
+    # определённым stop_run-блокером, а не False → verify → uncertain.
+    page = _RefusalStepsPage()
+    page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
+    page.refusal_visible = True
+
+    result = steps.navigate_to_response_form(page, dump_diagnostics=False)
+
+    assert isinstance(result, PostClickBlocker)
+    assert result.kind == "limit_exceeded"
+    assert result.stop_run is True
+    assert result.post_navigation is False
+
+
+def test_navigate_race_winner_limit_refusal_beats_one_click_marker():
+    # Гонку мог выиграть попап отказа лимита: он проверяется ДО one-click
+    # маркера, пока страница с текстом отказа не покинута.
+    page = _RefusalStepsPage()
+    page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
+    page.set_visible(vacancy_page.VACANCY_ALREADY_RESPONDED_AGAIN, True)
+    page.refusal_visible = True
+
+    result = steps.navigate_to_response_form(page)
+
+    assert isinstance(result, PostClickBlocker)
+    assert result.kind == "limit_exceeded"
+
+
+def test_navigate_without_refusal_text_keeps_one_click_marker():
+    # Регрессия: без отказа one-click маркер по-прежнему даёт OneClickResponded,
+    # а не блокер (детект отказа обязан молчать на штатной странице).
+    page = FakeStepsPage()
+    page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
+    page.set_visible(vacancy_page.VACANCY_ALREADY_RESPONDED_AGAIN, True)
+
+    result = steps.navigate_to_response_form(page)
+
+    assert isinstance(result, steps.OneClickResponded)
