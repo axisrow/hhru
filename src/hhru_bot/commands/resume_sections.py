@@ -6,7 +6,13 @@ import argparse
 import sys
 from typing import TYPE_CHECKING, cast
 
-from ..resume_sections import Attestation, Certificate, Recommendation
+from ..resume_sections import (
+    Attestation,
+    Certificate,
+    PortfolioItem,
+    Recommendation,
+    validate_portfolio_item,
+)
 from .copy_resume import confirm_write
 
 if TYPE_CHECKING:
@@ -18,9 +24,10 @@ def register(subparsers) -> None:
         "resume-sections",
         help="Заполнить дополнительные разделы резюме через LLM",
         description=(
-            "Заполняет аттестации, рекомендации и сертификаты по подтвержденным "
-            "UI-маршрутам; умеет создать первую строку в пустом блоке. Портфолио и "
-            "ссылки пока пропускаются, удаления не выполняются. Ключ manual в "
+            "Заполняет аттестации, рекомендации, сертификаты и портфолио "
+            "(#1121) по подтвержденным UI-фактам; умеет создать первую строку "
+            "в пустом блоке. Ссылки пока пропускаются, удаления не "
+            "выполняются. Ключ manual в "
             "секции resume_sections конфига пока зарезервирован и ни на что не "
             "влияет — расцветёт вместе с блоковыми ишью #1119-1122."
         ),
@@ -84,9 +91,13 @@ def register(subparsers) -> None:
         action="append",
         metavar="JSON",
         help=(
-            "Проект портфолио JSON (#1118), можно несколько: "
-            '\'{"name":..., "url":...}\' (схема предварительная, до census '
-            "#1121). Боевой проход пока даёт [FAIL] для строки."
+            "Единица портфолио JSON (#1121), можно несколько: "
+            '{"type":"image","photo_id":"..."} или '
+            '{"type":"link","title":"...","url":"..."}. Схема по census '
+            "2026-09-12/14: ролей/периодов/описания в UI hh.ru нет; изображение — "
+            "только выбор уже загруженного в галерею (/applicant/gallery) фото; "
+            "UI для ссылок не существует — link-строки дают [FAIL] fail-fast. "
+            "Image-строка: выбор работы в модалке + Сохранить + readback."
         ),
     )
     parser.add_argument(
@@ -116,13 +127,15 @@ _TYPED_BLOCK_SPECS = {
     # #1120: сертификаты — реализованный блок (census 2026-09-12), как
     # --attestation/--recommendation: типизированный dataclass + fill-row.
     "--certificate": ("certificates", ("name", "year", "url"), Certificate),
+    # --portfolio типизирован по census 2026-09-12/14 (#1121): JSON-ключ type →
+    # PortfolioItem.kind, специфичная валидация — validate_portfolio_item.
+    "--portfolio": ("portfolio", ("type", "photo_id", "title", "url"), PortfolioItem),
 }
-# CLI-флаг → имя блока MANUAL_BLOCK_SCHEMAS (#1118).  --certificate
-# переехал в _TYPED_BLOCK_SPECS (#1120) — остались только нереализованные
-# блоки; их боевой проход по-прежнему честно failed.
+# CLI-флаг → имя блока MANUAL_BLOCK_SCHEMAS (#1118).  --certificate и
+# --portfolio переехали в _TYPED_BLOCK_SPECS (#1120, #1121) — остались только
+# нереализованные блоки; их боевой проход по-прежнему честно failed.
 _MANUAL_FLAGS = {
     "--contact": "contact",
-    "--portfolio": "portfolio",
     "--link": "link",
 }
 
@@ -172,6 +185,12 @@ def _parse_manual_sections(args: argparse.Namespace):
             item = parse_item(flag, raw)
             check_fields(flag, item, fields)
             record = builder(*(_text(item.get(key)) for key in fields))
+            if block == "portfolio":
+                reason = validate_portfolio_item(
+                    record.kind, record.photo_id, record.title, record.url
+                )
+                if reason:
+                    raise ValueError(f"{flag}: {reason}")
             if not any(record.__dict__.values()):
                 raise ValueError(f"{flag} содержит пустую запись")
             items.append(record)
@@ -202,7 +221,13 @@ def _parse_manual_sections(args: argparse.Namespace):
             if not any(values.values()):
                 raise ValueError(f"{flag} содержит пустую запись")
             rows.append(ManualRow(block=block, fields=values))
-    if not plan.attestations and not plan.recommendations and not plan.certificates and not rows:
+    if (
+        not plan.attestations
+        and not plan.recommendations
+        and not plan.certificates
+        and not plan.portfolio
+        and not rows
+    ):
         raise ValueError(
             "укажите хотя бы один ручной флаг: "
             "--attestation, --recommendation, --contact, --certificate, "
@@ -300,6 +325,7 @@ def run(args: argparse.Namespace) -> None:
         OUTCOME_FAILED,
         OUTCOME_PLANNED,
         RowOutcome,
+        _portfolio_row,
         apply_plan,
         generate_plan,
     )
@@ -375,16 +401,23 @@ def run(args: argparse.Namespace) -> None:
         f"Аттестаций: {len(plan.attestations)}, рекомендаций: {len(plan.recommendations)}, "
         f"сертификатов: {len(plan.certificates)}, "
         f"контактов: {len(plan.contacts)}, "
+        f"единиц портфолио: {len(plan.portfolio)}, "
         f"ручных строк новых блоков: {len(plan.manual)}"
     )
     for row in plan.manual:
         fields = "; ".join(f"{key}={value}" for key, value in row.fields.items() if value)
         print(f"[INFO] {row.block}: {fields}")
+    for item in plan.portfolio:
+        print(f"[INFO] portfolio: {_portfolio_row(item)}")
     if args.dry_run:
         print("[INFO] Ничего не отправлено.")
 
     supported = bool(
-        plan.attestations or plan.recommendations or plan.certificates or plan.contacts
+        plan.attestations
+        or plan.recommendations
+        or plan.certificates
+        or plan.contacts
+        or plan.portfolio
     )
     if not supported and not args.dry_run:
         # Браузер не запускаем: писать на hh.ru нечем.
@@ -419,6 +452,9 @@ def run(args: argparse.Namespace) -> None:
                 ],
                 "contacts": [
                     o for o in outcomes if o.block == "contacts" and o.status != OUTCOME_DUPLICATE
+                ],
+                "portfolio": [
+                    o for o in outcomes if o.block == "portfolio" and o.status != OUTCOME_DUPLICATE
                 ],
             }
         with launch_context(
