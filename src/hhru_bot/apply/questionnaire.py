@@ -22,6 +22,7 @@ from ..ai.questions import Question, extract_questions
 from ..browser import NotAuthenticated, goto_hh, require_authenticated_page
 from ..external_forms.detect import normalize
 from ..search import VacancyCard
+from .blockers import PostClickBlocker
 from .dedup import check_already_responded
 from .questions import detect_questions
 from .steps import (
@@ -184,6 +185,13 @@ def scan_questionnaire(
             # кликнули бы повторно (и повторный клик уже безопасно уйдёт в
             # ветку wait_apply_button → check_already_responded выше).
             return QuestionnaireScanResult(vacancy, ALREADY_RESPONDED, form_state.reason)
+        if isinstance(form_state, PostClickBlocker):
+            # #1134 (cycle-review): терминальный блокер (включая refusal
+            # лимита) — truthy-объект; без ветки дал бы UNKNOWN
+            # retryable=False с сообщением «форма не подтверждена», теряя
+            # причину. Вердикт тот же UNKNOWN, но с честным reason;
+            # retryable=False: ретрай упрётся в тот же терминальный отказ.
+            return QuestionnaireScanResult(vacancy, UNKNOWN, form_state.reason, retryable=False)
         if form_state is not True:
             return QuestionnaireScanResult(
                 vacancy,

@@ -34,6 +34,7 @@ from ..logging_setup import LOG_DIR
 from ..search import VacancyCard
 from ..vacancy_refresh import VacancyBodyCache, refresh_card
 from . import steps as apply_steps
+from .blockers import PostClickBlocker
 from .dedup import check_already_responded
 from .letter import CoverLetterProvider, render_cover_letter
 from .questions import detect_questions
@@ -244,6 +245,11 @@ def probe_vacancy(
             vacancy.title,
             navigation_result.reason,
         )
+        return ProbeResult(vacancy, False, navigation_result.reason, skipped=True)
+    if isinstance(navigation_result, PostClickBlocker):
+        # #1134 (cycle-review): терминальный блокер — truthy-объект, без этой
+        # ветки рефлексировал бы как «дошёл до формы» с дампом form_initial.
+        # Отказ лимита и остальные терминальные состояния — skip без дампа.
         return ProbeResult(vacancy, False, navigation_result.reason, skipped=True)
     if not navigation_result:
         reason = "форма отклика не отрисовалась — состояние формы не подтверждено"

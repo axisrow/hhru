@@ -390,6 +390,11 @@ def navigate_to_response_form(
         # формы; мгновенный определённый вердикт (stop_run, без verify и без
         # uncertain) вместо verify-пути серой зоны #207, сжигавшего вакансию.
         if limit_refusal_visible(page):
+            # Дамп отказа — единственный шанс поймать отрисованный DOM
+            # #1134: селектор data-qa до сих пор не подтверждён именно потому,
+            # что в прежних дампах узел отказа не сохранился.
+            if dump_diagnostics:
+                _dump_navigation_diagnostics(page, "limit_refusal", vacancy_id, run_id)
             logger.info(
                 "Клик по кнопке отклика получил отказ лимита откликов (#1134) — "
                 "текущий прогон остановлен"
@@ -404,6 +409,8 @@ def navigate_to_response_form(
     # #1134: гонку мог выиграть попап отказа лимита — он проверяется первым,
     # пока страница с текстом отказа ещё не покинута.
     if limit_refusal_visible(page):
+        if dump_diagnostics:
+            _dump_navigation_diagnostics(page, "limit_refusal", vacancy_id, run_id)
         logger.info(
             "Клик по кнопке отклика получил отказ лимита откликов (#1134) — "
             "текущий прогон остановлен"

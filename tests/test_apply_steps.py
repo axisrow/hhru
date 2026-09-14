@@ -1414,7 +1414,7 @@ def test_navigate_race_winner_limit_refusal_beats_one_click_marker():
     page.set_visible(vacancy_page.VACANCY_ALREADY_RESPONDED_AGAIN, True)
     page.refusal_visible = True
 
-    result = steps.navigate_to_response_form(page)
+    result = steps.navigate_to_response_form(page, dump_diagnostics=False)
 
     assert isinstance(result, PostClickBlocker)
     assert result.kind == "limit_exceeded"
