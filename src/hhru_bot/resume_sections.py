@@ -609,11 +609,10 @@ def _apply_contacts(
             raise PlaywrightError("contacts: readback открыл не тот редактор (uncertain)")
         _contacts_ready(page)
         uncertain: list[int] = []
+        details: list[str] = []
         for index, item in enumerate(items):
-            ok = (
-                page.locator(f"[data-qa='{CONTACT_FIELDS[item.type]}']").first.input_value()
-                == item.value
-            )
+            actual = page.locator(f"[data-qa='{CONTACT_FIELDS[item.type]}']").first.input_value()
+            ok = actual == item.value
             if ok and item.type == "phone" and item.comment:
                 ok = (
                     page.locator(f"[data-qa='{CONTACT_PHONE_COMMENT}']").first.input_value()
@@ -631,13 +630,21 @@ def _apply_contacts(
                     "contacts",
                     index,
                     OUTCOME_UPDATED if ok else OUTCOME_UNCERTAIN,
-                    "readback совпал" if ok else "readback не совпал",
+                    "readback совпал"
+                    if ok
+                    else f"readback не совпал: ожидалось {item.value!r}, получено {actual!r}",
                 )
             if not ok:
                 uncertain.append(index)
+                details.append(
+                    f"строка {index} ({item.type}): ожидалось {item.value!r}, получено {actual!r}"
+                )
         if uncertain:
             listed = ", ".join(str(index) for index in uncertain)
-            errors.append(f"contacts: readback не совпал для строк {listed} (uncertain)")
+            errors.append(
+                f"contacts: readback не совпал для строк {listed} (uncertain): "
+                + "; ".join(details)
+            )
     except (PlaywrightError, RuntimeError) as exc:
         # Ошибка до клика — обычный failed/retry; после save.click() — uncertain
         # независимо от текста исключения (readback goto может упасть по таймауту

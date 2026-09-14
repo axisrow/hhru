@@ -352,7 +352,8 @@ def test_contacts_readback_mismatch_marks_rows_uncertain(contacts_page):
 
     assert len(errors) == 1 and "uncertain" in errors[0]
     assert outcomes[0].status == OUTCOME_UNCERTAIN
-    assert outcomes[0].reason == "readback не совпал"
+    assert "ожидалось '+7 900'" in outcomes[0].reason
+    assert "получено '+7 000'" in outcomes[0].reason
 
 
 def test_contacts_readback_goto_timeout_marks_uncertain(contacts_page, monkeypatch):
