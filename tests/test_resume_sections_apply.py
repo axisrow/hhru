@@ -206,7 +206,11 @@ class FakeContactField:
     def input_value(self):
         if self._qa == self._page.readback_raises:
             raise PlaywrightTimeoutError("input_value недоступен")
-        return self._page.readback_values.get(self._qa, self._page.filled.get(self._qa, ""))
+        if self._page.saved:
+            # readback читает значение ПОСЛЕ save — подменяем через
+            # readback_values; до save поле хранит то, что ввели.
+            return self._page.readback_values.get(self._qa, self._page.filled.get(self._qa, ""))
+        return self._page.filled.get(self._qa, "")
 
     def get_attribute(self, name):  # noqa: ARG002
         return (
@@ -216,6 +220,12 @@ class FakeContactField:
         )
 
     def fill(self, value):
+        if self._qa == "resume-phone-cell_phone" and self._page.mask_rewrite_once:
+            # Боевой факт 2026-09-14: маска до гидратации «нормализует» значение
+            # в CN-пример; первый fill даёт мусор, ретрай после паузы — успех.
+            self._page.mask_rewrite_once = False
+            self._page.filled[self._qa] = "+86 138 00-13-80-00"
+            return
         self._page.filled[self._qa] = value
 
     def wait_for(self, *, state="visible", timeout=None):  # noqa: ARG002
@@ -263,9 +273,13 @@ class FakeContactsPage:
         self.filled: dict[str, str] = {}
         self.readback_values: dict[str, str] = {}
         self.readback_raises: str = ""
+        self.mask_rewrite_once: bool = False
         self.preferred = False
         self.saved = False
         self.closed = False
+
+    def wait_for_timeout(self, timeout):  # noqa: ARG002
+        pass
         self.cancelled = False
 
     def locator(self, selector: str):
@@ -325,6 +339,38 @@ def test_contacts_save_confirmed_by_readback(contacts_page):
     assert contacts_page.saved and contacts_page.closed and contacts_page.preferred
     assert [o.status for o in outcomes] == [OUTCOME_UPDATED, OUTCOME_UPDATED]
     assert all("readback совпал" in o.reason for o in outcomes)
+
+
+def test_contacts_phone_readback_tolerates_country_prefix(contacts_page):
+    # Боевой факт 2026-09-14: маска хранит номер с другим кодом страны —
+    # readback сравнивает национальные цифры (последние 10), не строки.
+    contacts_page.readback_values = {"resume-phone-cell_phone": "8 999 000-11-22"}
+    items = [resume_sections.Contact(type="phone", value="+7 999 000-11-22")]
+    outcomes = [RowOutcome("contacts", 0, OUTCOME_PLANNED)]
+
+    errors = _apply_contacts(
+        contacts_page, "test-resume-id", items, dry_run=False, outcomes=outcomes
+    )
+
+    assert errors == []
+    assert [o.status for o in outcomes] == [OUTCOME_UPDATED]
+
+
+def test_contacts_mask_rewrite_is_retried_before_save(contacts_page):
+    # Боевой факт 2026-09-14: fill до гидратации маски даёт CN-мусор
+    # (+86 138 00-13-80-00); фича обязана перезаполнить и сверить цифры
+    # ДО клика save, иначе на hh.ru уезжает мусор.
+    contacts_page.mask_rewrite_once = True
+    items = [resume_sections.Contact(type="phone", value="+7 999 000-11-22")]
+    outcomes = [RowOutcome("contacts", 0, OUTCOME_PLANNED)]
+
+    errors = _apply_contacts(
+        contacts_page, "test-resume-id", items, dry_run=False, outcomes=outcomes
+    )
+
+    assert errors == []
+    assert contacts_page.filled["resume-phone-cell_phone"] == "+7 999 000-11-22"
+    assert [o.status for o in outcomes] == [OUTCOME_UPDATED]
 
 
 def test_contacts_save_wait_timeout_marks_all_uncertain(contacts_page):

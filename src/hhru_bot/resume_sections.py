@@ -523,6 +523,31 @@ def _on_contacts_route(page: Page, resume_id: str) -> bool:
     return SECTION_ROUTES["contacts"](resume_id).fullmatch(current_path) is not None
 
 
+def _national_digits(value: str) -> str:
+    """Цифры значения без кода страны: маска hh.ru может хранить номер с
+    префиксом 7/8/86 — сравниваем по последним 10 цифрам (боевой факт
+    2026-09-14, testing: маска переформатирует ввод, строковое сравнение
+    ложно падает)."""
+    return re.sub(r"\D", "", value)[-10:]
+
+
+def _fill_phone_masked(page: Page, field: Locator, value: str) -> None:
+    """Маско-устойчивый fill телефона (боевой факт 2026-09-14): fill до
+    гидратации маски приводит к тому, что маска «нормализует» значение в
+    мусорный CN-пример (+86 138 00-13-80-00). После каждого fill сверяем
+    цифры; не совпало — пауза на гидратацию и ретрай, после трёх неудач —
+    явный отказ ДО клика save (безопасный failed, не uncertain)."""
+    for _ in range(3):
+        field.fill(value)
+        page.wait_for_timeout(600)
+        if _national_digits(field.input_value()) == _national_digits(value):
+            return
+    raise RuntimeError(
+        f"contacts: телефонная маска не приняла значение {value!r} "
+        f"(прочитано {field.input_value()!r})"
+    )
+
+
 def _apply_contacts(
     page: Page,
     resume_id: str,
@@ -568,7 +593,10 @@ def _apply_contacts(
             field = page.locator(f"[data-qa='{CONTACT_FIELDS[item.type]}']")
             if field.count() != 1:
                 raise RuntimeError(f"contacts: поле {item.type} не найдено однозначно")
-            _fill(field, item.value)
+            if item.type == "phone":
+                _fill_phone_masked(page, field, item.value)
+            else:
+                _fill(field, item.value)
             if item.type == "phone" and item.comment:
                 comment = page.locator(f"[data-qa='{CONTACT_PHONE_COMMENT}']")
                 if comment.count() != 1:
@@ -612,7 +640,13 @@ def _apply_contacts(
         details: list[str] = []
         for index, item in enumerate(items):
             actual = page.locator(f"[data-qa='{CONTACT_FIELDS[item.type]}']").first.input_value()
-            ok = actual == item.value
+            # Телефон сравниваем по национальным цифрам (маска переформатирует
+            # строку), email — строго по строке (боевой факт 2026-09-14).
+            ok = (
+                _national_digits(actual) == _national_digits(item.value)
+                if item.type == "phone"
+                else actual == item.value
+            )
             if ok and item.type == "phone" and item.comment:
                 ok = (
                     page.locator(f"[data-qa='{CONTACT_PHONE_COMMENT}']").first.input_value()
