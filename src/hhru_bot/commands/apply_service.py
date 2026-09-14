@@ -31,6 +31,7 @@ from ..apply.antibot import AntiBotChallengeDetected, raise_for_antibot
 from ..apply.letter import CoverLetterProvider
 from ..apply.verify import verify_response_in_negotiations
 from ..blacklist import match as blacklist_match
+from ..browser import GotoWatchdogTimeout
 from ..config import AppConfig, ResumeConfig, SearchFilters, is_resume_url_placeholder
 from ..config_sections.scoring import ScoringWeights
 from ..copy_resume import resolve_numeric_resume_ids
@@ -998,6 +999,25 @@ def _execute_apply_wave(
                     history, params.approved, exc=exc, action_reserved=action_id is not None
                 )
             raise
+        except GotoWatchdogTimeout as exc:
+            # #1130: фатальная классификация. Wall-clock watchdog прервал
+            # блокированный вызов — состояние драйвера/страницы недостоверно,
+            # работать с ней дальше (следующие вакансии, следующая волна)
+            # нельзя. Вакансия финализируется fail-closed uncertain (клик мог
+            # уйти — см. #176/#207), затем прогон останавливается: пересборка
+            # контекста — следующий запуск команды. Тот же маппинг review-
+            # очереди, что в ветке AntiBot выше.
+            if action_id is not None:
+                history.finalize_action(action_id, "uncertain", str(exc), reason_code="uncertain")
+            if approved_item:
+                _finish_approved_review(
+                    history, params.approved, exc=exc, action_reserved=action_id is not None
+                )
+            print(
+                f"[FAIL] {exc} — прогон остановлен; "
+                "следующий запуск начнётся с пересобранного браузерного контекста"
+            )
+            raise ApplyRunStopped(str(exc)) from exc
         except BaseException as exc:
             # A claimed review must never remain permanently in ``applying``
             # when the browser/pipeline fails before returning a result.

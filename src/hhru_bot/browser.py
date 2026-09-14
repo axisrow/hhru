@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import logging
 import re
+import signal
+import threading
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -336,6 +338,135 @@ _GOTO_MAX_ATTEMPTS = 3
 _GOTO_BACKOFF_SECONDS = 2.0
 
 
+class GotoWatchdogTimeout(Exception):
+    """#1130: wall-clock watchdog прервал блокированный вызов Playwright.
+
+    Driver-side таймеры Playwright — не жёсткая гарантия (инцидент 2026-09-13:
+    под memory pressure pending-вызов не получил ни ответа, ни ошибки, событийный
+    цикл стоял, процесс жил). Исключение НЕ подкласс PlaywrightError намеренно:
+    ретраи goto_hh и обработчики шагов классифицируют PlaywrightError как
+    обычный сетевой сбой и продолжают работать с той же страницей. После
+    срабатывания watchdog состояние драйвера/страницы недостоверно — исход
+    фатальный, ни один вызов не ретраится. Пересборка контекста выполняется
+    следующим запуском команды: CLI завершает прогон с понятным [FAIL] и
+    exit 1, а open-вакансии финализируются fail-closed uncertain.
+    """
+
+
+def _wall_clock_alarm(signum, frame) -> None:  # noqa: ARG001
+    raise GotoWatchdogTimeout(
+        f"wall-clock watchdog ({_GUARD_CURRENT_OP}): блокированный вызов "
+        "браузера не вернулся в отведённое время (#1130); состояние "
+        "драйвера недостоверно"
+    )
+
+
+#: Метка текущей охраняемой операции — в сообщение фатального исхода,
+#: чтобы [FAIL]-вывод различал зависший goto и зависшую verify-фазу.
+_GUARD_CURRENT_OP = "unknown"
+
+
+#: Глубина вложения активных wall_clock_guard'ов (главный поток, один таймер).
+_GUARD_DEPTH = 0
+
+
+@contextmanager
+def wall_clock_guard(seconds: float, *, what: str = "операция"):
+    """Wall-clock предохранитель вокруг блокирующего вызова (#1130).
+
+    SIGALRM-based: единственный способ прервать зависший вызов синхронного
+    Playwright API, чьи driver-side таймеры под memory pressure могут не
+    сработать вовсе. Ограничения и семантика:
+
+    * работает только в главном потоке POSIX-процесса (там живёт sync API
+      этого проекта); вне главного потока или без SIGALRM — no-op (guard не
+      может дать гарантий, но и сломать работу не должен);
+    * чужой обработчик SIGALRM не отбирается: если уже установлен не наш и
+      не дефолтный обработчик, guard — no-op;
+    * вложенные guard'ы (кап verify-фазы в pipeline вокруг попыток goto):
+      таймер live только у ВНЕШНЕГО guard'а. Внутренние его не трогают и не
+      восстанавливают — внешний таймер срабатывает не позже любого
+      внутреннего бюджета, поэтому переустановка (и особенно ре-арм остатка
+      при выходе, cycle-review PR #1136) открывает гонку: будильник,
+      взведённый на микросекунды остатка, выстреливает уже ПОСЛЕ выхода из
+      всех guard'ов — во входе следующего guard'а или в чужом коде, и на
+      Python 3.12 оборачивается RuntimeError "generator raised StopIteration"
+      внутри contextlib (упало в CI linux/py3.12). Один таймер на самый
+      внешний бюджет: кап verify-фазы перекрывает бюджет попытки goto —
+      ровно требуемая семантика #1130. ПРЕДУСЛОВИЕ (review PR #1136):
+      вложенный guard корректен, только пока его бюджет не короче
+      оставшегося внешнего — иначе внутренний бюджет молча теряется
+      (таймер внешний выстрелит позже). Инвариант проверяется безусловным
+      raise (не assert: под python -O assert исчезает); инвертировать
+      порядок бюджетов (внешний > внутреннего) нельзя без пересмотра
+      дизайна «один таймер».
+    * ДВЕ ЛОВУШКИ для будущих использований (review PR #1136): (а) внутри
+      активного guard'а НЕЛЬЗЯ глотать GotoWatchdogTimeout (`except
+      Exception` вокруг goto_hh) — таймер одноразовый и не перезаряжается,
+      проглоченный тик оставляет область без защиты до её конца (ровно
+      вечное зависание из #1130); фатальный класс пробрасывается
+      финализаторами в _execute_apply_wave намеренно. (б) seconds <= 0
+      означает «без защиты» (setitimer(0) — disarm), а не «мгновенный
+      тик»: отключающим значением VERIFY_PHASE_CAP_SECONDS защиту #1130
+      не выключают.
+    """
+    global _GUARD_DEPTH, _GUARD_CURRENT_OP
+    if not hasattr(signal, "SIGALRM") or threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    foreign = previous_handler not in (signal.SIG_DFL, signal.SIG_IGN, _wall_clock_alarm)
+    if foreign:
+        yield
+        return
+    _GUARD_DEPTH += 1
+    previous_op = _GUARD_CURRENT_OP
+    _GUARD_CURRENT_OP = what
+    try:
+        if _GUARD_DEPTH > 1:
+            # Вложенный guard: внешний таймер уже живёт и сработает не позже
+            # ЛЮБОГО внутреннего бюджета — иначе см. предусловие в докстринге.
+            # Оставшееся время внешнего читаем из getitimer, а НЕ из
+            # time.monotonic: горячий путь goto_hh не должен зависеть от
+            # монотонных часов — тесты патчат time.monotonic конечными
+            # итераторами, и StopIteration внутри генератора contextlib
+            # оборачивается RuntimeError "generator raised StopIteration"
+            # (упало в CI linux/py3.12, PR #1136).
+            remaining = signal.getitimer(signal.ITIMER_REAL)[0]
+            if seconds < remaining:
+                raise AssertionError(
+                    "wall_clock_guard: вложенный бюджет "
+                    f"{seconds}s короче оставшегося внешнего капа "
+                    f"({remaining}s) — внутренний бюджет был бы потерян"
+                )
+            yield
+            return
+        signal.signal(signal.SIGALRM, _wall_clock_alarm)
+        signal.setitimer(signal.ITIMER_REAL, seconds)
+        try:
+            yield
+        finally:
+            # Будильник может выстрелить в момент самого разоружения (гонка
+            # последнего тика с finally): если дать исключению выйти отсюда,
+            # оно срежет unwind генератора contextlib и на py3.12 оборачивается
+            # RuntimeError "generator raised StopIteration" (упало в CI
+            # linux/py3.12, PR #1136). Мы всё равно выходим — поздний тик
+            # глотаем и разоружаем до конца. Таймер one-shot (interval 0),
+            # поздний тик максимум один — suppress достаточен.
+            with suppress(GotoWatchdogTimeout):
+                signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, previous_handler)
+    finally:
+        _GUARD_CURRENT_OP = previous_op
+        _GUARD_DEPTH -= 1
+
+
+# #1130: wall-clock бэкстоп вокруг каждой попытки goto. Обычно не стреляет:
+# driver-side таймаут (GOTO_TIMEOUT_MS) срабатывает раньше; watchdog —
+# предохранитель на случай его молчаливого отказа (инцидент 2026-09-13).
+_GOTO_WALL_CLOCK_SECONDS = 105.0
+
+
 def goto_hh(page: Page, url: str, *, ready_selector: str | None = None) -> None:
     """page.goto с retry и готовностью страницы hh.ru (#80).
 
@@ -398,7 +529,11 @@ def goto_hh(page: Page, url: str, *, ready_selector: str | None = None) -> None:
         try:
             try:
                 try:
-                    page.goto(url, wait_until="domcontentloaded")
+                    # #1130: wall-clock бэкстоп поверх driver-side таймаута —
+                    # GotoWatchdogTimeout (не PlaywrightError) не ретраится и
+                    # не классифицируется как сетевой сбой (см. докстринг).
+                    with wall_clock_guard(_GOTO_WALL_CLOCK_SECONDS, what="page.goto"):
+                        page.goto(url, wait_until="domcontentloaded")
                 except (PlaywrightTimeoutError, PlaywrightError) as exc:
                     # #749 code-review round 1: throttled-классификация
                     # применима ТОЛЬКО к самому goto() (докачке тела

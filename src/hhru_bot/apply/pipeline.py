@@ -20,7 +20,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
 from ..ai.questions import AIQuestionAnswerer, AnswerProposal, extract_questions
-from ..browser import goto_hh, require_authenticated_page
+from ..browser import GotoWatchdogTimeout, goto_hh, require_authenticated_page, wall_clock_guard
 from ..history import SKIP_REASONS, History
 from ..search import VacancyCard
 from ..vacancy_refresh import VacancyBodyCache, refresh_card
@@ -36,6 +36,29 @@ from .success import wait_success_confirmation
 from .verify import ResponseVerifier
 
 logger = logging.getLogger("hhru_bot.apply")
+
+#: #1130: wall-clock кап на всю verify-фазу одной вакансии. Оба вызова внешней
+#: проверки (блокеры после навигации и _finalize_post_click_failure) идут под
+#: ним: если внутри завис даже wall-clock-бэкстоп goto_hh (или парс SSR),
+#: GotoWatchdogTimeout прерывает фазу, а существующие обработчики финализируют
+#: вакансию fail-closed uncertain — вместо вечного зависания прогона. Бюджет
+#: по мнению владельца (#1130) — порядок десятков секунд, не минут: две
+#: быстрые попытки + 10с poll-интервал умещаются, зависший goto режется на
+#: капе. Таймер live только у внешнего guard'а: кап здесь — внешний, budget
+#: попытки goto (105с) внутри НЕ переустанавливает его и НЕ ре-армится
+#: (см. «один таймер» в докстринге wall_clock_guard; Clamp/restore-механика
+#: удалена — она давала гонку позднего тика, CI linux/py3.12).
+VERIFY_PHASE_CAP_SECONDS = 60.0
+
+
+def _verify_with_cap(ctx: ApplyContext):
+    """Внешняя проверка отклика под wall-clock капом (#1130)."""
+    assert ctx.verifier is not None  # вызывающие ветки уже отсекли None
+    with wall_clock_guard(
+        VERIFY_PHASE_CAP_SECONDS,
+        what="внешняя верификация /applicant/negotiations",
+    ):
+        return ctx.verifier(ctx.page, ctx.vacancy.vacancy_id, ctx.resume_id)
 
 
 @dataclass
@@ -307,8 +330,14 @@ def _finalize_blocker(ctx: ApplyContext, blocker: PostClickBlocker) -> ApplyResu
     if not blocker.post_navigation or ctx.dry_run or ctx.verifier is None:
         return _verdict()
     try:
-        verified = ctx.verifier(ctx.page, ctx.vacancy.vacancy_id, ctx.resume_id)
+        verified = _verify_with_cap(ctx)
     except AntiBotChallengeDetected:
+        raise
+    except GotoWatchdogTimeout:
+        # #1130 (review PR #1136): фатальный класс — состояние драйвера
+        # недостоверно, «продолжить следующей вакансией» нельзя. Не глотаем
+        # в общий fail-closed обработчик: проброс идёт в _execute_apply_wave,
+        # который финализирует action uncertain и останавливает прогон.
         raise
     except Exception as exc:  # noqa: BLE001
         # Как и в _finalize_post_click_failure: сбой самой проверки — это
@@ -381,10 +410,16 @@ def _finalize_post_click_failure(ctx: ApplyContext, reason: str) -> ApplyResult:
     if ctx.verifier is None:
         return ctx.fail(reason)
     try:
-        verdict = ctx.verifier(ctx.page, ctx.vacancy.vacancy_id, ctx.resume_id)
+        verdict = _verify_with_cap(ctx)
     except AntiBotChallengeDetected:
         # A confirmed challenge is terminal, unlike an arbitrary verifier
         # crash. The pre-submit audit reservation remains fail-closed uncertain.
+        raise
+    except GotoWatchdogTimeout:
+        # #1130 (review PR #1136): фатальный класс — как в _finalize_blocker
+        # выше. Проброс в _execute_apply_wave: action финализируется uncertain
+        # там же, но прогон останавливается, а не идёт дальше с недостоверным
+        # драйвером.
         raise
     except Exception as exc:  # noqa: BLE001
         # #207: сбой самой внешней проверки не должен обрывать apply до записи
