@@ -131,9 +131,12 @@ def test_guard_outside_main_thread_is_noop():
     assert result == {"ok": True}
 
 
-def test_verify_phase_cap_finalizes_vacancy_uncertain(monkeypatch):
-    """#1130: зависшая verify-фаза прерывается капом — вакансия uncertain,
-    прогон финализируется, а не висит вечно."""
+def test_verify_phase_cap_is_fatal_and_propagates(monkeypatch):
+    """#1130 + review PR #1136: зависшая verify-фаза прерывается капом;
+    GotoWatchdogTimeout фатален — пробрасывается из финализатора в
+    _execute_apply_wave (финализирует uncertain и останавливает прогон),
+    а не глотается общим fail-closed обработчиком с продолжением прогона
+    на недостоверном драйвере."""
     monkeypatch.setattr(apply_pipeline, "VERIFY_PHASE_CAP_SECONDS", 0.3)
 
     def _hung_verifier(page, vacancy_id, resume_id):  # noqa: ANN001, ARG002
@@ -149,8 +152,14 @@ def test_verify_phase_cap_finalizes_vacancy_uncertain(monkeypatch):
         acted=True,
         verifier=_hung_verifier,
     )
-    result = apply_pipeline._finalize_post_click_failure(ctx, "navigate timeout")
-    assert result.success is False
-    assert result.acted is True
-    assert result.uncertain is True
-    assert "watchdog" in result.reason or "wall-clock" in result.reason
+    with pytest.raises(GotoWatchdogTimeout):
+        apply_pipeline._finalize_post_click_failure(ctx, "navigate timeout")
+
+
+def test_nested_guard_asserts_shorter_than_outer():
+    """Review PR #1136: вложенный бюджет короче внешнего капа — громкий
+    AssertionError, а не молчаливая потеря внутреннего бюджета."""
+    with pytest.raises(AssertionError):
+        with wall_clock_guard(1.0):
+            with wall_clock_guard(0.2):
+                pass

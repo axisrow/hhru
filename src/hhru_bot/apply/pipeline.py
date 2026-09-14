@@ -20,7 +20,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
 from ..ai.questions import AIQuestionAnswerer, AnswerProposal, extract_questions
-from ..browser import goto_hh, require_authenticated_page, wall_clock_guard
+from ..browser import GotoWatchdogTimeout, goto_hh, require_authenticated_page, wall_clock_guard
 from ..history import SKIP_REASONS, History
 from ..search import VacancyCard
 from ..vacancy_refresh import VacancyBodyCache, refresh_card
@@ -331,6 +331,12 @@ def _finalize_blocker(ctx: ApplyContext, blocker: PostClickBlocker) -> ApplyResu
         verified = _verify_with_cap(ctx)
     except AntiBotChallengeDetected:
         raise
+    except GotoWatchdogTimeout:
+        # #1130 (review PR #1136): фатальный класс — состояние драйвера
+        # недостоверно, «продолжить следующей вакансией» нельзя. Не глотаем
+        # в общий fail-closed обработчик: проброс идёт в _execute_apply_wave,
+        # который финализирует action uncertain и останавливает прогон.
+        raise
     except Exception as exc:  # noqa: BLE001
         # Как и в _finalize_post_click_failure: сбой самой проверки — это
         # «не смогли проверить», а не «отклика нет». Fail-closed.
@@ -406,6 +412,12 @@ def _finalize_post_click_failure(ctx: ApplyContext, reason: str) -> ApplyResult:
     except AntiBotChallengeDetected:
         # A confirmed challenge is terminal, unlike an arbitrary verifier
         # crash. The pre-submit audit reservation remains fail-closed uncertain.
+        raise
+    except GotoWatchdogTimeout:
+        # #1130 (review PR #1136): фатальный класс — как в _finalize_blocker
+        # выше. Проброс в _execute_apply_wave: action финализируется uncertain
+        # там же, но прогон останавливается, а не идёт дальше с недостоверным
+        # драйвером.
         raise
     except Exception as exc:  # noqa: BLE001
         # #207: сбой самой внешней проверки не должен обрывать apply до записи
