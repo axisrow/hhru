@@ -23,6 +23,7 @@ from .browser import (
     labelled_field,
     open_hydrated_resume_editor,
 )
+from .negotiations_probe import parse_initial_state
 
 if TYPE_CHECKING:
     from .config_sections.ai_profile import AIProfile
@@ -967,6 +968,54 @@ PORTFOLIO_MODAL_SAVE = "[data-qa='resume-modal-button-save']"
 PORTFOLIO_MODAL_CHECKBOX = "[data-qa='modal-overlay'] input[type='checkbox']"
 
 
+def _portfolio_entry_ids(node: object) -> set[str]:
+    """Строковые id из SSR-массива portfolio (записи наблюдались dict)."""
+    ids: set[str] = set()
+    if not isinstance(node, list):
+        return ids
+    for entry in node:
+        if isinstance(entry, str):
+            ids.add(entry)
+        elif isinstance(entry, dict):
+            value = entry.get("id")
+            if isinstance(value, str | int):
+                ids.add(str(value))
+    return ids
+
+
+def _walk_portfolio_ids(node: object) -> set[str]:
+    """Собирает id из ВСЕХ ключей 'portfolio' в дереве SSR-состояния.
+
+    Путь внутри HH-Lux-InitialState не фиксируем: лишний ключ в другом месте
+    дерева мог бы дать ложный пропуск, фиксированный — ложный отказ при дрейфе
+    обёртки. Совпадение photo_id с посторонним id невозможно: id — числовые
+    идентификаторы фото галереи.
+    """
+    ids: set[str] = set()
+    if isinstance(node, dict):
+        if "portfolio" in node:
+            ids |= _portfolio_entry_ids(node["portfolio"])
+        for value in node.values():
+            ids |= _walk_portfolio_ids(value)
+    elif isinstance(node, list):
+        for value in node:
+            ids |= _walk_portfolio_ids(value)
+    return ids
+
+
+def _ssr_portfolio_ids(html: str) -> set[str] | None:
+    """Readback портфолио по внешнему источнику — SSR HH-Lux-InitialState.
+
+    None = SSR не найден/битый (истина о записи недостижима); иначе —
+    множество id фото, которые SSR показывает в portfolio резюме.
+    """
+    try:
+        state = parse_initial_state(html)
+    except (ValueError, json.JSONDecodeError):
+        return None
+    return _walk_portfolio_ids(state)
+
+
 def _apply_portfolio(
     page: Page,
     items: list[PortfolioItem],
@@ -1064,7 +1113,16 @@ def _apply_portfolio(
     for checkbox_index, index in enumerate(image_indices):
         checkbox = checkboxes.nth(checkbox_index)
         try:
-            if not checkbox.is_checked():
+            if checkbox.is_checked():
+                continue
+            # Magritte-чекбокс управляется React-стейтом: check() инпута
+            # меняет только DOM-свойство (первый прогон 2026-09-14: «Сохранить»
+            # ушло с пустой выборкой). Кликаем по стилизованному контролу —
+            # ancestor label карточки, как делает человек.
+            card = checkbox.locator("xpath=ancestor::label[1]")
+            if card.count() == 1:
+                card.click()
+            else:
                 checkbox.check()
         except PlaywrightError as exc:
             _fail(index, f"чекбокс работы не выбран: {exc}", stop=True)
@@ -1087,22 +1145,31 @@ def _apply_portfolio(
             )
         return errors
 
-    # Readback именно этого резюме: перечитываем модалку — выбранные работы
-    # обязаны остаться выбранными после закрытия/переоткрытия.
-    goto_hh(page, f"{HH_BASE_URL}/resume/{resume_id}?edit=portfolio")
+    # Readback именно этого резюме по ВНЕШНЕМУ источнику — SSR-состоянию
+    # страницы резюме (как export): массив portfolio обязан содержать каждый
+    # photo_id. :checked модалки — не сигнал: первый прогон 2026-09-14 дал
+    # ложный appended, когда SSR уже показывал portfolio:[].
+    goto_hh(page, f"{HH_BASE_URL}/resume/{resume_id}")
     try:
-        save.wait_for(state="visible", timeout=FORM_TIMEOUT_MS)
-        readback = page.locator(f"{PORTFOLIO_MODAL_CHECKBOX}:checked")
-        checked = readback.count()
+        page_content = page.content()
     except PlaywrightError as exc:
         for index in image_indices:
-            _fail(index, f"readback модалки не прочитан: {exc}", stop=True)
+            _fail(index, f"readback не прочитан (uncertain): {exc}", stop=True)
         return errors
-    if checked != len(image_indices):
+    ssr_ids = _ssr_portfolio_ids(page_content)
+    wanted = {items[i].photo_id for i in image_indices}
+    if ssr_ids is None:
+        # SSR не прочитан — внешнее подтверждение недостижимо, fail-closed
+        # (тот же принцип, что у negotiations-вердиктов #207).
+        for index in image_indices:
+            _fail(index, "readback: SSR-состояние резюме не прочитано (uncertain)", stop=True)
+        return errors
+    if not wanted <= ssr_ids:
         for index in image_indices:
             _fail(
                 index,
-                f"readback: выбрано {checked} из {len(image_indices)} — запись не подтвердилась",
+                "readback SSR: массив portfolio резюме не содержит "
+                f"{sorted(wanted - ssr_ids)} — запись не подтвердилась (uncertain)",
                 stop=True,
             )
         return errors

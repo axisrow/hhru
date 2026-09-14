@@ -677,8 +677,10 @@ def test_manual_flag_invalid_json_and_non_object_fail() -> None:
 
 
 def test_manual_flag_empty_record_is_rejected() -> None:
+    # contact (#1119) — типизированная схема (type, value, comment, preferred):
+    # запись, у которой все поля пустые, отклоняется до браузера.
     with pytest.raises(ValueError, match="пустую запись"):
-        _parse_manual_sections(_manual_args(contact=['{"name": "", "value": " "}']))
+        _parse_manual_sections(_manual_args(contact=['{"comment": ""}']))
 
 
 def test_duplicate_manual_rows_yield_duplicate_outcome_without_second_row() -> None:
@@ -1248,10 +1250,18 @@ def test_portfolio_battle_image_row_appends_with_readback(monkeypatch) -> None:
     monkeypatch.setattr(resume_sections, "verify_portfolio_photos", lambda page, ids: {})
     monkeypatch.setattr(resume_sections, "has_login_form", lambda page: False)
 
+    class FakeCard:
+        def count(self):
+            return 1
+
+        def click(self):
+            # Magritte-чекбокс управляется React-стейтом: клик по карточке
+            # меняет стейт, а не только DOM-свойство инпута.
+            checkbox.checked = True
+
     class FakeCheckbox:
         def __init__(self):
             self.checked = False
-            self.clicks = 0
 
         def count(self):
             return 1
@@ -1262,46 +1272,114 @@ def test_portfolio_battle_image_row_appends_with_readback(monkeypatch) -> None:
         def is_checked(self):
             return self.checked
 
-        def check(self):
-            self.checked = True
+        def check(self):  # pragma: no cover - боевой путь идёт через карточку
+            raise AssertionError("check() не должен использоваться при живой карточке")
+
+        def locator(self, selector):  # noqa: ARG002
+            return FakeCard()
 
     class FakeSave:
-        def __init__(self, checkbox):
-            self._checkbox = checkbox
+        def __init__(self):
             self.clicks = 0
 
         def count(self):
             return 1
 
         def wait_for(self, *, state, timeout):  # noqa: ARG002
-            # Бой: после клика модалка закрывается; при readback-открытии
-            # выбранный чекбокс остаётся выбранным.
-            if state == "hidden" and self.clicks:
-                self._checkbox.checked = True
+            # Первое ожидание — отрисовка модалки, после клика — закрытие.
+            assert state in ("visible", "hidden") and (state == "visible") == (self.clicks == 0)
 
         def click(self):
             self.clicks += 1
 
     checkbox = FakeCheckbox()
-    save = FakeSave(checkbox)
+    save = FakeSave()
 
     def locator(sel):
         if sel == resume_sections.PORTFOLIO_MODAL_SAVE:
             return save
         if sel == resume_sections.PORTFOLIO_MODAL_CHECKBOX:
             return checkbox
-        if sel == f"{resume_sections.PORTFOLIO_MODAL_CHECKBOX}:checked":
-            return checkbox
         raise AssertionError(f"неожиданный селектор {sel}")
 
+    # Readback — внешний источник: SSR HH-Lux-InitialState страницы резюме,
+    # массив portfolio содержит привязанное фото.
+    ssr_html = (
+        '<html><body><template id="HH-Lux-InitialState">'
+        '{"resume":{"portfolio":[{"id":"199262192","title":"Работа"}]}}'
+        "</template></body></html>"
+    )
     page = MagicMock()
     page.locator.side_effect = locator
+    page.content.return_value = ssr_html
     items = [PortfolioItem("image", photo_id="199262192")]
     outcomes: list = [None]
     errors = _apply_portfolio(page, items, resume_id="r1", dry_run=False, outcomes=outcomes)
     assert errors == []
     assert outcomes[0].status == OUTCOME_APPENDED
     assert save.clicks == 1
+
+
+def test_portfolio_battle_readback_ssr_unreadable_fails_uncertain(monkeypatch) -> None:
+    """SSR не прочитан — внешнее подтверждение недостижимо: строки failed
+    с честной причиной uncertain, appended не ставится (fail-closed #207)."""
+    from hhru_bot.resume_sections import OUTCOME_FAILED, PortfolioItem, _apply_portfolio
+
+    monkeypatch.setattr(resume_sections, "verify_portfolio_photos", lambda page, ids: {})
+    monkeypatch.setattr(resume_sections, "has_login_form", lambda page: False)
+
+    class FakeCard:
+        def count(self):
+            return 1
+
+        def click(self):
+            pass
+
+    class FakeCheckbox:
+        def count(self):
+            return 1
+
+        def nth(self, index):  # noqa: ARG002
+            return self
+
+        def is_checked(self):
+            return False
+
+        def locator(self, selector):  # noqa: ARG002
+            return FakeCard()
+
+    class FakeSave:
+        def __init__(self):
+            self.clicks = 0
+
+        def count(self):
+            return 1
+
+        def wait_for(self, *, state, timeout):  # noqa: ARG002
+            # Первое ожидание — отрисовка модалки, после клика — закрытие.
+            assert state in ("visible", "hidden")
+
+        def click(self):
+            self.clicks += 1
+
+    save = FakeSave()
+
+    def locator(sel):
+        if sel == resume_sections.PORTFOLIO_MODAL_SAVE:
+            return save
+        if sel == resume_sections.PORTFOLIO_MODAL_CHECKBOX:
+            return FakeCheckbox()
+        raise AssertionError(f"неожиданный селектор {sel}")
+
+    page = MagicMock()
+    page.locator.side_effect = locator
+    page.content.return_value = "<html><body>нет SSR-состояния</body></html>"
+    items = [PortfolioItem("image", photo_id="199262192")]
+    outcomes: list = [None]
+    errors = _apply_portfolio(page, items, resume_id="r1", dry_run=False, outcomes=outcomes)
+    assert outcomes[0].status == OUTCOME_FAILED
+    assert "SSR-состояние резюме не прочитано" in outcomes[0].reason
+    assert errors
 
 
 def test_portfolio_outcomes_misalignment_is_loud() -> None:
