@@ -86,12 +86,11 @@ FIRST_SECTION_EDIT_PATHS = {
 EMPTY_SECTION_MARKERS = {
     "attestations": "[data-qa='suitable-vacancies-suggest-item-attestationEducation']",
     "recommendations": "[data-qa='suitable-vacancies-suggest-item-recommendation']",
-    # #1120 (census 2026-09-12): маркер пустого блока сертификатов live-НЕ
-    # подтверждён — у всех резюме основного конфига блок непуст, чипа
-    # suitable-vacancies-suggest-item-certificate ни на одном нет. Селектор
-    # повторяет подтверждённый паттерн attestation/recommendation; путь
-    # первой строки при пустом блоке остаётся fail-closed: маркер не найден
-    # однозначно -> RuntimeError -> строка failed, никакой записи.
+    # #1120: live-подтверждён боевой прогон 2026-09-14 — черновик qa-2
+    # (testing) с пустым блоком сертификатов рендерит чип
+    # suitable-vacancies-suggest-item-certificate, и путь первой строки
+    # (маркер → голый маршрут /resume/edit/<id>/certificate → save) создал
+    # строку с позитивным readback.
     "certificates": "[data-qa='suitable-vacancies-suggest-item-certificate']",
 }
 

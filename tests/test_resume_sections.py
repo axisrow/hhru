@@ -839,10 +839,46 @@ def test_certificate_row_fills_labels_and_saves_through_partial_edit() -> None:
     assert page.locator.call_args_list[-1].args[0] == "[data-qa='resume-partial-edit-save']"
 
 
+def test_sync_row_outcomes_propagates_verdicts_to_printed_list() -> None:
+    """Живой прогон #1120 (2026-09-14): outcome_map — срезы-копии; без
+    обратной синхронизации боевой appended в исходном списке оставался
+    «planned» и печатался неверно."""
+    from hhru_bot.commands.resume_sections import _sync_row_outcomes
+    from hhru_bot.resume_sections import OUTCOME_APPENDED
+
+    outcomes = [
+        RowOutcome("attestations", 0, OUTCOME_PLANNED),
+        RowOutcome("certificates", 0, OUTCOME_PLANNED),
+        RowOutcome("certificates", 1, OUTCOME_DUPLICATE, "повтор строки 0"),
+        RowOutcome("certificates", 2, OUTCOME_PLANNED),
+    ]
+    outcome_map = {
+        "attestations": [
+            RowOutcome("attestations", 0, OUTCOME_APPENDED, "сохранение подтверждено")
+        ],
+        "recommendations": [],
+        "certificates": [
+            RowOutcome("certificates", 0, OUTCOME_APPENDED, "сохранение подтверждено"),
+            RowOutcome("certificates", 2, OUTCOME_FAILED, "запись блока остановлена"),
+        ],
+    }
+
+    _sync_row_outcomes(outcomes, outcome_map)
+
+    assert [o.status for o in outcomes] == [
+        OUTCOME_APPENDED,
+        OUTCOME_APPENDED,
+        OUTCOME_DUPLICATE,
+        OUTCOME_FAILED,
+    ]
+    assert outcomes[0].reason == "сохранение подтверждено"
+
+
 def test_certificate_empty_marker_unconfirmed_stays_fail_closed(monkeypatch) -> None:
-    """#1120: маркер пустого блока сертификатов live-НЕ подтверждён (все
-    резюме конфига с блоком). Путь первой строки обязан отказать, а не
-    писать в непроверенное место."""
+    """Маркер пустого блока live-подтверждён 2026-09-14 (черновик qa-2,
+    testing). Тест держит сам страж: если маркер не найден однозначно,
+    путь первой строки обязан отказать, а не писать в непроверенное
+    место."""
     page = MagicMock()
     page.url = "https://hh.ru/resume/resume-id"
     no_rows = MagicMock()

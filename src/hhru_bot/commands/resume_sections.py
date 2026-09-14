@@ -221,6 +221,30 @@ def _print_outcomes(outcomes) -> int:
     return counts[OUTCOME_FAILED]
 
 
+def _sync_row_outcomes(outcomes, outcome_map) -> None:
+    """Перенести вердикты из копий outcome_map обратно в печатаемый список.
+
+    outcome_map собирается списковыми включениями (#1125) — это новые списки
+    из тех же RowOutcome; замены внутри _apply_rows (planned → appended/
+    failed) остаются в копиях. Здесь они в том же порядке переприсваиваются
+    исходному списку: по каждому блоку — последовательность не-дубликатов
+    совпадает с построением карты. Строки с дубликатами в карте отсутствуют
+    и не трогаются.
+    """
+    from ..resume_sections import OUTCOME_DUPLICATE, RowOutcome
+
+    pending = {block: list(rows) for block, rows in outcome_map.items()}
+    for index, outcome in enumerate(outcomes):
+        if outcome.status == OUTCOME_DUPLICATE:
+            continue
+        pool = pending.get(outcome.block)
+        if not pool:
+            continue
+        source = pool.pop(0)
+        if source is not outcome:
+            outcomes[index] = RowOutcome(outcome.block, outcome.index, source.status, source.reason)
+
+
 def run(args: argparse.Namespace) -> None:
     from ..browser import launch_context
     from ..config import ConfigError, load_config_or_exit
@@ -352,6 +376,14 @@ def run(args: argparse.Namespace) -> None:
                 dry_run=args.dry_run,
                 outcomes=outcome_map,
             )
+            if outcome_map is not None:
+                # Живой прогон #1120 (2026-09-14): outcome_map — срезы-КОПИИ,
+                # _apply_rows мутирует их, а печатается исходный список
+                # outcomes — appended/failed из боевого прохода терялись,
+                # строка оставалась «planned». Синхронизируем вердикты назад
+                # в порядке «не-дубликаты per-block» — ровно тот порядок,
+                # в котором карта строилась.
+                _sync_row_outcomes(outcomes, outcome_map)
         if errors:
             for error in errors:
                 prefix = "[FAIL] (uncertain)" if "uncertain" in error else "[FAIL]"
