@@ -59,9 +59,12 @@ def register(subparsers) -> None:
         action="append",
         metavar="JSON",
         help=(
-            "Контакт JSON (#1118), можно несколько: "
-            '\'{"name":..., "value":...}\' (схема предварительная, до census '
-            "#1119). Боевой проход пока даёт [FAIL] для строки."
+            "Контакт JSON (#1119, census-схема), можно несколько: "
+            '\'{"type":"phone|email", "value":..., "comment":... '
+            '(только phone), "preferred":true|false}\'. Замещает значение '
+            "поля формы; preferred=True максимум у одной строки. "
+            "Российский номер не принимается: hh.ru требует SMS-подтверждение. "
+            "Селекторы подтверждены census 2026-09-12."
         ),
     )
     parser.add_argument(
@@ -137,8 +140,10 @@ def _parse_manual_sections(args: argparse.Namespace):
         MANUAL_BLOCK_SCHEMAS,
         ManualRow,
         ResumeSectionsPlan,
+        RowOutcome,
         _dedupe,
         _text,
+        contacts_from_manual_rows,
         plan_from_rows,
     )
 
@@ -179,7 +184,21 @@ def _parse_manual_sections(args: argparse.Namespace):
         for raw in getattr(args, flag[2:], None) or []:
             item = parse_item(flag, raw)
             check_fields(flag, item, fields)
-            values = {key: _text(item.get(key)) for key in fields}
+            # Строгая типизация (cycle-review PR #1127): _text() молча превращает
+            # не-строки в "", что для preferred означало тихую ложь. JSON-bool
+            # принимается явно (help рекламирует "preferred":true), прочие
+            # не-строки — понятная ошибка вместо молчаливой инверсии смысла.
+            values = {}
+            for key in fields:
+                raw_value = item.get(key)
+                if isinstance(raw_value, bool):
+                    if key != "preferred":
+                        raise ValueError(f"{flag}: поле {key} должно быть строкой")
+                    values[key] = "true" if raw_value else "false"
+                elif raw_value is None or isinstance(raw_value, str):
+                    values[key] = _text(raw_value)
+                else:
+                    raise ValueError(f"{flag}: поле {key} должно быть строкой")
             if not any(values.values()):
                 raise ValueError(f"{flag} содержит пустую запись")
             rows.append(ManualRow(block=block, fields=values))
@@ -191,8 +210,21 @@ def _parse_manual_sections(args: argparse.Namespace):
         )
     if rows:
         manual_plan, manual_outcomes = plan_from_rows(rows)
-        plan.manual = manual_plan.manual
-        outcomes.extend(manual_outcomes)
+        # Блок contact (#1119): census-схема реализована — строки переносятся
+        # из manual в типизированные plan.contacts; конфликты схемы (два
+        # значения одного поля, два preferred) — явная ошибка до запуска
+        # браузера.
+        contact_rows = [row for row in manual_plan.manual if row.block == "contact"]
+        plan.contacts = contacts_from_manual_rows(contact_rows)
+        plan.manual = [row for row in manual_plan.manual if row.block != "contact"]
+        # Исходы контактных строк переименовываются в "contacts" — под этим
+        # именем блок читают outcome_map в run() и таблица итогов; ключ
+        # MANUAL_BLOCK_SCHEMAS ("contact") наружу не протекает
+        # (cycle-review PR #1127).
+        outcomes.extend(
+            RowOutcome("contacts", o.index, o.status, o.reason) if o.block == "contact" else o
+            for o in manual_outcomes
+        )
     return plan, outcomes
 
 
@@ -204,12 +236,21 @@ def _print_outcomes(outcomes) -> int:
         OUTCOME_DUPLICATE,
         OUTCOME_FAILED,
         OUTCOME_PLANNED,
+        OUTCOME_UNCERTAIN,
+        OUTCOME_UPDATED,
     )
 
     rows = [[o.block, str(o.index), o.status, o.reason] for o in outcomes]
     counts = {
         status: sum(1 for o in outcomes if o.status == status)
-        for status in (OUTCOME_APPENDED, OUTCOME_PLANNED, OUTCOME_DUPLICATE, OUTCOME_FAILED)
+        for status in (
+            OUTCOME_APPENDED,
+            OUTCOME_PLANNED,
+            OUTCOME_UPDATED,
+            OUTCOME_DUPLICATE,
+            OUTCOME_UNCERTAIN,
+            OUTCOME_FAILED,
+        )
     }
     footer = [
         "Итого",
@@ -218,7 +259,9 @@ def _print_outcomes(outcomes) -> int:
         "",
     ]
     print(_ascii_table(["Блок", "#", "Исход", "Причина"], rows, footer=footer))
-    return counts[OUTCOME_FAILED]
+    # uncertain (#176) — тоже неуспех команды: действие могло выполниться,
+    # повтор безопасен, но прогон обязан завершиться видимым отказом.
+    return counts[OUTCOME_FAILED] + counts[OUTCOME_UNCERTAIN]
 
 
 def _sync_row_outcomes(outcomes, outcome_map) -> None:
@@ -311,6 +354,7 @@ def run(args: argparse.Namespace) -> None:
         outcomes = None
     # Блоки #1118 без реализованной формы: боевой проход честно failed —
     # частичный успех одного блока не выдаётся за успех всего (#1118 п.3).
+    # contact реализован census-схемой #1119 и в список unsupported не входит.
     if not args.dry_run:
         unsupported = [
             RowOutcome(
@@ -320,7 +364,8 @@ def run(args: argparse.Namespace) -> None:
                 "блок не реализован текущей формой (census — блоковые ишью "
                 "#1119-1122); запись не выполнялась",
             )
-            if o.status == OUTCOME_PLANNED and o.block in {b for b in _MANUAL_FLAGS.values()}
+            if o.status == OUTCOME_PLANNED
+            and o.block in {b for b in _MANUAL_FLAGS.values()} - {"contact", "contacts"}
             else o
             for o in (outcomes or [])
         ]
@@ -329,6 +374,7 @@ def run(args: argparse.Namespace) -> None:
         f"[{'DRY-RUN' if args.dry_run else 'INFO'}] "
         f"Аттестаций: {len(plan.attestations)}, рекомендаций: {len(plan.recommendations)}, "
         f"сертификатов: {len(plan.certificates)}, "
+        f"контактов: {len(plan.contacts)}, "
         f"ручных строк новых блоков: {len(plan.manual)}"
     )
     for row in plan.manual:
@@ -337,7 +383,9 @@ def run(args: argparse.Namespace) -> None:
     if args.dry_run:
         print("[INFO] Ничего не отправлено.")
 
-    supported = bool(plan.attestations or plan.recommendations or plan.certificates)
+    supported = bool(
+        plan.attestations or plan.recommendations or plan.certificates or plan.contacts
+    )
     if not supported and not args.dry_run:
         # Браузер не запускаем: писать на hh.ru нечем.
         if outcomes is not None:
@@ -369,6 +417,9 @@ def run(args: argparse.Namespace) -> None:
                     for o in outcomes
                     if o.block == "certificates" and o.status != OUTCOME_DUPLICATE
                 ],
+                "contacts": [
+                    o for o in outcomes if o.block == "contacts" and o.status != OUTCOME_DUPLICATE
+                ],
             }
         with launch_context(
             config.storage_state_file, headless=args.headless, user_agent=config.user_agent
@@ -398,6 +449,9 @@ def run(args: argparse.Namespace) -> None:
                 if not args.dry_run
                 else "[INFO] План корректен."
             )
+        # Слив исходов боевого прохода в outcomes выполняет _sync_row_outcomes
+        # внутри launch_context (см. выше) — дубль слива здесь убран
+        # (cycle-review PR #1127 r5).
     failed = 0
     if outcomes is not None:
         # Per-row контракт — честный итог: любой failed строки = неуспех команды.

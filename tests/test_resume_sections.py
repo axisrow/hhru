@@ -14,6 +14,10 @@ from hhru_bot.commands.resume_sections import _parse_manual_sections
 from hhru_bot.config import ConfigError
 from hhru_bot.config_sections.resume_sections import parse_resume_sections
 from hhru_bot.resume_sections import (
+    CONTACT_FIELDS,
+    CONTACT_PHONE_COMMENT,
+    CONTACT_PREFERRED_RADIO,
+    FIRST_SECTION_EDIT_PATHS,
     MANUAL_BLOCK_SCHEMAS,
     OUTCOME_APPENDED,
     OUTCOME_DUPLICATE,
@@ -645,18 +649,23 @@ def _manual_args(**flags: list[str] | None) -> Namespace:
 
 def test_manual_flags_build_plan_and_planned_outcomes() -> None:
     args = _manual_args(
-        contact=['{"name": "Telegram", "value": "@user"}'],
+        contact=['{"type": "phone", "value": "+66 84 999 000-00", "comment": "Вацап"}'],
         link=['{"name": "GitHub", "url": "https://github.com/x"}'],
     )
     plan, outcomes = _parse_manual_sections(args)
-    assert [row.block for row in plan.manual] == ["contact", "link"]
-    assert plan.manual[0].fields == {"name": "Telegram", "value": "@user"}
+    # contact (#1119) переехал из manual в типизированные contacts
+    assert [row.block for row in plan.manual] == ["link"]
+    assert plan.contacts == [
+        resume_sections.Contact(
+            type="phone", value="+66 84 999 000-00", comment="Вацап", preferred=False
+        )
+    ]
     assert [o.status for o in outcomes] == [OUTCOME_PLANNED, OUTCOME_PLANNED]
 
 
 def test_manual_flag_unknown_field_is_explicit_error_with_expected_fields() -> None:
     args = _manual_args(contact=['{"typo": "x"}'])
-    with pytest.raises(ValueError, match="неизвестные поля typo.*name, value"):
+    with pytest.raises(ValueError, match="неизвестные поля typo.*type, value, comment, preferred"):
         _parse_manual_sections(args)
 
 
@@ -674,10 +683,11 @@ def test_manual_flag_empty_record_is_rejected() -> None:
 
 def test_duplicate_manual_rows_yield_duplicate_outcome_without_second_row() -> None:
     args = _manual_args(
-        contact=['{"name": "Phone", "value": "+7"}', '{"value": "+7", "name": "Phone"}'],
+        contact=['{"type": "phone", "value": "+66"}', '{"value": "+66", "type": "phone"}'],
     )
     plan, outcomes = _parse_manual_sections(args)
-    assert len(plan.manual) == 1
+    assert len(plan.contacts) == 1
+    assert plan.manual == []
     assert [o.status for o in outcomes] == [OUTCOME_PLANNED, OUTCOME_DUPLICATE]
     assert outcomes[1].reason == "повтор строки 0"
 
@@ -710,6 +720,16 @@ def test_plan_from_rows_rejects_unknown_block() -> None:
     assert outcomes == [RowOutcome("vacancies", 0, OUTCOME_FAILED, "неизвестный блок 'vacancies'")]
 
 
+def test_print_outcomes_counts_uncertain_as_failure() -> None:
+    # cycle-review PR #1127: uncertain-исход обязан давать ненулевой итог
+    # команды, иначе [FAIL] (uncertain) печатается, а exit code == 0.
+    from hhru_bot.commands.resume_sections import _print_outcomes
+    from hhru_bot.resume_sections import OUTCOME_UNCERTAIN
+
+    failed = _print_outcomes([RowOutcome("contacts", 0, OUTCOME_UNCERTAIN, "readback не совпал")])
+    assert failed == 1
+
+
 def test_fail_tail_marks_remaining_rows_failed() -> None:
     outcomes = [
         RowOutcome("contact", 0, OUTCOME_APPENDED),
@@ -731,6 +751,134 @@ def test_manual_block_schemas_are_known_and_unique() -> None:
     for block, fields in MANUAL_BLOCK_SCHEMAS.items():
         assert fields, block
         assert len(set(fields)) == len(fields), block
+
+
+# --- блок контактов: census-схема #1119 ---------------------------------------
+
+
+def test_contact_unknown_type_is_explicit_error() -> None:
+    args = _manual_args(contact=['{"type": "telegram", "value": "@user"}'])
+    with pytest.raises(ValueError, match="type должен быть одним из email, phone"):
+        _parse_manual_sections(args)
+
+
+def test_contact_comment_on_email_is_rejected() -> None:
+    # fail-closed (#1119 census): в форме нет комментария у email
+    args = _manual_args(contact=['{"type": "email", "value": "a@b.c", "comment": "x"}'])
+    with pytest.raises(ValueError, match="comment допустим только для type=phone"):
+        _parse_manual_sections(args)
+
+
+def test_contact_bad_preferred_value_is_rejected() -> None:
+    args = _manual_args(contact=['{"type": "phone", "value": "+66", "preferred": "yes"}'])
+    with pytest.raises(ValueError, match="preferred принимает true/false"):
+        _parse_manual_sections(args)
+
+
+def test_contact_empty_value_is_rejected() -> None:
+    args = _manual_args(contact=['{"type": "email", "value": ""}'])
+    with pytest.raises(ValueError, match="value обязательно"):
+        _parse_manual_sections(args)
+
+
+@pytest.mark.parametrize("ru_value", ["+7 999 000-11-22", "8 999 000-11-22", "79990001122"])
+def test_contact_ru_phone_rejected_sms_gate(ru_value: str) -> None:
+    # Факт владельца (2026-09-14): RU-номер hh.ru подтверждает SMS —
+    # автоматическая запись невозможна, fail-closed до запуска браузера.
+    args = _manual_args(contact=[f'{{"type": "phone", "value": "{ru_value}"}}'])
+    with pytest.raises(ValueError, match="SMS-подтверждения"):
+        _parse_manual_sections(args)
+
+
+def test_contact_non_ru_phone_is_accepted() -> None:
+    args = _manual_args(contact=['{"type": "phone", "value": "+66 84 999 00-11"}'])
+    plan, _ = _parse_manual_sections(args)
+    assert plan.contacts == [resume_sections.Contact(type="phone", value="+66 84 999 00-11")]
+
+
+def test_contact_plus_8xx_country_codes_are_not_russian() -> None:
+    # cycle-review PR #1127 r5: +8xx с плюсом — другие страны (+86 Китай,
+    # +81 Япония, +84 Вьетнам, +880 Бангладеш); гейт отклоняет только 8
+    # БЕЗ плюса (транк-префикс РФ).
+    args = _manual_args(contact=['{"type": "phone", "value": "+86 138 0013-8000"}'])
+    plan, _ = _parse_manual_sections(args)
+    assert plan.contacts == [resume_sections.Contact(type="phone", value="+86 138 0013-8000")]
+
+
+def test_contact_trunk_8_without_plus_is_rejected() -> None:
+    args = _manual_args(contact=['{"type": "phone", "value": "8 999 000-11-22"}'])
+    with pytest.raises(ValueError, match="SMS-подтверждения"):
+        _parse_manual_sections(args)
+
+
+def test_contact_preferred_parses_and_lands_on_row() -> None:
+    args = _manual_args(contact=['{"type": "email", "value": "a@b.c", "preferred": "true"}'])
+    plan, _ = _parse_manual_sections(args)
+    assert plan.contacts == [resume_sections.Contact(type="email", value="a@b.c", preferred=True)]
+
+
+def test_contact_json_boolean_preferred_is_accepted() -> None:
+    # cycle-review PR #1127: help рекламирует "preferred":true — JSON-bool
+    # не должен молча превращаться в False через _text().
+    args = _manual_args(contact=['{"type": "phone", "value": "+66", "preferred": true}'])
+    plan, _ = _parse_manual_sections(args)
+    assert plan.contacts == [resume_sections.Contact(type="phone", value="+66", preferred=True)]
+
+
+def test_manual_non_string_field_is_explicit_error() -> None:
+    # cycle-review PR #1127: не-строка в поле ручного блока — понятная ошибка,
+    # а не молчаливое "" от _text().
+    args = _manual_args(contact=['{"type": 5, "value": "x"}'])
+    with pytest.raises(ValueError, match="поле type должно быть строкой"):
+        _parse_manual_sections(args)
+
+
+def test_contact_outcomes_carry_contacts_block_for_outcome_map() -> None:
+    # cycle-review PR #1127: outcome_map в run() фильтрует по block=="contacts";
+    # рассинхрон с block=="contact" из plan_from_rows давал пустую карту и
+    # неперехваченный ValueError о несовпадении длин в _apply_contacts.
+    args = _manual_args(contact=['{"type": "phone", "value": "+66"}'])
+    plan, outcomes = _parse_manual_sections(args)
+    apply_map = [o for o in outcomes if o.block == "contacts" and o.status != OUTCOME_DUPLICATE]
+    assert len(apply_map) == len(plan.contacts) == 1
+
+
+def test_contact_two_preferred_rows_rejected_before_browser() -> None:
+    # radio предпочтительного способа связи на форме одна (census #1119)
+    args = _manual_args(
+        contact=[
+            '{"type": "phone", "value": "+66", "preferred": "true"}',
+            '{"type": "email", "value": "a@b.c", "preferred": "true"}',
+        ]
+    )
+    with pytest.raises(ValueError, match="preferred=True указан более чем у одной"):
+        _parse_manual_sections(args)
+
+
+def test_contact_second_value_for_same_field_rejected_before_browser() -> None:
+    # в форме ровно одно поле телефона: второе значение перезаписало бы первое
+    args = _manual_args(
+        contact=[
+            '{"type": "phone", "value": "+66 84 00"}',
+            '{"type": "phone", "value": "+66 84 99"}',
+        ]
+    )
+    with pytest.raises(ValueError, match="повторная строка type=phone"):
+        _parse_manual_sections(args)
+
+
+def test_contact_selectors_match_live_census() -> None:
+    # Селекторы только с живого DOM (census #1119, data/logs/census_contacts_1119.md)
+    assert CONTACT_FIELDS == {
+        "phone": "resume-phone-cell_phone",
+        "email": "resume-editor-email-input",
+    }
+    assert CONTACT_PHONE_COMMENT == "resume-editor-phone-comment-input"
+    assert CONTACT_PREFERRED_RADIO == {
+        "phone": "resume-editor-preferred-contact-cell_phone-checked",
+        "email": "resume-editor-preferred-contact-email-checked",
+    }
+    assert FIRST_SECTION_EDIT_PATHS["contacts"] == "contacts"
 
 
 def test_config_accepts_manual_only_blocks() -> None:

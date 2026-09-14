@@ -68,16 +68,22 @@ def _certificate_route(resume_id: str) -> re.Pattern[str]:
     return re.compile(rf"/resume/edit/{re.escape(resume_id)}/certificate(?:/[^/?#]+)?")
 
 
+def _contacts_route(resume_id: str) -> re.Pattern[str]:
+    return re.compile(rf"/resume/edit/{re.escape(resume_id)}/contacts")
+
+
 SECTION_ROUTES = {
     "attestations": _attestation_route,
     "recommendations": _recommendation_route,
     "certificates": _certificate_route,
+    "contacts": _contacts_route,
 }
 
 FIRST_SECTION_EDIT_PATHS = {
     "attestations": "attestationEducation",
     "recommendations": "recommendation",
     "certificates": "certificate",
+    "contacts": "contacts",
 }
 # Live-confirmed on the empty draft probe (2026-09-02): these suggestion
 # buttons are rendered for an actually empty block.  Require the corresponding
@@ -108,6 +114,23 @@ ATTESTATION_FIELDS = (
     "resume-attestation-education-input-result",
     "resume-attestation-education-input-year",
 )
+
+# Live-confirmed census 2026-09-12 (ишью #1119, артефакт
+# data/logs/census_contacts_1119.md): редактор контактов — ЕДИНСТВЕННАЯ форма
+# без повторяемых строк: ровно одно поле телефона, одно email и одна radio-
+# группа предпочтительного способа связи. Селекторы сняты с живого DOM двух
+# резюме (черновик + опубликованное, shape идентичен). Мессенджеры/сайты в
+# редакторе НЕ редактируются (живут текстом в комментарии телефона), поэтому
+# схема контакта ограничена type=phone|email.
+CONTACT_FIELDS = {
+    "phone": "resume-phone-cell_phone",
+    "email": "resume-editor-email-input",
+}
+CONTACT_PHONE_COMMENT = "resume-editor-phone-comment-input"
+CONTACT_PREFERRED_RADIO = {
+    "phone": "resume-editor-preferred-contact-cell_phone-checked",
+    "email": "resume-editor-preferred-contact-email-checked",
+}
 
 
 @dataclass(frozen=True)
@@ -144,11 +167,28 @@ class Certificate:
     url: str
 
 
+@dataclass(frozen=True)
+class Contact:
+    """Контакт блока «Контакты резюме» (#1119, census-схема 2026-09-12).
+
+    Форма редактора — ровно одно поле телефона и одно email, поэтому строка
+    не создаёт НОВУЮ запись, а ЗАМЕЩАЕТ значение соответствующего поля
+    (update-семантика). comment допустим только у телефона; preferred
+    управляет единственной radio-группой формы — True максимум у одной строки.
+    """
+
+    type: str  # "phone" | "email"
+    value: str
+    comment: str = ""  # только type="phone"
+    preferred: bool = False
+
+
 @dataclass
 class ResumeSectionsPlan:
     attestations: list[Attestation] = field(default_factory=list)
     recommendations: list[Recommendation] = field(default_factory=list)
     certificates: list[Certificate] = field(default_factory=list)
+    contacts: list[Contact] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
     # Ручные строки блоков #1118 (--contact/--portfolio/--link).  Блоковые
     # ишью (#1119-1122) добавляют типизированные dataclass + fill-row и
@@ -161,10 +201,13 @@ class ResumeSectionsPlan:
 # Статусы исхода строки. `updated` зарезервирован: обновление требует
 # readback существующих строк на странице резюме (доменная разведка — задача
 # блоковых ишью #1119-1122); этот фундамент update не выполняет никогда.
+# `uncertain` (#176-семантика): клик сохранения мог уйти, а readback не смог
+# ни подтвердить, ни опровергнуть запись — повтор команды безопасен.
 OUTCOME_PLANNED = "planned"
 OUTCOME_APPENDED = "appended"
 OUTCOME_UPDATED = "updated"
 OUTCOME_DUPLICATE = "duplicate"
+OUTCOME_UNCERTAIN = "uncertain"
 OUTCOME_FAILED = "failed"
 
 
@@ -185,15 +228,82 @@ class ManualRow:
 # ишью сужает/расширяет кортеж по факту, парсер строг к лишним ключам уже
 # здесь, так что смена схемы не ослабляет валидацию.
 MANUAL_BLOCK_SCHEMAS: dict[str, tuple[str, ...]] = {
-    "contact": ("name", "value"),
+    # Схема contact (#1119, census 2026-09-12): type/value/comment/preferred.
     # Сертификата здесь больше нет (#1120 cycle-review): блок перенесён в
     # типизированный путь (_TYPED_BLOCK_SPECS + dataclass Certificate), через
     # ManualRow/plan_from_rows он недостижим — мёртвая запись схемы убрана.
-    # Имена ключей = _MANUAL_BLOCKS в config_sections (singular), схема
-    # сертификата сужена по census 2026-09-12: (name, year, url).
+    # Имена ключей = _MANUAL_BLOCKS в config_sections (singular).
+    "contact": ("type", "value", "comment", "preferred"),
     "portfolio": ("name", "url"),
     "link": ("name", "url"),
 }
+
+
+def contact_from_manual(fields: dict[str, str]) -> Contact:
+    """Конвертация ручной строки блока contact в типизированный Contact (#1119).
+
+    Строгая валидация по census-схеме: неизвестный type, комментарий у email
+    и preferred вне {true, false} — явные ошибки, а не молчаливый пропуск.
+    """
+    ctype = fields.get("type", "")
+    if ctype not in CONTACT_FIELDS:
+        raise ValueError(
+            f"contact: type должен быть одним из {', '.join(sorted(CONTACT_FIELDS))}, "
+            f"получено {ctype!r}"
+        )
+    value = fields.get("value", "")
+    if not value:
+        raise ValueError("contact: поле value обязательно")
+    # RU-номер (+7 или 8 без плюса — транк-префикс) hh.ru требует
+    # подтверждать SMS — автоматическая запись невозможна (факт владельца,
+    # 2026-09-14): fail-closed отказ вместо uncertain-прогона, который лишь
+    # замусорил бы поле маской. +8xx с плюсом — другие страны (+86, +81,
+    # +84, +880), они НЕ российские и проходят (cycle-review PR #1127 r5).
+    digits = re.sub(r"\D", "", value)
+    is_ru = digits[:1] == "7" or (not value.lstrip().startswith("+") and digits[:1] == "8")
+    if ctype == "phone" and is_ru:
+        raise ValueError(
+            "contact: российский номер требует SMS-подтверждения на hh.ru — "
+            "автоматическая запись не поддерживается; укажите не-RU номер "
+            "(+66, ...) или правьте телефон вручную"
+        )
+    comment = fields.get("comment", "")
+    if comment and ctype != "phone":
+        raise ValueError("contact: comment допустим только для type=phone")
+    raw_preferred = fields.get("preferred", "")
+    preferred = {"true": True, "false": False, "": False}.get(raw_preferred)
+    if preferred is None:
+        raise ValueError(f"contact: preferred принимает true/false, получено {raw_preferred!r}")
+    return Contact(type=ctype, value=value, comment=comment, preferred=preferred)
+
+
+def contacts_from_manual_rows(rows: list[ManualRow]) -> list[Contact]:
+    """Перенос ручных строк contact в типизированные Contact (#1119).
+
+    Дедуп по (type, value) выполняется ранее в plan_from_rows; здесь ловим
+    конфликты, которые дедуп не видит: два разных значения одного поля формы
+    и более одного preferred (radio на форме одна).
+    """
+    contacts: list[Contact] = []
+    seen_types: set[str] = set()
+    preferred_count = 0
+    for row in rows:
+        contact = contact_from_manual(row.fields)
+        if contact.type in seen_types:
+            raise ValueError(
+                f"contact: повторная строка type={contact.type} — в форме ровно "
+                "одно поле этого типа, второе значение перезаписало бы первое"
+            )
+        seen_types.add(contact.type)
+        if contact.preferred:
+            preferred_count += 1
+            if preferred_count > 1:
+                raise ValueError(
+                    "contact: preferred=True указан более чем у одной строки — "
+                    "radio предпочтительного способа связи на форме одна"
+                )
+        contacts.append(contact)
+    return contacts
 
 
 @dataclass(frozen=True)
@@ -413,6 +523,188 @@ BLOCK_READY_SELECTORS = {
 }
 
 
+def _contacts_ready(page: Page) -> None:
+    """commit != отрисовано (#858): телефонное поле рендерится на форме всегда
+    (census #1119), ждём его видимость перед первой строгой проверкой."""
+    page.locator(f"[data-qa='{CONTACT_FIELDS['phone']}']").first.wait_for(
+        state="visible", timeout=FORM_TIMEOUT_MS
+    )
+
+
+def _on_contacts_route(page: Page, resume_id: str) -> bool:
+    current_path = urlsplit(page.url).path.rstrip("/")
+    return SECTION_ROUTES["contacts"](resume_id).fullmatch(current_path) is not None
+
+
+def _national_digits(value: str) -> str:
+    """Цифры значения без кода страны: маска hh.ru может хранить номер с
+    префиксом 7/8/86 — сравниваем по последним 10 цифрам (боевой факт
+    2026-09-14, testing: маска переформатирует ввод, строковое сравнение
+    ложно падает)."""
+    return re.sub(r"\D", "", value)[-10:]
+
+
+def _fill_phone_masked(page: Page, field: Locator, value: str) -> None:
+    """Маско-устойчивый fill телефона (боевой факт 2026-09-14): fill до
+    гидратации маски приводит к тому, что маска «нормализует» значение в
+    мусорный CN-пример (+86 138 00-13-80-00). После каждого fill сверяем
+    цифры; не совпало — пауза на гидратацию и ретрай, после трёх неудач —
+    явный отказ ДО клика save (безопасный failed, не uncertain)."""
+    for _ in range(3):
+        field.fill(value)
+        page.wait_for_timeout(600)
+        if _national_digits(field.input_value()) == _national_digits(value):
+            return
+    raise RuntimeError(
+        f"contacts: телефонная маска не приняла значение {value!r} "
+        f"(прочитано {field.input_value()!r})"
+    )
+
+
+def _apply_contacts(
+    page: Page,
+    resume_id: str,
+    items: list[Contact],
+    *,
+    dry_run: bool,
+    outcomes: list[RowOutcome] | None = None,
+) -> list[str]:
+    """Заполнить блок контактов (#1119): ОДИН заход в редактор, одна кнопка
+    save, readback после сохранения. В отличие от attestations/recommendations
+    здесь нет повторяемых строк и триггеров: форма всегда отрисована, поля
+    замещают текущие значения (update-семантика, `OUTCOME_UPDATED`), исход
+    без подтверждённого readback — `OUTCOME_UNCERTAIN` (#176-семантика).
+    """
+    errors: list[str] = []
+    if outcomes is not None and len(outcomes) != len(items):
+        raise ValueError("outcomes должен быть выровнен по строкам блока")
+    if not items:
+        return errors
+
+    def _fail_all(status: str, reason: str) -> None:
+        if outcomes is None:
+            return
+        # Перезаписываем только незавершённые (planned) строки: исходы, уже
+        # зафиксированные readback-ом (updated/uncertain), честнее любого
+        # обобщённого статуса (cycle-review PR #1127).
+        for index, outcome in enumerate(outcomes):
+            if outcome.status == OUTCOME_PLANNED:
+                outcomes[index] = RowOutcome("contacts", index, status, reason)
+
+    edit_url = f"{HH_BASE_URL}/resume/edit/{resume_id}/contacts"
+    # Граница «клик мог уйти» — сам save.click(), а не подстрока в тексте
+    # исключения: таймаут readback-перехода после успешного клика — это
+    # #176-семантика (uncertain), ошибка до клика — обычный failed/retry
+    # (cycle-review PR #1127).
+    past_click = False
+    try:
+        goto_hh(page, edit_url)
+        if not _on_contacts_route(page, resume_id):
+            raise RuntimeError("contacts: редактор открыт не для того резюме")
+        _contacts_ready(page)
+        for item in items:
+            field = page.locator(f"[data-qa='{CONTACT_FIELDS[item.type]}']")
+            if field.count() != 1:
+                raise RuntimeError(f"contacts: поле {item.type} не найдено однозначно")
+            if item.type == "phone":
+                _fill_phone_masked(page, field, item.value)
+            else:
+                _fill(field, item.value)
+            if item.type == "phone" and item.comment:
+                comment = page.locator(f"[data-qa='{CONTACT_PHONE_COMMENT}']")
+                if comment.count() != 1:
+                    raise RuntimeError("contacts: комментарий телефона не найден однозначно")
+                _fill(comment, item.comment)
+            if item.preferred:
+                radio = page.locator(f"[data-qa='{CONTACT_PREFERRED_RADIO[item.type]}']")
+                if radio.count() != 1:
+                    raise RuntimeError(
+                        f"contacts: радио preferred ({item.type}) не найдено однозначно"
+                    )
+                radio.first.wait_for(state="visible", timeout=FORM_TIMEOUT_MS)
+                radio.click()
+        save = page.locator("[data-qa='resume-partial-edit-save']")
+        if save.count() != 1:
+            raise RuntimeError("contacts: неоднозначная кнопка сохранения")
+        if dry_run:
+            # Leave the editor like the row blocks do: cancel is the confirmed
+            # exit control of the resume-scoped partial editor (census #1119).
+            cancel = page.locator("[data-qa='resume-partial-edit-cancel']")
+            if cancel.count() != 1:
+                raise RuntimeError("contacts: неоднозначная кнопка отмены")
+            cancel.click()
+            return errors
+        try:
+            save.click()
+            past_click = True
+            save.wait_for(state="hidden", timeout=SAVE_TIMEOUT_MS)
+        except (PlaywrightError, RuntimeError) as exc:
+            raise PlaywrightError(
+                f"сохранение не подтверждено после клика (uncertain): {exc}"
+            ) from exc
+        # Readback (#1119 п.4): переоткрыть редактор и сверить значения —
+        # позитивная проверка именно этого резюме. Таймаут/чужой маршрут
+        # здесь тоже uncertain: клик мог уйти.
+        goto_hh(page, edit_url)
+        if not _on_contacts_route(page, resume_id):
+            raise PlaywrightError("contacts: readback открыл не тот редактор (uncertain)")
+        _contacts_ready(page)
+        uncertain: list[int] = []
+        details: list[str] = []
+        for index, item in enumerate(items):
+            actual = page.locator(f"[data-qa='{CONTACT_FIELDS[item.type]}']").first.input_value()
+            # Телефон сравниваем по национальным цифрам (маска переформатирует
+            # строку), email — строго по строке (боевой факт 2026-09-14).
+            ok = (
+                _national_digits(actual) == _national_digits(item.value)
+                if item.type == "phone"
+                else actual == item.value
+            )
+            if ok and item.type == "phone" and item.comment:
+                ok = (
+                    page.locator(f"[data-qa='{CONTACT_PHONE_COMMENT}']").first.input_value()
+                    == item.comment
+                )
+            if ok and item.preferred:
+                radio = page.locator(f"[data-qa='{CONTACT_PREFERRED_RADIO[item.type]}']")
+                # Census #1119: состояние radio читается по классу
+                # magritte-radio-input-checked (aria-атрибуты не источник).
+                ok = radio.count() == 1 and "magritte-radio-input-checked" in (
+                    radio.get_attribute("class") or ""
+                )
+            if outcomes is not None:
+                outcomes[index] = RowOutcome(
+                    "contacts",
+                    index,
+                    OUTCOME_UPDATED if ok else OUTCOME_UNCERTAIN,
+                    "readback совпал"
+                    if ok
+                    else f"readback не совпал: ожидалось {item.value!r}, получено {actual!r}",
+                )
+            if not ok:
+                uncertain.append(index)
+                details.append(
+                    f"строка {index} ({item.type}): ожидалось {item.value!r}, получено {actual!r}"
+                )
+        if uncertain:
+            listed = ", ".join(str(index) for index in uncertain)
+            errors.append(
+                f"contacts: readback не совпал для строк {listed} (uncertain): "
+                + "; ".join(details)
+            )
+    except (PlaywrightError, RuntimeError) as exc:
+        # Ошибка до клика — обычный failed/retry; после save.click() — uncertain
+        # независимо от текста исключения (readback goto может упасть по таймауту
+        # без всякого «uncertain» в сообщении).
+        if past_click:
+            _fail_all(OUTCOME_UNCERTAIN, str(exc))
+            errors.append(f"contacts: не подтверждено (uncertain): {exc}")
+        else:
+            _fail_all(OUTCOME_FAILED, str(exc))
+            errors.append(f"contacts: не подтверждено: {exc}")
+    return errors
+
+
 def _apply_rows(
     page: Page,
     block: str,
@@ -588,7 +880,7 @@ def apply_plan(
     def _fail_all(reason: str) -> None:
         if outcomes is None:
             return
-        for block in ("attestations", "recommendations", "certificates"):
+        for block in ("attestations", "recommendations", "certificates", "contacts"):
             fail_tail(outcomes.get(block), block, 0, reason)
 
     if not has_auth_cookie(page):
@@ -630,5 +922,12 @@ def apply_plan(
         resume_id=resume_id,
         dry_run=dry_run,
         outcomes=None if outcomes is None else outcomes.get("certificates"),
+    )
+    errors += _apply_contacts(
+        page,
+        resume_id,
+        plan.contacts,
+        dry_run=dry_run,
+        outcomes=None if outcomes is None else outcomes.get("contacts"),
     )
     return errors
