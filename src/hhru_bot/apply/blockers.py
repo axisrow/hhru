@@ -40,6 +40,61 @@ class PostSubmitLimitExceeded(RuntimeError):
     """HH rendered the account response limit immediately after submit."""
 
 
+# #1134 (живой отказ 2026-09-13, аккаунт testing): реальный лимит hh.ru —
+# 200 откликов/24ч, отказ рендерится текстом «В течение 24 часов можно
+# совершить не более 200 откликов. Вы исчерпали лимит откликов, попробуйте
+# отправить отклик позднее.» Строки живут в i18n-словаре страницы
+# (vacancy.response.popup.negotiationsLimitExceeded.error), поэтому data-qa
+# селектор VACANCY_LIMIT_ERROR (заимствован из reference-проектов, живым DOM
+# не подтверждён) в дампах отказа не совпал. Текстовый движок Playwright не
+# матчит содержимое <script>, поэтому вездесущий словарный литерал ложных
+# срабатываний не даёт; матчится только отрисованный текст отказа.
+# ПОДТВЕРЖДЕНО ЖИВЫМ ДАМПОМ 2026-09-14 (apply_137291918_limit_refusal.html,
+# боевой прогон): отказ — это НЕ попап с data-qa-popup-error-code, а
+# транзиентный Magritte-snackbar (toast, bottom:16px, автоскрытие) с
+# generic-контейнером data-qa='snackbar-addon' (общий для всех снекбаров) и
+# текстом отказа в .magritte-snackbar-text (id=dialog-description).
+# Дискриминатор отказа — ТОЛЬКО текст; автоскрытие toast'а объясняет, почему
+# он отсутствует в старых form_timeout-дампах (сняты через 8-14с после клика).
+LIMIT_REFUSAL_TEXT_MARKERS = ("не более 200 откликов", "исчерпали лимит откликов")
+
+
+def limit_refusal_marker(page: Page):
+    """Локатор видимого текста отказа по лимиту откликов (#1134)."""
+
+    marker = page.get_by_text(LIMIT_REFUSAL_TEXT_MARKERS[0])
+    for extra in LIMIT_REFUSAL_TEXT_MARKERS[1:]:
+        marker = marker.or_(page.get_by_text(extra))
+    return marker
+
+
+def limit_refusal_visible(page: Page) -> bool:
+    # AttributeError в оговорке: часть тестовых фейков страницы реализует
+    # только locator(); для них текстовый детект честно отвечает «отказа нет»,
+    # а не роняет весь блокер-проход.
+    try:
+        return limit_refusal_marker(page).filter(visible=True).first.is_visible()
+    except (PlaywrightError, AttributeError):
+        return False
+
+
+def limit_refusal_blocker() -> PostClickBlocker:
+    """Определённый вердикт «отказ лимита» без внешней проверки (#1134).
+
+    Текст отказа — это hh.ru, сообщающий, что отклик НЕ принят; в какой бы
+    точке клик-зоны он ни увиден (включая серую зону #207 после навигации),
+    verify по /applicant/negotiations не нужен: искать нечего, а его
+    indeterminate записал бы бессмысленный uncertain и снова заблокировал бы
+    вакансию навсегда. stop_run — лимит свойство аккаунта, а не вакансии.
+    """
+
+    return PostClickBlocker(
+        "limit_exceeded",
+        "HH.ru отказал по лимиту откликов (текст отказа в DOM); текущий прогон остановлен",
+        stop_run=True,
+    )
+
+
 def _visible(page: Page, selector: str) -> bool:
     try:
         locator = page.locator(selector).first
@@ -132,6 +187,13 @@ def handle_post_click_blockers(
             post_navigation=post_navigation,
         )
 
+    # #1134: текст отказа — первичный детект (data-qa выше живым DOM не
+    # подтверждён и в дампе отказа 2026-09-13 не совпал). Вердикт определённый
+    # в любой точке зоны, поэтому post_navigation намеренно НЕ наследуется:
+    # verify по #207 для отказа лимита не имеет смысла.
+    if limit_refusal_visible(page):
+        return limit_refusal_blocker()
+
     if _visible(page, vacancy_page.VACANCY_DIRECT_APPLICATION_CANCEL):
         alert_text = _text(page, vacancy_page.VACANCY_DIRECT_APPLICATION_ALERT)
         if any(marker in alert_text for marker in ("прямым откликом", "сайте работодателя")):
@@ -164,7 +226,7 @@ def handle_post_click_blockers(
 
 def raise_if_post_submit_limit(page: Page) -> None:
     """Raise when HH shows the response limit after the submit click."""
-    if _visible(page, vacancy_page.VACANCY_LIMIT_ERROR):
+    if _visible(page, vacancy_page.VACANCY_LIMIT_ERROR) or limit_refusal_visible(page):
         raise PostSubmitLimitExceeded(
             "HH.ru сообщил об исчерпанном лимите откликов после submit; текущий прогон остановлен"
         )

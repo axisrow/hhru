@@ -16,6 +16,14 @@ VACANCY_RELOCATION_CONFIRM = _selector("vacancy_page.VACANCY_RELOCATION_CONFIRM"
 VACANCY_SIMILAR_VACANCIES_CLOSE = _selector("vacancy_page.VACANCY_SIMILAR_VACANCIES_CLOSE")
 VACANCY_DIRECT_APPLICATION_CANCEL = _selector("vacancy_page.VACANCY_DIRECT_APPLICATION_CANCEL")
 VACANCY_DIRECT_APPLICATION_ALERT = _selector("vacancy_page.VACANCY_DIRECT_APPLICATION_ALERT")
+# #1134: НЕ совпал с реальным DOM отказа. Живой дамп отказа
+# (apply_137291918_limit_refusal.html, боевой прогон 2026-09-14) доказал:
+# отказ рендерится транзиентным Magritte-snackbar'ом с generic-контейнером
+# data-qa='snackbar-addon', БЕЗ data-qa-popup-error-code (ни в kebab-, ни в
+# camelCase). Дискриминатор — только текст отказа, см.
+# apply/blockers.py::LIMIT_REFUSAL_TEXT_MARKERS. Селектор оставлен как
+# defensive-in-depth; удалять/переносить на snackbar-addon нельзя — контейнер
+# общий для всех снекбаров и без текстовой проверки дал бы ложный stop_run.
 VACANCY_LIMIT_ERROR = _selector("vacancy_page.VACANCY_LIMIT_ERROR")
 VACANCY_RESPONSE_REJECT_WARNING = _selector("vacancy_page.VACANCY_RESPONSE_REJECT_WARNING")
 VACANCY_RESPONSE_ERROR = _selector("vacancy_page.VACANCY_RESPONSE_ERROR")
