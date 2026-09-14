@@ -13,6 +13,7 @@ import hhru_bot.delete_resume as delete
 from hhru_bot.browser import LOGIN_FORM
 from hhru_bot.selector_groups.resume_list import RESUME_LIST_CARD
 from hhru_bot.selector_groups.resume_page import RESUME_DELETE_BUTTON, RESUME_DELETE_CONFIRM
+from hhru_bot.selector_groups.search_page import PAGINATION_NEXT
 
 pytestmark = pytest.mark.integration
 
@@ -107,6 +108,7 @@ class Page:
         self.recovery_hydration = False
         self._recovery_hydrated = False
         self.direct_count = direct_count
+        self.pager_next_count = 0
         self.profile_count = profile_count
         self.profile_opened = False
         self.opened_resume_id = ""
@@ -118,6 +120,9 @@ class Page:
     def locator(self, selector):
         if selector == LOGIN_FORM:
             return Locator(self, selector, count=0)
+        if selector == PAGINATION_NEXT:
+            # #1133: список по умолчанию одностраничный — pager-next нет.
+            return Locator(self, selector, self.pager_next_count)
         if selector == RESUME_DELETE_BUTTON:
             return Locator(self, selector, self.profile_count)
         if selector == RESUME_DELETE_CONFIRM:
