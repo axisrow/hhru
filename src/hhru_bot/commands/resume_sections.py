@@ -449,20 +449,9 @@ def run(args: argparse.Namespace) -> None:
                 if not args.dry_run
                 else "[INFO] План корректен."
             )
-        if outcome_map is not None:
-            # Итоговая таблица должна показывать исходы БОЕВОГО прохода
-            # (updated/uncertain/failed), а не parse-плана: _apply_* заменяли
-            # элементы в outcome_map, исходный список оставался planned.
-            # Дубликаты не участвовали в проходе — их исходы сохраняются
-            # (позиции недубликатных строк восстанавливаются по порядку).
-            for block, mapped in outcome_map.items():
-                positions = [
-                    index
-                    for index, o in enumerate(outcomes)
-                    if o.block == block and o.status != OUTCOME_DUPLICATE
-                ]
-                for position, applied in zip(positions, mapped, strict=True):
-                    outcomes[position] = applied
+        # Слив исходов боевого прохода в outcomes выполняет _sync_row_outcomes
+        # внутри launch_context (см. выше) — дубль слива здесь убран
+        # (cycle-review PR #1127 r5).
     failed = 0
     if outcomes is not None:
         # Per-row контракт — честный итог: любой failed строки = неуспех команды.

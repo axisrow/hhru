@@ -796,6 +796,21 @@ def test_contact_non_ru_phone_is_accepted() -> None:
     assert plan.contacts == [resume_sections.Contact(type="phone", value="+66 84 999 00-11")]
 
 
+def test_contact_plus_8xx_country_codes_are_not_russian() -> None:
+    # cycle-review PR #1127 r5: +8xx с плюсом — другие страны (+86 Китай,
+    # +81 Япония, +84 Вьетнам, +880 Бангладеш); гейт отклоняет только 8
+    # БЕЗ плюса (транк-префикс РФ).
+    args = _manual_args(contact=['{"type": "phone", "value": "+86 138 0013-8000"}'])
+    plan, _ = _parse_manual_sections(args)
+    assert plan.contacts == [resume_sections.Contact(type="phone", value="+86 138 0013-8000")]
+
+
+def test_contact_trunk_8_without_plus_is_rejected() -> None:
+    args = _manual_args(contact=['{"type": "phone", "value": "8 999 000-11-22"}'])
+    with pytest.raises(ValueError, match="SMS-подтверждения"):
+        _parse_manual_sections(args)
+
+
 def test_contact_preferred_parses_and_lands_on_row() -> None:
     args = _manual_args(contact=['{"type": "email", "value": "a@b.c", "preferred": "true"}'])
     plan, _ = _parse_manual_sections(args)

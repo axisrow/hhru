@@ -277,10 +277,10 @@ class FakeContactsPage:
         self.preferred = False
         self.saved = False
         self.closed = False
+        self.cancelled = False
 
     def wait_for_timeout(self, timeout):  # noqa: ARG002
         pass
-        self.cancelled = False
 
     def locator(self, selector: str):
         if selector == "[data-qa='resume-partial-edit-save']":
