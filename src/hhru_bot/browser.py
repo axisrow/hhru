@@ -12,7 +12,7 @@ import re
 import signal
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -355,9 +355,15 @@ class GotoWatchdogTimeout(Exception):
 
 def _wall_clock_alarm(signum, frame) -> None:  # noqa: ARG001
     raise GotoWatchdogTimeout(
-        "wall-clock watchdog: блокированный вызов браузера не вернулся "
-        "в отведённое время (#1130); состояние драйвера недостоверно"
+        f"wall-clock watchdog ({_GUARD_CURRENT_OP}): блокированный вызов "
+        "браузера не вернулся в отведённое время (#1130); состояние "
+        "драйвера недостоверно"
     )
+
+
+#: Метка текущей охраняемой операции — в сообщение фатального исхода,
+#: чтобы [FAIL]-вывод различал зависший goto и зависшую verify-фазу.
+_GUARD_CURRENT_OP = "unknown"
 
 
 #: Глубина вложения активных wall_clock_guard'ов (главный поток, один таймер).
@@ -390,11 +396,21 @@ def wall_clock_guard(seconds: float, *, what: str = "операция"):
       ровно требуемая семантика #1130. ПРЕДУСЛОВИЕ (review PR #1136):
       вложенный guard корректен, только пока его бюджет не короче
       оставшегося внешнего — иначе внутренний бюджет молча теряется
-      (таймер внешний выстрелит позже). Инвариант проверяется assert'ом;
-      инвертировать порядок бюджетов (внешний > внутреннего) нельзя без
-      пересмотра дизайна «один таймер».
+      (таймер внешний выстрелит позже). Инвариант проверяется безусловным
+      raise (не assert: под python -O assert исчезает); инвертировать
+      порядок бюджетов (внешний > внутреннего) нельзя без пересмотра
+      дизайна «один таймер».
+    * ДВЕ ЛОВУШКИ для будущих использований (review PR #1136): (а) внутри
+      активного guard'а НЕЛЬЗЯ глотать GotoWatchdogTimeout (`except
+      Exception` вокруг goto_hh) — таймер одноразовый и не перезаряжается,
+      проглоченный тик оставляет область без защиты до её конца (ровно
+      вечное зависание из #1130); фатальный класс пробрасывается
+      финализаторами в _execute_apply_wave намеренно. (б) seconds <= 0
+      означает «без защиты» (setitimer(0) — disarm), а не «мгновенный
+      тик»: отключающим значением VERIFY_PHASE_CAP_SECONDS защиту #1130
+      не выключают.
     """
-    global _GUARD_DEPTH
+    global _GUARD_DEPTH, _GUARD_CURRENT_OP
     if not hasattr(signal, "SIGALRM") or threading.current_thread() is not threading.main_thread():
         yield
         return
@@ -404,6 +420,8 @@ def wall_clock_guard(seconds: float, *, what: str = "операция"):
         yield
         return
     _GUARD_DEPTH += 1
+    previous_op = _GUARD_CURRENT_OP
+    _GUARD_CURRENT_OP = what
     try:
         if _GUARD_DEPTH > 1:
             # Вложенный guard: внешний таймер уже живёт и сработает не позже
@@ -414,11 +432,13 @@ def wall_clock_guard(seconds: float, *, what: str = "операция"):
             # итераторами, и StopIteration внутри генератора contextlib
             # оборачивается RuntimeError "generator raised StopIteration"
             # (упало в CI linux/py3.12, PR #1136).
-            assert seconds >= signal.getitimer(signal.ITIMER_REAL)[0], (
-                "wall_clock_guard: вложенный бюджет "
-                f"{seconds}s короче оставшегося внешнего капа — "
-                "внутренний бюджет был бы потерян"
-            )
+            remaining = signal.getitimer(signal.ITIMER_REAL)[0]
+            if seconds < remaining:
+                raise AssertionError(
+                    "wall_clock_guard: вложенный бюджет "
+                    f"{seconds}s короче оставшегося внешнего капа "
+                    f"({remaining}s) — внутренний бюджет был бы потерян"
+                )
             yield
             return
         signal.signal(signal.SIGALRM, _wall_clock_alarm)
@@ -431,15 +451,13 @@ def wall_clock_guard(seconds: float, *, what: str = "операция"):
             # оно срежет unwind генератора contextlib и на py3.12 оборачивается
             # RuntimeError "generator raised StopIteration" (упало в CI
             # linux/py3.12, PR #1136). Мы всё равно выходим — поздний тик
-            # глотаем и разоружаем до конца.
-            while True:
-                try:
-                    signal.setitimer(signal.ITIMER_REAL, 0)
-                    break
-                except GotoWatchdogTimeout:
-                    pass
+            # глотаем и разоружаем до конца. Таймер one-shot (interval 0),
+            # поздний тик максимум один — suppress достаточен.
+            with suppress(GotoWatchdogTimeout):
+                signal.setitimer(signal.ITIMER_REAL, 0)
             signal.signal(signal.SIGALRM, previous_handler)
     finally:
+        _GUARD_CURRENT_OP = previous_op
         _GUARD_DEPTH -= 1
 
 
