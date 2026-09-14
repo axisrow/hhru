@@ -29,6 +29,9 @@ class _Locator:
         return self._page._count_for(self._selector)
 
     def wait_for(self, *, state, timeout):  # noqa: ARG002
+        # Рендер страницы завершается внутри wait_for (гидратация «дошла»):
+        # только после него счётчики отражают реальный DOM.
+        self._page._rendered = True
         if self._page._count_for(self._selector) == 0:
             raise PlaywrightError("not attached")
 
@@ -36,20 +39,29 @@ class _Locator:
         assert self._selector == PAGINATION_NEXT
         self._page.clicks += 1
         self._page.page_index += 1
+        if self._page._delayed:
+            self._page._rendered = False
 
 
 class _PagedPage:
     """Список из N страниц: карточки искомого резюме — только на page_index."""
 
-    def __init__(self, pages, other_cards=3):
+    def __init__(self, pages, other_cards=3, delayed=False):
         self._pages = pages  # list[dict]: {"target": bool, "pager_next": bool}
         self._other_cards = other_cards
+        # delayed=True моделирует «commit не значит отрисовано» (#858): после
+        # клика по pager страница не гидратирована, все счётчики = 0, пока
+        # кто-нибудь не дождётся рендера через wait_for.
+        self._delayed = delayed
+        self._rendered = True
         self.page_index = 0
         self.clicks = 0
         self.url = "https://hh.ru/applicant/my_resumes"
         self.broken_click = False
 
     def _count_for(self, selector):
+        if not self._rendered:
+            return 0
         if selector == PAGINATION_NEXT:
             return 1 if self._pages[self.page_index]["pager_next"] else 0
         if selector.startswith(RESUME_LIST_CARD) and ":has(" in selector:
@@ -84,6 +96,22 @@ def test_card_on_second_page_is_found_through_pager():
             {"target": True, "pager_next": False},
         ]
     )
+    card, error = resume_list_pages.find_resume_card(page, RESUME_ID, wait_attached_ms=1)
+    assert card is not None and error == ""
+    assert page.page_index == 1
+
+
+def test_delayed_hydration_on_second_page_is_waited_not_misread_as_last():
+    """«Commit не значит отрисовано» (#858): негидратированная страница 2
+    (все счётчики 0) не считается последней — ждём рендер в wait_for."""
+
+    def _pages():
+        return [
+            {"target": False, "pager_next": True},
+            {"target": True, "pager_next": False},
+        ]
+
+    page = _PagedPage(_pages(), delayed=True)
     card, error = resume_list_pages.find_resume_card(page, RESUME_ID, wait_attached_ms=1)
     assert card is not None and error == ""
     assert page.page_index == 1
