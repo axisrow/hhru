@@ -231,7 +231,7 @@ def _sync_row_outcomes(outcomes, outcome_map) -> None:
     совпадает с построением карты. Строки с дубликатами в карте отсутствуют
     и не трогаются.
     """
-    from ..resume_sections import OUTCOME_DUPLICATE, RowOutcome
+    from ..resume_sections import OUTCOME_DUPLICATE
 
     pending = {block: list(rows) for block, rows in outcome_map.items()}
     for index, outcome in enumerate(outcomes):
@@ -241,8 +241,12 @@ def _sync_row_outcomes(outcomes, outcome_map) -> None:
         if not pool:
             continue
         source = pool.pop(0)
+        # block/index у пары совпадают по построению (обе стороны — один
+        # порядок разбора); расхождение — баг выравнивания, маскировать
+        # реконструкцией его нельзя.
+        assert (source.block, source.index) == (outcome.block, outcome.index)
         if source is not outcome:
-            outcomes[index] = RowOutcome(outcome.block, outcome.index, source.status, source.reason)
+            outcomes[index] = source
 
 
 def run(args: argparse.Namespace) -> None:
