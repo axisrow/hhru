@@ -254,6 +254,15 @@ def contact_from_manual(fields: dict[str, str]) -> Contact:
     value = fields.get("value", "")
     if not value:
         raise ValueError("contact: поле value обязательно")
+    # RU-номер (+7/8) hh.ru требует подтверждать SMS — автоматическая запись
+    # невозможна (факт владельца, 2026-09-14): fail-closed отказ вместо
+    # uncertain-прогона, который лишь замусорил бы поле маской.
+    if ctype == "phone" and re.sub(r"\D", "", value)[:1] in ("7", "8"):
+        raise ValueError(
+            "contact: российский номер требует SMS-подтверждения на hh.ru — "
+            "автоматическая запись не поддерживается; укажите не-RU номер "
+            "(+66, +86, ...) или правьте телефон вручную"
+        )
     comment = fields.get("comment", "")
     if comment and ctype != "phone":
         raise ValueError("contact: comment допустим только для type=phone")

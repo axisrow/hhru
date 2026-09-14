@@ -63,6 +63,7 @@ def register(subparsers) -> None:
             '\'{"type":"phone|email", "value":..., "comment":... '
             '(только phone), "preferred":true|false}\'. Замещает значение '
             "поля формы; preferred=True максимум у одной строки. "
+            "Российский номер не принимается: hh.ru требует SMS-подтверждение. "
             "Селекторы подтверждены census 2026-09-12."
         ),
     )
