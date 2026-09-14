@@ -250,7 +250,11 @@ def run(args: argparse.Namespace) -> None:
             if wizard_mode:
                 cards = list_wizard_drafts(page)
             else:
-                cards = list_resume_cards(page, navigate=False)
+                # #1133: список может занимать несколько страниц — собираем
+                # карточки со всех через пагинатор, а не только с первой.
+                from ..resume_list_pages import collect_resume_cards_over_pages
+
+                cards = collect_resume_cards_over_pages(page, list_resume_cards)
         except NotAuthenticated as exc:
             # В визард-ветке list_wizard_drafts делает identity-bound readback
             # (open_confirmed_resume -> require_authenticated_page): сессия может

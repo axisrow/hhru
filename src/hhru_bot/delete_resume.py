@@ -21,6 +21,7 @@ from .browser import (
     require_authenticated_page,
 )
 from .resume_ids import resume_card_locator
+from .resume_list_pages import find_resume_card
 from .selector_groups.resume_list import (
     RESUME_LIST_CARD,
 )
@@ -114,34 +115,34 @@ def delete_resume_on_hh(
     # рендерит страницу входа без карточек, и команда маскировала её ложной
     # доменной причиной «карточка не появилась после загрузки списка».
     require_authenticated_page(page)
-    card = resume_card_locator(page, resume_id)
-    if card.count() == 0:
-        try:
-            card.first.wait_for(state="attached", timeout=DELETE_VERIFY_TIMEOUT_MS)
-        except PlaywrightError:
-            # Различаем два исхода, которые раньше сливались в одну причину
-            # «не появилась после загрузки списка». Если в списке есть ДРУГИЕ
-            # карточки, значит он отрисован полностью и резюме просто не
-            # существует (удалено вручную или чужой id) — сообщаем это прямо.
-            # Пустой список по-прежнему неоднозначен: подтверждённого
-            # empty-state селектора в исследованном DOM нет (см. _wait_list_ready),
-            # поэтому там сохраняется прежняя формулировка про загрузку.
-            if page.locator(RESUME_LIST_CARD).count() > 0:
-                return DeleteResumeResult(
-                    resume_id,
-                    False,
-                    f"резюме resume_id={resume_id} не найдено в списке; возможно, оно уже удалено",
-                    False,
-                )
+    # #1133: список может занимать несколько страниц — ищем карточку по всем
+    # через пагинатор, а не только на первой (ложное «карточка не появилась»
+    # для карточки со 2-й страницы).
+    card, lookup_error = find_resume_card(
+        page, resume_id, wait_attached_ms=DELETE_VERIFY_TIMEOUT_MS
+    )
+    if card is None:
+        if lookup_error:
+            # Список не дочитан (pager не подтвердился) или карточка
+            # неоднозначна: «резюме нет» утверждать нельзя.
+            return DeleteResumeResult(resume_id, False, lookup_error, False)
+        # Страницы списка закончились. Если на последней есть ДРУГИЕ карточки,
+        # список отрисован полностью и резюме не существует (удалено вручную
+        # или чужой id) — сообщаем это прямо. Пустой список неоднозначен:
+        # подтверждённого empty-state селектора в исследованном DOM нет,
+        # поэтому там сохраняется прежняя формулировка про загрузку.
+        if page.locator(RESUME_LIST_CARD).count() > 0:
             return DeleteResumeResult(
                 resume_id,
                 False,
-                f"карточка resume_id={resume_id} не появилась после загрузки списка",
+                f"резюме resume_id={resume_id} не найдено в списке; возможно, оно уже удалено",
                 False,
             )
-    if card.count() != 1:
         return DeleteResumeResult(
-            resume_id, False, f"карточка resume_id={resume_id} не подтверждена однозначно", False
+            resume_id,
+            False,
+            f"карточка resume_id={resume_id} не появилась после загрузки списка",
+            False,
         )
     button, action_error, profile_fallback_used = _resolve_delete_action(page, card, resume_id)
     if action_error or button is None:
