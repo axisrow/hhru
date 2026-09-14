@@ -37,6 +37,9 @@ SAVE_TIMEOUT_MS = 30_000
 RESUME_EDIT_BUTTON = {
     "attestations": "[data-qa^='resume-edit-button-attestationEducation-']",
     "recommendations": "[data-qa^='resume-edit-button-recommendation-']",
+    # Census 2026-09-12 (#1120): кнопки строк блока сертификатов индексируются
+    # так же, как attestation/recommendation.
+    "certificates": "[data-qa^='resume-edit-button-certificate-']",
 }
 # Both section editors embed the resume id in their route, so both patterns are
 # bound per-call rather than kept static: a stale or misdirected edit link for a
@@ -59,14 +62,22 @@ def _recommendation_route(resume_id: str) -> re.Pattern[str]:
     return re.compile(rf"/resume/edit/{re.escape(resume_id)}/recommendation(?:/[^/?#]+)?")
 
 
+def _certificate_route(resume_id: str) -> re.Pattern[str]:
+    # Census 2026-09-12 (#1120): обе формы маршрута отвечают формой из трёх
+    # полей — с item_id (редактирование строки) и голый (добавление новой).
+    return re.compile(rf"/resume/edit/{re.escape(resume_id)}/certificate(?:/[^/?#]+)?")
+
+
 SECTION_ROUTES = {
     "attestations": _attestation_route,
     "recommendations": _recommendation_route,
+    "certificates": _certificate_route,
 }
 
 FIRST_SECTION_EDIT_PATHS = {
     "attestations": "attestationEducation",
     "recommendations": "recommendation",
+    "certificates": "certificate",
 }
 # Live-confirmed on the empty draft probe (2026-09-02): these suggestion
 # buttons are rendered for an actually empty block.  Require the corresponding
@@ -75,6 +86,12 @@ FIRST_SECTION_EDIT_PATHS = {
 EMPTY_SECTION_MARKERS = {
     "attestations": "[data-qa='suitable-vacancies-suggest-item-attestationEducation']",
     "recommendations": "[data-qa='suitable-vacancies-suggest-item-recommendation']",
+    # #1120: live-подтверждён боевой прогон 2026-09-14 — черновик qa-2
+    # (testing) с пустым блоком сертификатов рендерит чип
+    # suitable-vacancies-suggest-item-certificate, и путь первой строки
+    # (маркер → голый маршрут /resume/edit/<id>/certificate → save) создал
+    # строку с позитивным readback.
+    "certificates": "[data-qa='suitable-vacancies-suggest-item-certificate']",
 }
 
 
@@ -109,14 +126,33 @@ class Recommendation:
     position: str = ""
 
 
+@dataclass(frozen=True)
+class Certificate:
+    """Строка блока «Сертификаты» (#1120).
+
+    Схема — ровно по read-only census 2026-09-12: у формы ТРИ поля
+    («Название», «Год получения», «Ссылка, если есть»); полей «организация»
+    и «специализация» в форме сертификатов НЕТ (это отличие от
+    attestationEducation). Файл сертификатом загрузить нельзя: в DOM формы
+    нет ни одного input[type=file], URL — единственный путь подтверждения;
+    заменять файл выдуманным URL запрещено, поэтому url — просто
+    опциональное строковое поле.
+    """
+
+    name: str
+    year: str
+    url: str
+
+
 @dataclass
 class ResumeSectionsPlan:
     attestations: list[Attestation] = field(default_factory=list)
     recommendations: list[Recommendation] = field(default_factory=list)
+    certificates: list[Certificate] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
-    # Ручные строки блоков #1118 (--contact/--certificate/--portfolio/--link).
-    # Блоковые ишью (#1119-1122) добавляют типизированные dataclass + fill-row
-    # и переносят свои строки из manual в типизированные поля выше.
+    # Ручные строки блоков #1118 (--contact/--portfolio/--link).  Блоковые
+    # ишью (#1119-1122) добавляют типизированные dataclass + fill-row и
+    # переносят свои строки из manual в типизированные поля выше.
     manual: list[ManualRow] = field(default_factory=list)
 
 
@@ -150,7 +186,11 @@ class ManualRow:
 # здесь, так что смена схемы не ослабляет валидацию.
 MANUAL_BLOCK_SCHEMAS: dict[str, tuple[str, ...]] = {
     "contact": ("name", "value"),
-    "certificate": ("name", "organization", "year"),
+    # Сертификата здесь больше нет (#1120 cycle-review): блок перенесён в
+    # типизированный путь (_TYPED_BLOCK_SPECS + dataclass Certificate), через
+    # ManualRow/plan_from_rows он недостижим — мёртвая запись схемы убрана.
+    # Имена ключей = _MANUAL_BLOCKS в config_sections (singular), схема
+    # сертификата сужена по census 2026-09-12: (name, year, url).
     "portfolio": ("name", "url"),
     "link": ("name", "url"),
 }
@@ -344,10 +384,39 @@ def _fill_recommendation_row(page: Page, item: Recommendation) -> Locator:
     return page.locator("[data-qa='resume-partial-edit-save']")
 
 
+def _fill_certificate_row(page: Page, item: Certificate) -> Locator:
+    # Census 2026-09-12 (#1120): у формы сертификатов нет data-qa на полях —
+    # все три input это Magritte-поля без атрибутов (qa="", одинаковые
+    # classes). Адресация по видимой подписи через get_by_label — тот же
+    # приём, что у формы рекомендаций; неоднозначный label fail-closed
+    # внутри labelled_field.
+    def labelled(label: str):
+        try:
+            return labelled_field(page, label)
+        except PageStateIndeterminate as exc:
+            raise PlaywrightError(f"поле сертификата {label!r} не найдено однозначно") from exc
+
+    _fill(labelled("Название"), item.name)
+    _fill(labelled("Год получения"), item.year)
+    _fill(labelled("Ссылка, если есть"), item.url)
+    return page.locator("[data-qa='resume-partial-edit-save']")
+
+
+# Первый контрол формы блока, по которому подтверждается открытие редактора
+# (wait_for visible + editor_selector в open_hydrated_resume_editor).
+BLOCK_READY_SELECTORS = {
+    "attestations": f"[data-qa='{ATTESTATION_FIELDS[0]}']",
+    "recommendations": "input[name='company']",
+    # Census #1120: data-qa у полей нет, подтверждение открытия — видимая
+    # подпись первого поля формы.
+    "certificates": "label:text-is('Название')",
+}
+
+
 def _apply_rows(
     page: Page,
     block: str,
-    items: list[Attestation] | list[Recommendation],
+    items: list[Attestation] | list[Recommendation] | list[Certificate],
     fill_row,
     *,
     resume_id: str = "",
@@ -377,11 +446,7 @@ def _apply_rows(
                 outcomes[index] = RowOutcome(block, index, OUTCOME_FAILED, reason)
             fail_tail(outcomes, block, index + 1, "запись блока остановлена")
             break
-        ready_selector = (
-            f"[data-qa='{ATTESTATION_FIELDS[0]}']"
-            if block == "attestations"
-            else "input[name='company']"
-        )
+        ready_selector = BLOCK_READY_SELECTORS[block]
         try:
             # trigger.count() itself can raise on iterations after a previous
             # row's save.click() already succeeded (#352/codex round 3) — the
@@ -523,7 +588,7 @@ def apply_plan(
     def _fail_all(reason: str) -> None:
         if outcomes is None:
             return
-        for block in ("attestations", "recommendations"):
+        for block in ("attestations", "recommendations", "certificates"):
             fail_tail(outcomes.get(block), block, 0, reason)
 
     if not has_auth_cookie(page):
@@ -556,5 +621,14 @@ def apply_plan(
         resume_id=resume_id,
         dry_run=dry_run,
         outcomes=None if outcomes is None else outcomes.get("recommendations"),
+    )
+    errors += _apply_rows(
+        page,
+        "certificates",
+        plan.certificates,
+        _fill_certificate_row,
+        resume_id=resume_id,
+        dry_run=dry_run,
+        outcomes=None if outcomes is None else outcomes.get("certificates"),
     )
     return errors

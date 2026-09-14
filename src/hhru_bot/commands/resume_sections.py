@@ -6,7 +6,7 @@ import argparse
 import sys
 from typing import TYPE_CHECKING, cast
 
-from ..resume_sections import Attestation, Recommendation
+from ..resume_sections import Attestation, Certificate, Recommendation
 from .copy_resume import confirm_write
 
 if TYPE_CHECKING:
@@ -18,8 +18,8 @@ def register(subparsers) -> None:
         "resume-sections",
         help="Заполнить дополнительные разделы резюме через LLM",
         description=(
-            "Заполняет аттестации и рекомендации по подтвержденным UI-маршрутам; "
-            "умеет создать первую строку в пустом блоке. Сертификаты, портфолио и "
+            "Заполняет аттестации, рекомендации и сертификаты по подтвержденным "
+            "UI-маршрутам; умеет создать первую строку в пустом блоке. Портфолио и "
             "ссылки пока пропускаются, удаления не выполняются. Ключ manual в "
             "секции resume_sections конфига пока зарезервирован и ни на что не "
             "влияет — расцветёт вместе с блоковыми ишью #1119-1122."
@@ -69,10 +69,11 @@ def register(subparsers) -> None:
         action="append",
         metavar="JSON",
         help=(
-            "Сертификат JSON (#1118), можно несколько: "
-            '\'{"name":..., "organization":..., "year":...}\' (схема '
-            "предварительная, до census #1120). Боевой проход пока даёт "
-            "[FAIL] для строки."
+            "Готовый сертификат JSON (#1120), можно несколько: "
+            '\'{"name":..., "year":..., "url":...}\'. Схема по read-only '
+            "census 2026-09-12: у формы три поля, url опционален "
+            "(файл сертификатом загрузить нельзя — input[type=file] в DOM "
+            "нет, ссылка единственный путь подтверждения)."
         ),
     )
     parser.add_argument(
@@ -109,11 +110,15 @@ _TYPED_BLOCK_SPECS = {
         ("text", "company", "name", "position"),
         Recommendation,
     ),
+    # #1120: сертификаты — реализованный блок (census 2026-09-12), как
+    # --attestation/--recommendation: типизированный dataclass + fill-row.
+    "--certificate": ("certificates", ("name", "year", "url"), Certificate),
 }
-# CLI-флаг → имя блока MANUAL_BLOCK_SCHEMAS (#1118).
+# CLI-флаг → имя блока MANUAL_BLOCK_SCHEMAS (#1118).  --certificate
+# переехал в _TYPED_BLOCK_SPECS (#1120) — остались только нереализованные
+# блоки; их боевой проход по-прежнему честно failed.
 _MANUAL_FLAGS = {
     "--contact": "contact",
-    "--certificate": "certificate",
     "--portfolio": "portfolio",
     "--link": "link",
 }
@@ -178,7 +183,7 @@ def _parse_manual_sections(args: argparse.Namespace):
             if not any(values.values()):
                 raise ValueError(f"{flag} содержит пустую запись")
             rows.append(ManualRow(block=block, fields=values))
-    if not plan.attestations and not plan.recommendations and not rows:
+    if not plan.attestations and not plan.recommendations and not plan.certificates and not rows:
         raise ValueError(
             "укажите хотя бы один ручной флаг: "
             "--attestation, --recommendation, --contact, --certificate, "
@@ -214,6 +219,34 @@ def _print_outcomes(outcomes) -> int:
     ]
     print(_ascii_table(["Блок", "#", "Исход", "Причина"], rows, footer=footer))
     return counts[OUTCOME_FAILED]
+
+
+def _sync_row_outcomes(outcomes, outcome_map) -> None:
+    """Перенести вердикты из копий outcome_map обратно в печатаемый список.
+
+    outcome_map собирается списковыми включениями (#1125) — это новые списки
+    из тех же RowOutcome; замены внутри _apply_rows (planned → appended/
+    failed) остаются в копиях. Здесь они в том же порядке переприсваиваются
+    исходному списку: по каждому блоку — последовательность не-дубликатов
+    совпадает с построением карты. Строки с дубликатами в карте отсутствуют
+    и не трогаются.
+    """
+    from ..resume_sections import OUTCOME_DUPLICATE
+
+    pending = {block: list(rows) for block, rows in outcome_map.items()}
+    for index, outcome in enumerate(outcomes):
+        if outcome.status == OUTCOME_DUPLICATE:
+            continue
+        pool = pending.get(outcome.block)
+        if not pool:
+            continue
+        source = pool.pop(0)
+        # block/index у пары совпадают по построению (обе стороны — один
+        # порядок разбора); расхождение — баг выравнивания, маскировать
+        # реконструкцией его нельзя.
+        assert (source.block, source.index) == (outcome.block, outcome.index)
+        if source is not outcome:
+            outcomes[index] = source
 
 
 def run(args: argparse.Namespace) -> None:
@@ -295,6 +328,7 @@ def run(args: argparse.Namespace) -> None:
     print(
         f"[{'DRY-RUN' if args.dry_run else 'INFO'}] "
         f"Аттестаций: {len(plan.attestations)}, рекомендаций: {len(plan.recommendations)}, "
+        f"сертификатов: {len(plan.certificates)}, "
         f"ручных строк новых блоков: {len(plan.manual)}"
     )
     for row in plan.manual:
@@ -303,7 +337,7 @@ def run(args: argparse.Namespace) -> None:
     if args.dry_run:
         print("[INFO] Ничего не отправлено.")
 
-    supported = bool(plan.attestations or plan.recommendations)
+    supported = bool(plan.attestations or plan.recommendations or plan.certificates)
     if not supported and not args.dry_run:
         # Браузер не запускаем: писать на hh.ru нечем.
         if outcomes is not None:
@@ -330,6 +364,11 @@ def run(args: argparse.Namespace) -> None:
                     for o in outcomes
                     if o.block == "recommendations" and o.status != OUTCOME_DUPLICATE
                 ],
+                "certificates": [
+                    o
+                    for o in outcomes
+                    if o.block == "certificates" and o.status != OUTCOME_DUPLICATE
+                ],
             }
         with launch_context(
             config.storage_state_file, headless=args.headless, user_agent=config.user_agent
@@ -341,6 +380,14 @@ def run(args: argparse.Namespace) -> None:
                 dry_run=args.dry_run,
                 outcomes=outcome_map,
             )
+            if outcome_map is not None:
+                # Живой прогон #1120 (2026-09-14): outcome_map — срезы-КОПИИ,
+                # _apply_rows мутирует их, а печатается исходный список
+                # outcomes — appended/failed из боевого прохода терялись,
+                # строка оставалась «planned». Синхронизируем вердикты назад
+                # в порядке «не-дубликаты per-block» — ровно тот порядок,
+                # в котором карта строилась.
+                _sync_row_outcomes(outcomes, outcome_map)
         if errors:
             for error in errors:
                 prefix = "[FAIL] (uncertain)" if "uncertain" in error else "[FAIL]"

@@ -130,6 +130,7 @@ def test_recommendation_dry_run_cancels_partial_editor(monkeypatch) -> None:
         RESUME_ERROR_BANNER: _EMPTY_BANNER,
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: no_attestations,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: trigger,
+        resume_sections.RESUME_EDIT_BUTTON["certificates"]: trigger,
         "[data-qa='resume-partial-edit-cancel']": partial_cancel,
         "input[name='company']": ready,
     }[selector]
@@ -164,6 +165,7 @@ def test_save_wait_timeout_is_recorded_as_row_error_not_raised(monkeypatch) -> N
         RESUME_ERROR_BANNER: _EMPTY_BANNER,
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: trigger,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_recommendations,
+        resume_sections.RESUME_EDIT_BUTTON["certificates"]: no_recommendations,
         f"[data-qa='{resume_sections.ATTESTATION_FIELDS[0]}']": ready,
     }[selector]
     monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
@@ -202,6 +204,7 @@ def test_save_click_error_is_recorded_as_row_error_not_raised(monkeypatch) -> No
         RESUME_ERROR_BANNER: _EMPTY_BANNER,
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: trigger,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_recommendations,
+        resume_sections.RESUME_EDIT_BUTTON["certificates"]: no_recommendations,
         f"[data-qa='{resume_sections.ATTESTATION_FIELDS[0]}']": ready,
     }[selector]
     monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
@@ -240,6 +243,7 @@ def test_cancel_click_error_is_recorded_as_row_error_not_raised(monkeypatch) -> 
         RESUME_ERROR_BANNER: _EMPTY_BANNER,
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: no_attestations,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: trigger,
+        resume_sections.RESUME_EDIT_BUTTON["certificates"]: trigger,
         "[data-qa='resume-partial-edit-cancel']": partial_cancel,
         "input[name='company']": ready,
     }[selector]
@@ -276,6 +280,7 @@ def test_save_confirmation_does_not_rely_on_url_already_matched(monkeypatch) -> 
         RESUME_ERROR_BANNER: _EMPTY_BANNER,
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: no_attestations,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: trigger,
+        resume_sections.RESUME_EDIT_BUTTON["certificates"]: trigger,
         "input[name='company']": ready,
     }[selector]
     monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
@@ -315,6 +320,7 @@ def test_unconfirmed_save_stops_block_instead_of_clicking_next_row(monkeypatch) 
         RESUME_ERROR_BANNER: _EMPTY_BANNER,
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: trigger,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_recommendations,
+        resume_sections.RESUME_EDIT_BUTTON["certificates"]: no_recommendations,
         f"[data-qa='{resume_sections.ATTESTATION_FIELDS[0]}']": ready,
     }[selector]
     monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
@@ -357,6 +363,7 @@ def test_ambiguous_save_button_stops_block_instead_of_leaving_editor_open(monkey
         RESUME_ERROR_BANNER: _EMPTY_BANNER,
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: trigger,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_recommendations,
+        resume_sections.RESUME_EDIT_BUTTON["certificates"]: no_recommendations,
         f"[data-qa='{resume_sections.ATTESTATION_FIELDS[0]}']": ready,
     }[selector]
     monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
@@ -432,6 +439,11 @@ def test_attestation_row_saves_through_partial_edit_button() -> None:
             "recommendation",
             Recommendation("", "Acme", "Ada", "Reviewer"),
         ),
+        (
+            "certificates",
+            "certificate",
+            resume_sections.Certificate("AWS Cloud Practitioner", "2024", "https://aws.amazon"),
+        ),
     ],
 )
 def test_empty_section_opens_first_row_via_resume_scoped_route(
@@ -452,13 +464,11 @@ def test_empty_section_opens_first_row_via_resume_scoped_route(
         RESUME_ERROR_BANNER: _EMPTY_BANNER,
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: no_rows,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_rows,
+        resume_sections.RESUME_EDIT_BUTTON["certificates"]: no_rows,
         resume_sections.EMPTY_SECTION_MARKERS["attestations"]: empty_marker,
         resume_sections.EMPTY_SECTION_MARKERS["recommendations"]: empty_marker,
-        (
-            f"[data-qa='{resume_sections.ATTESTATION_FIELDS[0]}']"
-            if block == "attestations"
-            else "input[name='company']"
-        ): ready,
+        resume_sections.EMPTY_SECTION_MARKERS["certificates"]: empty_marker,
+        resume_sections.BLOCK_READY_SELECTORS[block]: ready,
         "[data-qa='resume-partial-edit-cancel']": cancel,
     }[selector]
     visited = []
@@ -470,17 +480,14 @@ def test_empty_section_opens_first_row_via_resume_scoped_route(
     monkeypatch.setattr(resume_sections, "goto_hh", goto)
     monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
     monkeypatch.setattr(resume_sections, "has_login_form", lambda _page: False)
-    monkeypatch.setattr(
-        resume_sections,
-        "_fill_attestation_row" if block == "attestations" else "_fill_recommendation_row",
-        lambda *_args: MagicMock(),
-    )
+    fill_name = {
+        "attestations": "_fill_attestation_row",
+        "recommendations": "_fill_recommendation_row",
+        "certificates": "_fill_certificate_row",
+    }[block]
+    monkeypatch.setattr(resume_sections, fill_name, lambda *_args: MagicMock())
 
-    plan = (
-        ResumeSectionsPlan(attestations=[item])
-        if block == "attestations"
-        else ResumeSectionsPlan(recommendations=[item])
-    )
+    plan = ResumeSectionsPlan(**{block: [item]})
     errors = apply_plan(page, "resume-id", plan, dry_run=True)
 
     assert errors == []
@@ -505,10 +512,13 @@ def test_both_empty_sections_reset_to_resume_before_each_block(monkeypatch) -> N
         RESUME_ERROR_BANNER: _EMPTY_BANNER,
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: no_rows,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_rows,
+        resume_sections.RESUME_EDIT_BUTTON["certificates"]: no_rows,
         resume_sections.EMPTY_SECTION_MARKERS["attestations"]: empty_marker,
         resume_sections.EMPTY_SECTION_MARKERS["recommendations"]: empty_marker,
+        resume_sections.EMPTY_SECTION_MARKERS["certificates"]: empty_marker,
         f"[data-qa='{resume_sections.ATTESTATION_FIELDS[0]}']": ready,
         "input[name='company']": ready,
+        resume_sections.BLOCK_READY_SELECTORS["certificates"]: ready,
         "[data-qa='resume-partial-edit-cancel']": cancel,
     }[selector]
     visited = []
@@ -522,6 +532,7 @@ def test_both_empty_sections_reset_to_resume_before_each_block(monkeypatch) -> N
     monkeypatch.setattr(resume_sections, "has_login_form", lambda _page: False)
     monkeypatch.setattr(resume_sections, "_fill_attestation_row", lambda *_args: MagicMock())
     monkeypatch.setattr(resume_sections, "_fill_recommendation_row", lambda *_args: MagicMock())
+    monkeypatch.setattr(resume_sections, "_fill_certificate_row", lambda *_args: MagicMock())
 
     plan = ResumeSectionsPlan(
         attestations=[resume_sections.Attestation("AWS", "Amazon", "Cloud", "2024")],
@@ -554,7 +565,10 @@ def test_empty_section_requires_unique_live_marker(monkeypatch, marker_count) ->
         RESUME_ERROR_BANNER: _EMPTY_BANNER,
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: no_rows,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_rows,
+        resume_sections.RESUME_EDIT_BUTTON["certificates"]: no_rows,
         resume_sections.EMPTY_SECTION_MARKERS["attestations"]: marker,
+        resume_sections.EMPTY_SECTION_MARKERS["recommendations"]: marker,
+        resume_sections.EMPTY_SECTION_MARKERS["certificates"]: marker,
     }[selector]
     monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
@@ -585,7 +599,10 @@ def test_empty_section_route_guard_rejects_other_resume(monkeypatch) -> None:
         RESUME_ERROR_BANNER: _EMPTY_BANNER,
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: no_rows,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_rows,
+        resume_sections.RESUME_EDIT_BUTTON["certificates"]: no_rows,
         resume_sections.EMPTY_SECTION_MARKERS["attestations"]: marker,
+        resume_sections.EMPTY_SECTION_MARKERS["recommendations"]: marker,
+        resume_sections.EMPTY_SECTION_MARKERS["certificates"]: marker,
     }[selector]
 
     def goto(_page, url):
@@ -718,10 +735,10 @@ def test_manual_block_schemas_are_known_and_unique() -> None:
 
 def test_config_accepts_manual_only_blocks() -> None:
     config = parse_resume_sections(
-        {"manual": {"contacts": {}, "links": {"dedup": "all-fields"}}},
+        {"manual": {"contact": {}, "link": {"dedup": "all-fields"}}},
         "resumes[0].resume_sections",
     )
-    assert config.manual == {"contacts": {}, "links": {"dedup": "all-fields"}}
+    assert config.manual == {"contact": {}, "link": {"dedup": "all-fields"}}
     assert config.blocks == ["attestations", "recommendations"]
 
 
@@ -734,4 +751,157 @@ def test_config_rejects_malformed_manual_section() -> None:
     with pytest.raises(ConfigError, match="должно быть отображением блоков"):
         parse_resume_sections({"manual": ["contacts"]}, "resumes[0].resume_sections")
     with pytest.raises(ConfigError, match="должны быть отображениями"):
-        parse_resume_sections({"manual": {"contacts": "x"}}, "resumes[0].resume_sections")
+        parse_resume_sections({"manual": {"contact": "x"}}, "resumes[0].resume_sections")
+
+
+# --- блок сертификатов (#1120, census 2026-09-12) ----------------------------
+
+
+def test_certificate_schema_matches_live_census() -> None:
+    """Census #1120: у формы сертификатов ровно три поля (название/год/ссылка);
+    организация и специализация в форме отсутствуют — схема сужена по факту.
+    Блок типизированный: ручной schema-записи и manual-конфиг-ключа у него нет
+    (#1120 cycle-review — мёртвая запись убрана)."""
+    from hhru_bot.commands.resume_sections import _TYPED_BLOCK_SPECS
+
+    assert "certificate" not in MANUAL_BLOCK_SCHEMAS
+    assert _TYPED_BLOCK_SPECS["--certificate"][1] == ("name", "year", "url")
+    certificate = resume_sections.Certificate("N", "2024", "https://example.com")
+    assert tuple(certificate.__dict__) == ("name", "year", "url")
+
+
+def test_certificate_census_selectors_are_pinned() -> None:
+    """#1120: все константы блока — только с живого DOM (census 2026-09-12):
+    маршрут с опциональным item_id, индексируемые edit-кнопки, поля без
+    data-qa (адресация по label), сохранение через partial-edit."""
+    route = resume_sections.SECTION_ROUTES["certificates"]("resume-x")
+    assert route.fullmatch("/resume/edit/resume-x/certificate")
+    assert route.fullmatch("/resume/edit/resume-x/certificate/2403685")
+    assert resume_sections.FIRST_SECTION_EDIT_PATHS["certificates"] == "certificate"
+    assert (
+        resume_sections.RESUME_EDIT_BUTTON["certificates"]
+        == "[data-qa^='resume-edit-button-certificate-']"
+    )
+    assert (
+        resume_sections.EMPTY_SECTION_MARKERS["certificates"]
+        == "[data-qa='suitable-vacancies-suggest-item-certificate']"
+    )
+    # data-qa у полей формы НЕТ (census: qa="" у всех трёх input) —
+    # единственный подтверждённый адресный хэндл — видимая подпись.
+    assert resume_sections.BLOCK_READY_SELECTORS["certificates"] == "label:text-is('Название')"
+
+
+def test_certificate_flag_builds_typed_plan() -> None:
+    args = _manual_args(
+        certificate=[
+            '{"name": "AWS Cloud Practitioner", "year": "2024", "url": "https://aws.amazon"}',
+            '{"name": "Яндекс Метрика", "year": "2019"}',
+        ]
+    )
+    plan, outcomes = _parse_manual_sections(args)
+    assert [c.name for c in plan.certificates] == ["AWS Cloud Practitioner", "Яндекс Метрика"]
+    assert plan.certificates[1].url == ""  # url опционален
+    assert [o.status for o in outcomes] == [OUTCOME_PLANNED, OUTCOME_PLANNED]
+
+
+def test_certificate_unknown_field_is_rejected_with_census_fields() -> None:
+    args = _manual_args(certificate=['{"name": "N", "organization": "Org"}'])
+    with pytest.raises(ValueError, match="неизвестные поля organization.*name, year, url"):
+        _parse_manual_sections(args)
+
+
+def test_duplicate_certificate_rows_yield_duplicate_outcome() -> None:
+    row = '{"name": "AWS", "year": "2024", "url": ""}'
+    plan, outcomes = _parse_manual_sections(_manual_args(certificate=[row, row]))
+    assert len(plan.certificates) == 1
+    assert [o.status for o in outcomes] == [OUTCOME_PLANNED, OUTCOME_DUPLICATE]
+
+
+def test_certificate_row_fills_labels_and_saves_through_partial_edit() -> None:
+    """#1120: заполнение по видимым подписям формы (census), сохранение —
+    через resume-partial-edit-save, как у остальных partial-редакторов."""
+    page = MagicMock()
+    field = MagicMock()
+    field.count.return_value = 1
+    page.get_by_label.return_value = field
+    save = MagicMock()
+    page.locator.return_value = save
+
+    returned = resume_sections._fill_certificate_row(
+        page, resume_sections.Certificate("AWS", "2024", "https://aws.amazon")
+    )
+
+    assert returned is save
+    filled = [call.args[0] for call in field.fill.call_args_list]
+    assert filled == ["AWS", "2024", "https://aws.amazon"]
+    labels = [call.args[0] for call in page.get_by_label.call_args_list]
+    assert labels == ["Название", "Год получения", "Ссылка, если есть"]
+    assert page.locator.call_args_list[-1].args[0] == "[data-qa='resume-partial-edit-save']"
+
+
+def test_sync_row_outcomes_propagates_verdicts_to_printed_list() -> None:
+    """Живой прогон #1120 (2026-09-14): outcome_map — срезы-копии; без
+    обратной синхронизации боевой appended в исходном списке оставался
+    «planned» и печатался неверно."""
+    from hhru_bot.commands.resume_sections import _sync_row_outcomes
+    from hhru_bot.resume_sections import OUTCOME_APPENDED
+
+    outcomes = [
+        RowOutcome("attestations", 0, OUTCOME_PLANNED),
+        RowOutcome("certificates", 0, OUTCOME_PLANNED),
+        RowOutcome("certificates", 1, OUTCOME_DUPLICATE, "повтор строки 0"),
+        RowOutcome("certificates", 2, OUTCOME_PLANNED),
+    ]
+    outcome_map = {
+        "attestations": [
+            RowOutcome("attestations", 0, OUTCOME_APPENDED, "сохранение подтверждено")
+        ],
+        "recommendations": [],
+        "certificates": [
+            RowOutcome("certificates", 0, OUTCOME_APPENDED, "сохранение подтверждено"),
+            RowOutcome("certificates", 2, OUTCOME_FAILED, "запись блока остановлена"),
+        ],
+    }
+
+    _sync_row_outcomes(outcomes, outcome_map)
+
+    assert [o.status for o in outcomes] == [
+        OUTCOME_APPENDED,
+        OUTCOME_APPENDED,
+        OUTCOME_DUPLICATE,
+        OUTCOME_FAILED,
+    ]
+    assert outcomes[0].reason == "сохранение подтверждено"
+
+
+def test_certificate_empty_marker_unconfirmed_stays_fail_closed(monkeypatch) -> None:
+    """Маркер пустого блока live-подтверждён 2026-09-14 (черновик qa-2,
+    testing). Тест держит сам страж: если маркер не найден однозначно,
+    путь первой строки обязан отказать, а не писать в непроверенное
+    место."""
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/resume-id"
+    no_rows = MagicMock()
+    no_rows.count.return_value = 0
+    absent_marker = MagicMock()
+    absent_marker.count.return_value = 0
+    page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
+        resume_sections.RESUME_EDIT_BUTTON["attestations"]: no_rows,
+        resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_rows,
+        resume_sections.RESUME_EDIT_BUTTON["certificates"]: no_rows,
+        resume_sections.EMPTY_SECTION_MARKERS["certificates"]: absent_marker,
+    }[selector]
+    monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(resume_sections, "has_login_form", lambda _page: False)
+
+    errors = apply_plan(
+        page,
+        "resume-id",
+        ResumeSectionsPlan(certificates=[resume_sections.Certificate("AWS", "2024", "")]),
+        dry_run=True,
+    )
+
+    assert len(errors) == 1
+    assert "пустой блок не подтверждён однозначно" in errors[0]

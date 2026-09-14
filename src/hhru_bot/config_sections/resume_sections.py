@@ -9,11 +9,13 @@ from ._registry import register
 
 _MODES = ("from_scratch", "prefill")
 _BLOCKS = ("attestations", "recommendations")
-# Manual-only блоки (#1118): CLI-флаги --contact/--certificate/--portfolio/--link.
-# LLM их не генерирует и в `blocks` их включать нельзя — финальные схемы
-# фиксирует census блоковых ишью (#1119-1122). Значения — зарезервированные
-# per-block отображения (будущая политика dedup/ключей), сейчас пустые.
-_MANUAL_BLOCKS = ("contacts", "certificates", "portfolio", "links")
+# Manual-only блоки (#1118/#1120 cycle-review): имена В ТОЧНОСТИ как ключи
+# MANUAL_BLOCK_SCHEMAS / ManualRow.block — singular, чтобы будущая проводка
+# ключа manual в блоковый движок не получила конфиг, не совпадающий ни с
+# одним блоком. LLM их не генерирует и в `blocks` их включать нельзя.
+# Значения — зарезервированные per-block отображения (будущая политика
+# dedup/ключей), сейчас пустые.
+_MANUAL_BLOCKS = ("contact", "portfolio", "link")
 
 
 @dataclass
