@@ -124,11 +124,23 @@ def upload_portfolio_image(page: Page, photo: Path, *, dry_run: bool) -> Portfol
         # Два shape запуска выбора файла: кнопка может открыть filechooser
         # сразу ИЛИ модалку загрузки со своим input[type=file]. Ждём chooser
         # коротким бюджетом, иначе — модалку.
+        chooser_error: PlaywrightError | None = None
+        file_chooser = None
         try:
             with page.expect_file_chooser(timeout=CHOOSER_TIMEOUT_MS) as chooser_info:
                 add_button.click()
-            chooser_info.value.set_files(str(photo))
-        except PlaywrightError as chooser_exc:
+            file_chooser = chooser_info.value
+        except PlaywrightError as exc:
+            # Chooser не открылся — пробуем второй shape: модалку загрузки.
+            chooser_error = exc
+        if file_chooser is not None:
+            # Chooser открылся; ошибка set_files — честная причина, а не
+            # «chooser не открылся» (cycle-review PR #1128).
+            try:
+                file_chooser.set_files(str(photo))
+            except PlaywrightError as exc:
+                return PortfolioUploadResult(False, reason=f"файл не передан в chooser: {exc}")
+        else:
             modal_input = page.locator("[data-qa='modal-overlay'] input[type='file']")
             try:
                 modal_input.first.wait_for(state="visible", timeout=FORM_TIMEOUT_MS)
@@ -154,8 +166,8 @@ def upload_portfolio_image(page: Page, photo: Path, *, dry_run: bool) -> Portfol
                 return PortfolioUploadResult(
                     False,
                     reason=(
-                        f"после клика ни filechooser, ни input в модалке: "
-                        f"{chooser_exc}; {modal_exc}; DOM: {seen}"
+                        "после клика ни filechooser, ни input в модалке: "
+                        f"{chooser_error}; {modal_exc}; DOM: {seen}"
                     ),
                 )
             if modal_input.count() != 1:
