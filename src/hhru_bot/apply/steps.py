@@ -348,6 +348,11 @@ def navigate_to_response_form(
         return False
     blocker = handle_post_click_blockers(page, allow_relocation=allow_relocation)
     if blocker is not None:
+        # #1134 (боевой прогон 2026-09-14): отказ лимита чаще всего ловится
+        # этим pre-navigation проходом, а не позже — без дампа здесь
+        # отрисованный DOM отказа не зафиксировать никогда.
+        if blocker.kind == "limit_exceeded" and dump_diagnostics:
+            _dump_navigation_diagnostics(page, "limit_refusal", vacancy_id, run_id)
         return blocker
     # #350: some accounts receive a modal on the vacancy URL instead of a form
     # navigation.  Its expanded warning is a definitive, non-actionable skip.
