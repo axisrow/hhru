@@ -930,6 +930,18 @@ def _apply_rows(
     return errors
 
 
+# Живой census 2026-09-14 (модалка с непустой галереей портфолио, резюме
+# qa-2 аккаунта testing): карточки работ — label «Без описания» с
+# checkbox-container/checkbox и input[type=checkbox] (data-qa НЕТ ни на
+# чекбоксе, ни на карточке); сохранение — resume-modal-button-save
+# («Сохранить», button); «Редактировать» в футере (resume-modal-button-setting)
+# — отдельный вход в редактор ссылок, его внутренности живым census'ом не
+# разобраны (требует клика) — link-строки поэтому остаются fail-closed.
+PORTFOLIO_MODAL_PATH = "/resume/{resume_id}?edit=portfolio"
+PORTFOLIO_MODAL_SAVE = "[data-qa='resume-modal-button-save']"
+PORTFOLIO_MODAL_CHECKBOX = "[data-qa='modal-overlay'] input[type='checkbox']"
+
+
 def verify_portfolio_photos(page: Page, photo_ids: set[str]) -> dict[str, str]:
     """Read-only проверка существования фото в галерее аккаунта (#1121).
 

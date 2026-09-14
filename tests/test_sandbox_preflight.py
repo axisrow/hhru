@@ -56,6 +56,7 @@ def test_browser_command_registry_is_complete() -> None:
         "search",
         "select-photo",
         "upload-photo",
+        "upload-portfolio-image",
         "delete-photo",
         "wizard-next",
     }
