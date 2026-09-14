@@ -362,8 +362,6 @@ def _wall_clock_alarm(signum, frame) -> None:  # noqa: ARG001
 
 #: Глубина вложения активных wall_clock_guard'ов (главный поток, один таймер).
 _GUARD_DEPTH = 0
-#: Дедлайн монопольного таймера внешнего guard'а (monotonic); None — внешнего нет.
-_GUARD_DEADLINE: float | None = None
 
 
 @contextmanager
@@ -396,7 +394,7 @@ def wall_clock_guard(seconds: float, *, what: str = "операция"):
       инвертировать порядок бюджетов (внешний > внутреннего) нельзя без
       пересмотра дизайна «один таймер».
     """
-    global _GUARD_DEPTH, _GUARD_DEADLINE
+    global _GUARD_DEPTH
     if not hasattr(signal, "SIGALRM") or threading.current_thread() is not threading.main_thread():
         yield
         return
@@ -410,7 +408,13 @@ def wall_clock_guard(seconds: float, *, what: str = "операция"):
         if _GUARD_DEPTH > 1:
             # Вложенный guard: внешний таймер уже живёт и сработает не позже
             # ЛЮБОГО внутреннего бюджета — иначе см. предусловие в докстринге.
-            assert _GUARD_DEADLINE is not None and time.monotonic() + seconds >= _GUARD_DEADLINE, (
+            # Оставшееся время внешнего читаем из getitimer, а НЕ из
+            # time.monotonic: горячий путь goto_hh не должен зависеть от
+            # монотонных часов — тесты патчат time.monotonic конечными
+            # итераторами, и StopIteration внутри генератора contextlib
+            # оборачивается RuntimeError "generator raised StopIteration"
+            # (упало в CI linux/py3.12, PR #1136).
+            assert seconds >= signal.getitimer(signal.ITIMER_REAL)[0], (
                 "wall_clock_guard: вложенный бюджет "
                 f"{seconds}s короче оставшегося внешнего капа — "
                 "внутренний бюджет был бы потерян"
@@ -418,7 +422,6 @@ def wall_clock_guard(seconds: float, *, what: str = "операция"):
             yield
             return
         signal.signal(signal.SIGALRM, _wall_clock_alarm)
-        _GUARD_DEADLINE = time.monotonic() + seconds
         signal.setitimer(signal.ITIMER_REAL, seconds)
         try:
             yield
@@ -436,7 +439,6 @@ def wall_clock_guard(seconds: float, *, what: str = "операция"):
                 except GotoWatchdogTimeout:
                     pass
             signal.signal(signal.SIGALRM, previous_handler)
-        _GUARD_DEADLINE = None
     finally:
         _GUARD_DEPTH -= 1
 

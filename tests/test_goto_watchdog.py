@@ -156,6 +156,20 @@ def test_verify_phase_cap_is_fatal_and_propagates(monkeypatch):
         apply_pipeline._finalize_post_click_failure(ctx, "navigate timeout")
 
 
+def test_guard_does_not_touch_monotonic_clock(monkeypatch):
+    """CI linux/py3.12 (PR #1136): тесты патчат time.monotonic конечными
+    итераторами; вызов monotonic в guard'е давал StopIteration внутри
+    генератора contextlib → RuntimeError "generator raised StopIteration".
+    Горячий путь goto_hh не должен зависеть от монотонных часов."""
+
+    class _InstantPage:
+        def goto(self, url, *, wait_until=None):  # noqa: ANN001, ARG002
+            return None
+
+    monkeypatch.setattr(time, "monotonic", iter([]).__next__)
+    goto_hh(_InstantPage(), "https://hh.ru/search/vacancy")
+
+
 def test_nested_guard_asserts_shorter_than_outer():
     """Review PR #1136: вложенный бюджет короче внешнего капа — громкий
     AssertionError, а не молчаливая потеря внутреннего бюджета."""
