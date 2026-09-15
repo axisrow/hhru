@@ -677,8 +677,10 @@ def test_manual_flag_invalid_json_and_non_object_fail() -> None:
 
 
 def test_manual_flag_empty_record_is_rejected() -> None:
+    # contact (#1119) — типизированная схема (type, value, comment, preferred):
+    # запись, у которой все поля пустые, отклоняется до браузера.
     with pytest.raises(ValueError, match="пустую запись"):
-        _parse_manual_sections(_manual_args(portfolio=['{"name": "", "url": " "}']))
+        _parse_manual_sections(_manual_args(contact=['{"comment": ""}']))
 
 
 def test_duplicate_manual_rows_yield_duplicate_outcome_without_second_row() -> None:
@@ -1053,3 +1055,341 @@ def test_certificate_empty_marker_unconfirmed_stays_fail_closed(monkeypatch) -> 
 
     assert len(errors) == 1
     assert "пустой блок не подтверждён однозначно" in errors[0]
+
+
+# --- портфолио (#1121, census 2026-09-12) ------------------------------------
+
+
+def test_portfolio_flag_builds_typed_items_and_planned_outcomes() -> None:
+    args = _manual_args(
+        portfolio=[
+            '{"type": "image", "photo_id": "123456"}',
+            '{"type": "link", "title": "Проект X", "url": "https://example.com/x"}',
+        ]
+    )
+    plan, outcomes = _parse_manual_sections(args)
+    assert len(plan.portfolio) == 2
+    assert plan.portfolio[0].kind == "image"
+    assert plan.portfolio[0].photo_id == "123456"
+    assert plan.portfolio[1].kind == "link"
+    assert plan.portfolio[1].url == "https://example.com/x"
+    assert [o.status for o in outcomes] == [OUTCOME_PLANNED, OUTCOME_PLANNED]
+
+
+def test_portfolio_schema_matches_census_no_name_field() -> None:
+    """Поля фундамента name/url опровергнуты census: в UI портфолио нет name."""
+    args = _manual_args(portfolio=['{"name": "Проект", "url": "https://x"}'])
+    with pytest.raises(ValueError, match="неизвестные поля name.*type, photo_id, title, url"):
+        _parse_manual_sections(args)
+
+
+def test_portfolio_kind_must_be_image_or_link() -> None:
+    args = _manual_args(portfolio=['{"type": "video", "title": "x"}'])
+    with pytest.raises(ValueError, match="type должен быть 'image' или 'link'"):
+        _parse_manual_sections(args)
+
+
+def test_portfolio_image_requires_numeric_photo_id_only() -> None:
+    with pytest.raises(ValueError, match="числовой photo_id"):
+        _parse_manual_sections(_manual_args(portfolio=['{"type": "image"}']))
+    with pytest.raises(ValueError, match="относятся к type=link"):
+        _parse_manual_sections(
+            _manual_args(portfolio=['{"type": "image", "photo_id": "1", "url": "https://x"}'])
+        )
+
+
+def test_portfolio_link_requires_url_within_limits() -> None:
+    with pytest.raises(ValueError, match="требует url"):
+        _parse_manual_sections(_manual_args(portfolio=['{"type": "link", "title": "x"}']))
+    long_url = "https://example.com/" + "a" * 200
+    with pytest.raises(ValueError, match="лимита hh.ru"):
+        _parse_manual_sections(
+            _manual_args(portfolio=['{"type": "link", "url": "' + long_url + '"}'])
+        )
+    with pytest.raises(ValueError, match="photo_id относится к type=image"):
+        _parse_manual_sections(
+            _manual_args(portfolio=['{"type": "link", "url": "https://x", "photo_id": "5"}'])
+        )
+
+
+def test_portfolio_duplicate_rows_yield_duplicate_outcome() -> None:
+    row = '{"type": "link", "title": "Проект X", "url": "https://example.com/x"}'
+    plan, outcomes = _parse_manual_sections(_manual_args(portfolio=[row, row]))
+    assert len(plan.portfolio) == 1
+    assert [o.status for o in outcomes] == [OUTCOME_PLANNED, OUTCOME_DUPLICATE]
+
+
+def test_portfolio_battle_link_rows_fail_fast_without_browser() -> None:
+    """UI для portfolioUrls не существует (census 2026-09-12/14): link-строки
+    failed с честной причиной, браузер не трогается вовсе (fail-fast)."""
+    from hhru_bot.resume_sections import PortfolioItem, _apply_portfolio
+
+    page = MagicMock()
+    page.locator.side_effect = AssertionError("link-строки не должны запускать браузер")
+    items = [PortfolioItem("link", url="https://x")]
+    outcomes: list = [None]
+    errors = _apply_portfolio(page, items, dry_run=False, outcomes=outcomes)
+    assert len(errors) == 1
+    assert outcomes[0].status == OUTCOME_FAILED
+    assert "не существует" in outcomes[0].reason
+    page.locator.assert_not_called()
+
+
+def test_portfolio_battle_reports_missing_gallery_photo_concretely(monkeypatch) -> None:
+    from hhru_bot.resume_sections import PortfolioItem, _apply_portfolio
+
+    monkeypatch.setattr(
+        resume_sections, "verify_portfolio_photos", lambda page, ids: {"123456": "нет фото"}
+    )
+    goto_spy = MagicMock()
+    monkeypatch.setattr(resume_sections, "goto_hh", goto_spy)
+    items = [PortfolioItem("image", photo_id="123456")]
+    outcomes: list = [None]
+    errors = _apply_portfolio(MagicMock(), items, resume_id="r1", dry_run=False, outcomes=outcomes)
+    assert outcomes[0].reason == "нет фото"
+    assert "нет фото" in errors[0]
+    goto_spy.assert_not_called()  # модалка не открывалась
+
+
+def test_portfolio_dry_run_touches_nothing() -> None:
+    from hhru_bot.resume_sections import PortfolioItem, _apply_portfolio
+
+    page = MagicMock()
+    errors = _apply_portfolio(page, [PortfolioItem("link", url="https://x")], dry_run=True)
+    assert errors == []
+    page.assert_not_called()
+
+
+def test_verify_portfolio_photos_reports_missing_ids(monkeypatch) -> None:
+    counts = {"gallery-image-1": 1, "gallery-image-2": 0}
+
+    class FakeLocator:
+        def __init__(self, qa):
+            self._count = counts[qa]
+
+        def count(self):
+            return self._count
+
+    page = MagicMock()
+    page.locator.side_effect = lambda sel: FakeLocator(sel.split("data-qa='")[1][:-2])
+    page.url = "https://hh.ru/applicant/gallery"
+    monkeypatch.setattr(resume_sections, "has_login_form", lambda page: False)
+    missing = resume_sections.verify_portfolio_photos(page, {"1", "2"})
+    assert set(missing) == {"2"}
+    assert "галерее (0)" in missing["2"]
+
+
+def test_portfolio_battle_survives_gallery_navigation_error(monkeypatch) -> None:
+    """cycle-review PR #1128: сбой навигации на галерею не должен крашить
+    apply_plan — строки честно failed с причиной, run продолжается."""
+    from hhru_bot.resume_sections import PortfolioItem, _apply_portfolio
+
+    def boom(page, url):
+        raise PlaywrightError("net gone")
+
+    monkeypatch.setattr(resume_sections, "goto_hh", boom)
+    items = [PortfolioItem("image", photo_id="1"), PortfolioItem("link", url="https://x")]
+    outcomes = [None, None]
+    errors = _apply_portfolio(MagicMock(), items, resume_id="r1", dry_run=False, outcomes=outcomes)
+    assert len(errors) == 2
+    assert all(o.status == OUTCOME_FAILED for o in outcomes)
+    assert "галерея не прочитана" in outcomes[0].reason
+    assert "не существует" in errors[0]
+
+
+def test_portfolio_battle_checkbox_mismatch_fails_closed(monkeypatch) -> None:
+    """Число чекбоксов не соответствует image-строкам: выбор вслепую запрещён,
+    строки failed, кликов сохранения нет."""
+    from hhru_bot.resume_sections import PortfolioItem, _apply_portfolio
+
+    monkeypatch.setattr(resume_sections, "verify_portfolio_photos", lambda page, ids: {})
+    monkeypatch.setattr(resume_sections, "has_login_form", lambda page: False)
+
+    class FakeLocator:
+        def __init__(self, count):
+            self._count = count
+
+        def count(self):
+            return self._count
+
+        def wait_for(self, *, state, timeout):  # noqa: ARG002
+            return None
+
+        def nth(self, index):  # pragma: no cover - не вызывается при mismatch
+            raise AssertionError("nth не должен вызываться при mismatch")
+
+        def is_checked(self):  # pragma: no cover
+            raise AssertionError
+
+        def check(self):  # pragma: no cover
+            raise AssertionError
+
+    save = FakeLocator(1)
+    checkboxes = FakeLocator(3)  # чекбоксов 3, image-строка 1
+
+    def locator(sel):
+        if sel == resume_sections.PORTFOLIO_MODAL_SAVE:
+            return save
+        if sel == resume_sections.PORTFOLIO_MODAL_CHECKBOX:
+            return checkboxes
+        raise AssertionError(f"неожиданный селектор {sel}")
+
+    page = MagicMock()
+    page.locator.side_effect = locator
+    items = [PortfolioItem("image", photo_id="199262192")]
+    outcomes: list = [None]
+    errors = _apply_portfolio(page, items, resume_id="r1", dry_run=False, outcomes=outcomes)
+    assert outcomes[0].status == OUTCOME_FAILED
+    assert "выбор вслепую" in outcomes[0].reason
+    assert errors
+
+
+def test_portfolio_battle_image_row_appends_with_readback(monkeypatch) -> None:
+    from hhru_bot.resume_sections import OUTCOME_APPENDED, PortfolioItem, _apply_portfolio
+
+    monkeypatch.setattr(resume_sections, "verify_portfolio_photos", lambda page, ids: {})
+    monkeypatch.setattr(resume_sections, "has_login_form", lambda page: False)
+
+    class FakeCard:
+        def count(self):
+            return 1
+
+        def click(self):
+            # Magritte-чекбокс управляется React-стейтом: клик по карточке
+            # меняет стейт, а не только DOM-свойство инпута.
+            checkbox.checked = True
+
+    class FakeCheckbox:
+        def __init__(self):
+            self.checked = False
+
+        def count(self):
+            return 1
+
+        def nth(self, index):  # noqa: ARG002 - один чекбокс
+            return self
+
+        def is_checked(self):
+            return self.checked
+
+        def check(self):  # pragma: no cover - боевой путь идёт через карточку
+            raise AssertionError("check() не должен использоваться при живой карточке")
+
+        def locator(self, selector):  # noqa: ARG002
+            return FakeCard()
+
+    class FakeSave:
+        def __init__(self):
+            self.clicks = 0
+
+        def count(self):
+            return 1
+
+        def wait_for(self, *, state, timeout):  # noqa: ARG002
+            # Первое ожидание — отрисовка модалки, после клика — закрытие.
+            assert state in ("visible", "hidden") and (state == "visible") == (self.clicks == 0)
+
+        def click(self):
+            self.clicks += 1
+
+    checkbox = FakeCheckbox()
+    save = FakeSave()
+
+    def locator(sel):
+        if sel == resume_sections.PORTFOLIO_MODAL_SAVE:
+            return save
+        if sel == resume_sections.PORTFOLIO_MODAL_CHECKBOX:
+            return checkbox
+        raise AssertionError(f"неожиданный селектор {sel}")
+
+    # Readback — внешний источник: SSR HH-Lux-InitialState страницы резюме,
+    # массив portfolio содержит привязанное фото.
+    ssr_html = (
+        '<html><body><template id="HH-Lux-InitialState">'
+        '{"resume":{"portfolio":[{"id":"199262192","title":"Работа"}]}}'
+        "</template></body></html>"
+    )
+    page = MagicMock()
+    page.locator.side_effect = locator
+    page.content.return_value = ssr_html
+    items = [PortfolioItem("image", photo_id="199262192")]
+    outcomes: list = [None]
+    errors = _apply_portfolio(page, items, resume_id="r1", dry_run=False, outcomes=outcomes)
+    assert errors == []
+    assert outcomes[0].status == OUTCOME_APPENDED
+    assert save.clicks == 1
+
+
+def test_portfolio_battle_readback_ssr_unreadable_fails_uncertain(monkeypatch) -> None:
+    """SSR не прочитан — внешнее подтверждение недостижимо: строки failed
+    с честной причиной uncertain, appended не ставится (fail-closed #207)."""
+    from hhru_bot.resume_sections import OUTCOME_FAILED, PortfolioItem, _apply_portfolio
+
+    monkeypatch.setattr(resume_sections, "verify_portfolio_photos", lambda page, ids: {})
+    monkeypatch.setattr(resume_sections, "has_login_form", lambda page: False)
+
+    class FakeCard:
+        def count(self):
+            return 1
+
+        def click(self):
+            pass
+
+    class FakeCheckbox:
+        def count(self):
+            return 1
+
+        def nth(self, index):  # noqa: ARG002
+            return self
+
+        def is_checked(self):
+            return False
+
+        def locator(self, selector):  # noqa: ARG002
+            return FakeCard()
+
+    class FakeSave:
+        def __init__(self):
+            self.clicks = 0
+
+        def count(self):
+            return 1
+
+        def wait_for(self, *, state, timeout):  # noqa: ARG002
+            # Первое ожидание — отрисовка модалки, после клика — закрытие.
+            assert state in ("visible", "hidden")
+
+        def click(self):
+            self.clicks += 1
+
+    save = FakeSave()
+
+    def locator(sel):
+        if sel == resume_sections.PORTFOLIO_MODAL_SAVE:
+            return save
+        if sel == resume_sections.PORTFOLIO_MODAL_CHECKBOX:
+            return FakeCheckbox()
+        raise AssertionError(f"неожиданный селектор {sel}")
+
+    page = MagicMock()
+    page.locator.side_effect = locator
+    page.content.return_value = "<html><body>нет SSR-состояния</body></html>"
+    items = [PortfolioItem("image", photo_id="199262192")]
+    outcomes: list = [None]
+    errors = _apply_portfolio(page, items, resume_id="r1", dry_run=False, outcomes=outcomes)
+    assert outcomes[0].status == OUTCOME_FAILED
+    assert "SSR-состояние резюме не прочитано" in outcomes[0].reason
+    assert errors
+
+
+def test_portfolio_outcomes_misalignment_is_loud() -> None:
+    from hhru_bot.resume_sections import PortfolioItem, _apply_portfolio
+
+    with pytest.raises(ValueError, match="выровнен по строкам"):
+        _apply_portfolio(
+            MagicMock(),
+            [PortfolioItem("link", url="https://x")],
+            resume_id="r1",
+            dry_run=False,
+            outcomes=[],
+        )

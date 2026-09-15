@@ -23,6 +23,7 @@ from .browser import (
     labelled_field,
     open_hydrated_resume_editor,
 )
+from .negotiations_probe import parse_initial_state
 
 if TYPE_CHECKING:
     from .config_sections.ai_profile import AIProfile
@@ -183,12 +184,79 @@ class Contact:
     preferred: bool = False
 
 
+# --- портфолио (#1121, census 2026-09-12/14) ---------------------------------
+
+# Портфолио НЕ имеет маршрута редактирования: /resume/edit/{id}/portfolio и
+# /applicant/portfolio отвечают 404. Редактор — МОДАЛКА на странице резюме,
+# открывается deep-link'ом /resume/{id}?edit=portfolio (живой census
+# 2026-09-14, резюме qa-2 аккаунта testing: модалка «Работа в портфолио»
+# отрисовалась от GET-запроса, read-only). Пустое состояние модалки НЕ
+# содержит контролов записи: только «Выберите работы…» и «Перейти в
+# настройки» — выбор изображений появляется при непустой галерее портфолио.
+# Контролов для link-строк (portfolioUrls) в UI не найдено ни в модалке, ни
+# на странице/галерее — link-строки поэтому fail-fast.
+PORTFOLIO_EMPTY_MARKER = "[data-qa='suitable-vacancies-suggest-item-portfolio']"
+
+# Галерея аккаунта: /applicant/gallery (таб «Изображения» настроек,
+# /applicant/settings → href подтверждён в SSR 2026-09-12). Селекторы с живого
+# census: кнопка «Добавить работу» add-image-PORTFOLIO и карточки
+# gallery-image-{photo_id} (наблюдавшиеся карточки были RESUME_PHOTO; шаблон
+# gallery-image-{id} подтверждён на трёх живых id).
+GALLERY_PATH = "/applicant/gallery"
+
+
+@dataclass(frozen=True)
+class PortfolioItem:
+    """Одна единица портфолио по факту UI (#1121 census 2026-09-12).
+
+    Ролей/периодов/описания проекта в UI нет — полей в схеме тоже нет.
+    kind="image": выбор уже загруженного в галерею фото (photo_id);
+    kind="link": внешняя ссылка (title + url, лимиты SSR-схемы hh.ru
+    portfolioUrls: title ≤255, url ≤200). Выдуманный URL изображения
+    запрещён: медиа подставляет только hh.ru из галереи.
+    """
+
+    kind: str
+    photo_id: str = ""
+    title: str = ""
+    url: str = ""
+
+
+def validate_portfolio_item(kind: str, photo_id: str, title: str, url: str) -> str | None:
+    """Строгая валидация строки портфолио; None — строка корректна."""
+    if kind not in ("image", "link"):
+        return f"type должен быть 'image' или 'link', получено {kind!r}"
+    if kind == "image":
+        if url or title:
+            return "поля title/url относятся к type=link; у image только photo_id"
+        if not photo_id.isdigit():
+            return "type=image требует числовой photo_id фото из галереи аккаунта"
+    else:
+        if photo_id:
+            return "поле photo_id относится к type=image; у link только title/url"
+        if not url:
+            return "type=link требует url"
+        if len(url) > 200:
+            return "url длиннее лимита hh.ru (200 символов)"
+        if len(title) > 255:
+            return "title длиннее лимита hh.ru (255 символов)"
+    return None
+
+
+def _portfolio_row(item: PortfolioItem) -> str:
+    """Однострочное человекочитаемое представление для плана/причин."""
+    if item.kind == "image":
+        return f"image photo_id={item.photo_id}"
+    return f"link title={item.title!r} url={item.url!r}"
+
+
 @dataclass
 class ResumeSectionsPlan:
     attestations: list[Attestation] = field(default_factory=list)
     recommendations: list[Recommendation] = field(default_factory=list)
     certificates: list[Certificate] = field(default_factory=list)
     contacts: list[Contact] = field(default_factory=list)
+    portfolio: list[PortfolioItem] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
     # Ручные строки блоков #1118 (--contact/--portfolio/--link).  Блоковые
     # ишью (#1119-1122) добавляют типизированные dataclass + fill-row и
@@ -234,7 +302,9 @@ MANUAL_BLOCK_SCHEMAS: dict[str, tuple[str, ...]] = {
     # ManualRow/plan_from_rows он недостижим — мёртвая запись схемы убрана.
     # Имена ключей = _MANUAL_BLOCKS в config_sections (singular).
     "contact": ("type", "value", "comment", "preferred"),
-    "portfolio": ("name", "url"),
+    # portfolio (#1121) переехал в типизированный PortfolioItem: схема
+    # фундамента ("name", "url") опровергнута census — в UI портфолио нет
+    # поля name; есть выбор фото галереи и ссылки.
     "link": ("name", "url"),
 }
 
@@ -861,6 +931,256 @@ def _apply_rows(
     return errors
 
 
+def verify_portfolio_photos(page: Page, photo_ids: set[str]) -> dict[str, str]:
+    """Read-only проверка существования фото в галерее аккаунта (#1121).
+
+    Возвращает {photo_id: причина} только для НЕ найденных id. Селектор
+    gallery-image-{id} подтверждён живым census /applicant/gallery.
+    """
+    missing: dict[str, str] = {}
+    goto_hh(page, f"{HH_BASE_URL}{GALLERY_PATH}")
+    if has_login_form(page):
+        return {photo_id: "hh.ru показал форму входа" for photo_id in photo_ids}
+    for photo_id in sorted(photo_ids):
+        locator = page.locator(f"[data-qa='gallery-image-{photo_id}']")
+        try:
+            count = locator.count()
+        except PlaywrightError as exc:
+            missing[photo_id] = f"галерея не прочитана: {exc}"
+            continue
+        if count != 1:
+            missing[photo_id] = (
+                f"фото {photo_id} не найдено однозначно в галерее ({count}); "
+                f"загрузите его через «Добавить работу» на {GALLERY_PATH}"
+            )
+    return missing
+
+
+# Живой census 2026-09-14 (модалка с непустой галереей портфолио, резюме
+# qa-2 аккаунта testing): карточки работ — label «Без описания» с
+# checkbox-container/checkbox и input[type=checkbox] (data-qa НЕТ ни на
+# чекбоксе, ни на карточке); сохранение — resume-modal-button-save
+# («Сохранить», button); «Редактировать» в футере (resume-modal-button-setting)
+# — отдельный вход в редактор ссылок, его внутренности живым census'ом не
+# разобраны (требует клика) — link-строки поэтому остаются fail-closed.
+PORTFOLIO_MODAL_PATH = "/resume/{resume_id}?edit=portfolio"
+PORTFOLIO_MODAL_SAVE = "[data-qa='resume-modal-button-save']"
+PORTFOLIO_MODAL_CHECKBOX = "[data-qa='modal-overlay'] input[type='checkbox']"
+
+
+def _portfolio_entry_ids(node: object) -> set[str]:
+    """Строковые id из SSR-массива portfolio (записи наблюдались dict)."""
+    ids: set[str] = set()
+    if not isinstance(node, list):
+        return ids
+    for entry in node:
+        if isinstance(entry, str):
+            ids.add(entry)
+        elif isinstance(entry, dict):
+            value = entry.get("id")
+            if isinstance(value, str | int):
+                ids.add(str(value))
+    return ids
+
+
+def _walk_portfolio_ids(node: object) -> set[str]:
+    """Собирает id из ВСЕХ ключей 'portfolio' в дереве SSR-состояния.
+
+    Путь внутри HH-Lux-InitialState не фиксируем: лишний ключ в другом месте
+    дерева мог бы дать ложный пропуск, фиксированный — ложный отказ при дрейфе
+    обёртки. Совпадение photo_id с посторонним id невозможно: id — числовые
+    идентификаторы фото галереи.
+    """
+    ids: set[str] = set()
+    if isinstance(node, dict):
+        if "portfolio" in node:
+            ids |= _portfolio_entry_ids(node["portfolio"])
+        for value in node.values():
+            ids |= _walk_portfolio_ids(value)
+    elif isinstance(node, list):
+        for value in node:
+            ids |= _walk_portfolio_ids(value)
+    return ids
+
+
+def _ssr_portfolio_ids(html: str) -> set[str] | None:
+    """Readback портфолио по внешнему источнику — SSR HH-Lux-InitialState.
+
+    None = SSR не найден/битый (истина о записи недостижима); иначе —
+    множество id фото, которые SSR показывает в portfolio резюме.
+    """
+    try:
+        state = parse_initial_state(html)
+    except (ValueError, json.JSONDecodeError):
+        return None
+    return _walk_portfolio_ids(state)
+
+
+def _apply_portfolio(
+    page: Page,
+    items: list[PortfolioItem],
+    *,
+    resume_id: str = "",
+    dry_run: bool,
+    outcomes: list[RowOutcome] | None = None,
+) -> list[str]:
+    """Боевой проход строк портфолио (#1121, селекторы census 2026-09-14).
+
+    Image-строка: deep-link модалки → чекбокс работы → «Сохранить». Привязка
+    id фото к чекбоксу в DOM не подтверждена (у карточек нет ни data-qa, ни
+    читаемого фото-идентификатора в census), поэтому выбор подтверждён только
+    при ЧИСЛЕННОМ соответствии чекбоксов запрошенным image-строкам — иначе
+    fail-closed, а не перебор. Link-строки — fail-fast с честной причиной:
+    UI для portfolioUrls не существует (census 2026-09-12/14, два независимых
+    источника). Dry-run браузер не трогает — план уже напечатан командой.
+    """
+    errors: list[str] = []
+    if dry_run:
+        return errors
+    # Тот же контракт, что у _apply_rows: исходы выровнены по строкам плана
+    # (команда фильтрует дубли). Молчаливое рассогласование здесь записало бы
+    # failed в чужой слот — падаем громко (#1128 cycle-review).
+    if outcomes is not None and len(outcomes) != len(items):
+        raise ValueError("outcomes должен быть выровнен по строкам блока")
+
+    def _fail(index: int, reason: str, *, stop: bool = False) -> None:
+        row_view = _portfolio_row(items[index])
+        errors.append(f"portfolio: строка {index} ({row_view}) не подтверждена: {reason}")
+        if outcomes is not None:
+            outcomes[index] = RowOutcome("portfolio", index, OUTCOME_FAILED, reason)
+        if stop and outcomes is not None:
+            fail_tail(outcomes, "portfolio", index + 1, "запись блока остановлена")
+
+    image_indices = [i for i, item in enumerate(items) if item.kind == "image"]
+    for index, item in enumerate(items):
+        if item.kind != "image":
+            _fail(
+                index,
+                "UI для ссылок (portfolioUrls) не существует в редакторе hh.ru "
+                "(census 2026-09-12/14); строка не поддержана",
+            )
+    if not image_indices:
+        return errors
+
+    # Read-only pre-flight: фото обязано существовать в галерее ДО кликов.
+    try:
+        missing = verify_portfolio_photos(page, {items[i].photo_id for i in image_indices})
+    except PlaywrightError as exc:
+        for index in image_indices:
+            _fail(index, f"галерея не прочитана: {exc}", stop=True)
+        return errors
+    for index in image_indices:
+        if items[index].photo_id in missing:
+            _fail(index, missing[items[index].photo_id])
+    image_indices = [i for i in image_indices if items[i].photo_id not in missing]
+    if not image_indices:
+        return errors
+
+    if not resume_id:
+        for index in image_indices:
+            _fail(index, "не указан resume_id — модалка не открывается", stop=True)
+        return errors
+
+    # Модалка: deep-link открывает её GET'ом (census 2026-09-14), клик по чипу
+    # не нужен. «commit не значит отрисовано» — ждём сохраняющую кнопку.
+    goto_hh(page, f"{HH_BASE_URL}/resume/{resume_id}?edit=portfolio")
+    if has_login_form(page):
+        for index in image_indices:
+            _fail(index, "hh.ru показал форму входа", stop=True)
+        return errors
+    save = page.locator(PORTFOLIO_MODAL_SAVE)
+    try:
+        save.wait_for(state="visible", timeout=FORM_TIMEOUT_MS)
+    except PlaywrightError as exc:
+        for index in image_indices:
+            _fail(index, f"модалка портфолио не отрисовалась: {exc}", stop=True)
+        return errors
+
+    checkboxes = page.locator(PORTFOLIO_MODAL_CHECKBOX)
+    checkbox_count = checkboxes.count()
+    if checkbox_count != len(image_indices):
+        # Привязка id фото → чекбокс в DOM не читается: численное соответствие
+        # — единственный неподдельный способ выбрать нужные работы.
+        for index in image_indices:
+            _fail(
+                index,
+                f"чекбоксов в модалке {checkbox_count} при {len(image_indices)} "
+                "image-строках; привязка id фото к чекбоксу в DOM не "
+                "подтверждена — выбор вслепую запрещён",
+                stop=True,
+            )
+        return errors
+    for checkbox_index, index in enumerate(image_indices):
+        checkbox = checkboxes.nth(checkbox_index)
+        try:
+            if checkbox.is_checked():
+                continue
+            # Magritte-чекбокс управляется React-стейтом: check() инпута
+            # меняет только DOM-свойство (первый прогон 2026-09-14: «Сохранить»
+            # ушло с пустой выборкой). Кликаем по стилизованному контролу —
+            # ancestor label карточки, как делает человек.
+            card = checkbox.locator("xpath=ancestor::label[1]")
+            if card.count() == 1:
+                card.click()
+            else:
+                checkbox.check()
+        except PlaywrightError as exc:
+            _fail(index, f"чекбокс работы не выбран: {exc}", stop=True)
+            return errors
+    if save.count() != 1:
+        for index in image_indices:
+            _fail(index, "кнопка сохранения неоднозначна", stop=True)
+        return errors
+    try:
+        save.click()
+        # Успех — закрытие модалки (кнопка исчезает), не URL: тот же принцип,
+        # что у partial-редакторов #331.
+        save.wait_for(state="hidden", timeout=SAVE_TIMEOUT_MS)
+    except (PlaywrightError, RuntimeError) as exc:
+        for index in image_indices:
+            _fail(
+                index,
+                f"сохранение не подтверждено (uncertain) после клика: {exc}",
+                stop=True,
+            )
+        return errors
+
+    # Readback именно этого резюме по ВНЕШНЕМУ источнику — SSR-состоянию
+    # страницы резюме (как export): массив portfolio обязан содержать каждый
+    # photo_id. :checked модалки — не сигнал: первый прогон 2026-09-14 дал
+    # ложный appended, когда SSR уже показывал portfolio:[].
+    goto_hh(page, f"{HH_BASE_URL}/resume/{resume_id}")
+    try:
+        page_content = page.content()
+    except PlaywrightError as exc:
+        for index in image_indices:
+            _fail(index, f"readback не прочитан (uncertain): {exc}", stop=True)
+        return errors
+    ssr_ids = _ssr_portfolio_ids(page_content)
+    wanted = {items[i].photo_id for i in image_indices}
+    if ssr_ids is None:
+        # SSR не прочитан — внешнее подтверждение недостижимо, fail-closed
+        # (тот же принцип, что у negotiations-вердиктов #207).
+        for index in image_indices:
+            _fail(index, "readback: SSR-состояние резюме не прочитано (uncertain)", stop=True)
+        return errors
+    if not wanted <= ssr_ids:
+        for index in image_indices:
+            _fail(
+                index,
+                "readback SSR: массив portfolio резюме не содержит "
+                f"{sorted(wanted - ssr_ids)} — запись не подтвердилась (uncertain)",
+                stop=True,
+            )
+        return errors
+    for index in image_indices:
+        if outcomes is not None:
+            outcomes[index] = RowOutcome(
+                "portfolio", index, OUTCOME_APPENDED, "сохранение и readback подтверждены"
+            )
+    return errors
+
+
 def apply_plan(
     page: Page,
     resume_id: str,
@@ -880,7 +1200,7 @@ def apply_plan(
     def _fail_all(reason: str) -> None:
         if outcomes is None:
             return
-        for block in ("attestations", "recommendations", "certificates", "contacts"):
+        for block in ("attestations", "recommendations", "certificates", "contacts", "portfolio"):
             fail_tail(outcomes.get(block), block, 0, reason)
 
     if not has_auth_cookie(page):
@@ -930,4 +1250,12 @@ def apply_plan(
         dry_run=dry_run,
         outcomes=None if outcomes is None else outcomes.get("contacts"),
     )
+    if plan.portfolio:
+        errors += _apply_portfolio(
+            page,
+            plan.portfolio,
+            resume_id=resume_id,
+            dry_run=dry_run,
+            outcomes=None if outcomes is None else outcomes.get("portfolio"),
+        )
     return errors

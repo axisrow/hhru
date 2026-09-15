@@ -113,6 +113,7 @@ def test_lock_covers_all_hhru_write_commands():
         "report-vacancy",
         "select-photo",
         "upload-photo",
+        "upload-portfolio-image",
         "delete-photo",
         "wizard-next",
     }

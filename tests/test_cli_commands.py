@@ -320,6 +320,7 @@ def test_all_commands_registered():
         "report-vacancy",
         "select-photo",
         "upload-photo",
+        "upload-portfolio-image",
         "delete-photo",
         "wizard-next",
     }
@@ -406,6 +407,7 @@ def test_register_commands_returns_names():
         "report_vacancy",
         "select_photo",
         "upload_photo",
+        "upload_portfolio_image",
         "delete_photo",
         "wizard_next",
     }
