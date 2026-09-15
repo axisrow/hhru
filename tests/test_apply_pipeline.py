@@ -937,6 +937,50 @@ def test_one_click_single_confirmed_account_resume_can_proceed():
     assert page.apply_clicks == [1]
 
 
+def test_one_click_identity_gate_compares_config_hash_domain():
+    """Хэш и числовой id разведены во всех доменах (правило «двойник с
+    одинаковыми id прячет расхождение»): ctx.resume_id — config-хэш
+    («01234567»), числовой домен («200») в pipeline не входит вовсе —
+    его подменяет только обёртка _verifier в apply_service. Гейт sole-resume
+    здесь не срабатывает (в аккаунте два резюме), identity подтверждает
+    vacancy-SSR по хэшу — клик состояться должен."""
+    verifier = _verifier("found", "topic=1")
+    page = FakePage(ssr_letter_required=False, ssr_resume_id="01234567")
+    result = apply_to_vacancy(
+        page,
+        _vacancy(),
+        "01234567",
+        "x",
+        dry_run=False,
+        verifier=verifier,
+        account_resume_hashes={"01234567", "fedcba98"},
+    )
+    assert result.success and result.acted
+    assert page.apply_clicks == [1]
+    # Верификатору уходит тот же config-хэш; числовой id подставляет _verifier.
+    assert verifier.calls == [(page, "1", "01234567")]
+
+
+def test_one_click_numeric_id_in_hash_domain_stops_before_click():
+    """Контракт доменов fail-closed: если бы в гейт попал числовой id («200»),
+    ни sole-resume-ветка ({хэшей} == {числовой} — всегда False), ни
+    vacancy-SSR (hash != числовой) не подтвердили бы identity — стоп ДО клика.
+    Ровно поэтому в apply_service в pipeline передаётся config-хэш, а не
+    verify_resume_id."""
+    page = FakePage(ssr_letter_required=False, ssr_resume_id="01234567")
+    result = apply_to_vacancy(
+        page,
+        _vacancy(),
+        "200",
+        "x",
+        False,
+        verifier=_verifier("found", "topic=1"),
+        account_resume_hashes={"01234567"},
+    )
+    assert not result.success and not result.acted and not result.uncertain
+    assert page.apply_clicks == []
+
+
 @pytest.mark.parametrize("status", ["not_found", "indeterminate", None])
 def test_one_click_unconfirmed_resume_remains_uncertain(monkeypatch, status):
     _one_click_navigation(monkeypatch)
