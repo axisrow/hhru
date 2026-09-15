@@ -116,12 +116,38 @@ def test_lock_covers_all_hhru_write_commands():
         "upload-portfolio-image",
         "delete-photo",
         "wizard-next",
+        "import-resume",
     }
 
 
 def test_common_is_write_locked():
     args = cli.build_parser().parse_args(["common", "--resume", "00001", "--dry-run"])
     assert _is_write_command(args)
+
+
+def test_live_import_uses_account_lock_with_custom_history(tmp_path, monkeypatch):
+    monkeypatch.delenv("CODEX_SANDBOX", raising=False)
+    config = tmp_path / "account" / "config.yaml"
+    argv = [
+        "--config",
+        str(config),
+        "--history",
+        str(tmp_path / "isolated" / "history.db"),
+        "import-resume",
+        "--file",
+        str(tmp_path / "export.json"),
+        "--force",
+    ]
+    args = cli.build_parser().parse_args(argv)
+    cli._resolve_paths(args)
+    assert _is_write_command(args)
+    lock_path = (config.parent / ".hhru.lock").resolve()
+    assert _write_lock_path(args) == lock_path
+    monkeypatch.setattr(cli, "_execute", lambda args: pytest.fail("import entered while locked"))
+    with acquire_write_lock(lock_path, command="restore"):
+        with pytest.raises(SystemExit) as exc:
+            main(argv)
+    assert exc.value.code == 1
 
 
 def test_config_read_commands_are_not_write_locked():

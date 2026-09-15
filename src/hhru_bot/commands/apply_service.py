@@ -293,8 +293,11 @@ class ApplyPlan:
 
 @dataclass(frozen=True)
 class ApplyResumeIdentity:
+    """Confirmed resume identity in numeric and config-hash domains."""
+
     verify_resume_id: str
     account_resume_ids: set[str] | None
+    account_resume_hashes: set[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -334,7 +337,7 @@ def _build_apply_providers(
 
 def _prepare_apply_resume(page, resume: ResumeConfig, dry_run: bool) -> ApplyResumeIdentity | None:
     """Confirm resume identity before search and retain verifier attribution data."""
-    identity = ApplyResumeIdentity(resume.resume_id, None)
+    identity = ApplyResumeIdentity(resume.resume_id, None, None)
     if dry_run:
         return identity
     ids_by_hash = resolve_numeric_resume_ids(page)
@@ -344,12 +347,15 @@ def _prepare_apply_resume(page, resume: ResumeConfig, dry_run: bool) -> ApplyRes
     numeric_id = ids_by_hash.get(resume.resume_id)
     if numeric_id is None:
         logger.warning(
-            "%s — резюме конфига (%s) нет в маппинге аккаунта: атрибуция в "
-            "верификаторе уйдёт в fail-closed",
+            "%s — резюме конфига (%s) нет в маппинге аккаунта: отклик отменён",
             resume.id,
             resume.resume_id,
         )
-        return identity
+        print(
+            f"[FAIL] {resume.id} — резюме из конфига не найдено среди резюме "
+            "аккаунта; отклик отменён"
+        )
+        return None
     resume_status = getattr(ids_by_hash, "statuses", {}).get(resume.resume_id)
     if resume_status is None or resume_status == "not_finished":
         print(
@@ -357,7 +363,7 @@ def _prepare_apply_resume(page, resume: ResumeConfig, dry_run: bool) -> ApplyRes
             f"готовый к отклику (status={resume_status!r}); завершите/опубликуйте его вручную"
         )
         return None
-    return ApplyResumeIdentity(numeric_id, set(ids_by_hash.values()))
+    return ApplyResumeIdentity(numeric_id, set(ids_by_hash.values()), set(ids_by_hash))
 
 
 _DEFAULT_UNLIMITED_PAGE_CAP = 5
@@ -723,6 +729,7 @@ def _execute_apply_wave(
         return True
     verify_resume_id = identity.verify_resume_id
     account_resume_ids = identity.account_resume_ids
+    account_resume_hashes = identity.account_resume_hashes
 
     approved_item = None
     approved_duplicate = False
@@ -919,13 +926,11 @@ def _execute_apply_wave(
 
         def _before_submit(vacancy_id: str = card.vacancy_id) -> None:
             nonlocal action_id
-            # #245: commit the fail-closed audit marker immediately before
-            # entering the irreversible form path. A process crash can leave
-            # browser dumps (and possibly a sent application) without
-            # returning an ApplyResult; waiting for the post-action record
-            # would make the next run send a duplicate. Keeping this hook after
-            # navigation/questions preserves the old no-action semantics for
-            # confirmed pre-submit exits.
+            # #245: commit the fail-closed audit marker immediately before the
+            # first click that can submit. A process crash can leave browser
+            # dumps (and possibly a sent application) without returning an
+            # ApplyResult; waiting for the post-action record would make the
+            # next run send a duplicate.
             # #420 follow-up (Codex adversarial-review round 1+2, PR #449): the
             # config's resume.search.text can have changed between the dry-run
             # that queued an --approved card and this run — attributing to the
@@ -961,6 +966,7 @@ def _execute_apply_wave(
             # post-click grey-zone failure can't accidentally record acted).
             apply_kwargs["verifier"] = _verifier
             apply_kwargs["before_submit"] = _before_submit
+            apply_kwargs["account_resume_hashes"] = account_resume_hashes
         if question_answerer is not None:
             apply_kwargs["question_answerer"] = question_answerer
             apply_kwargs["force"] = params.force

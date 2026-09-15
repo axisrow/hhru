@@ -1151,5 +1151,6 @@ def test_run_apply_for_resume_fail_closed_when_config_resume_not_in_mapping(tmp_
 
     _common.run_apply_for_resume(_ApplyPipelineFakePage(), config, resume, history, throttle, args)
 
-    # account_resume_ids=None → атрибуция fail-closed (incomparable), не matched.
-    assert seen == [("42", "AAA111", None)]
+    # A mapping that does not contain the configured resume is rejected before
+    # any vacancy is opened; no verifier call or external action is possible.
+    assert seen == []

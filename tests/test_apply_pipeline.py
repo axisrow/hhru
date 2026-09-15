@@ -124,6 +124,7 @@ class FakePage:
         submit_in_form: bool = False,
         submit_click_error: Exception | None = None,
         ssr_letter_required: bool = True,
+        ssr_resume_id: str | None = None,
     ):
         self.url = ""
         self.context = SimpleNamespace(
@@ -134,6 +135,7 @@ class FakePage:
         # (обязательное письмо): dry-run тесты предпросмотра вопросов
         # проходят к клику как раньше.
         self.ssr_letter_required = ssr_letter_required
+        self.ssr_resume_id = ssr_resume_id
         # #1099: клики по кнопке отклика (VACANCY_APPLY_BUTTON).
         self.apply_clicks: list[int] = []
         self.goto_calls: list[str] = []
@@ -169,6 +171,9 @@ class FakePage:
             "shortVacancy": {"@responseLetterRequired": self.ssr_letter_required},
             "test": {"hasTests": False},
         }
+        if self.ssr_resume_id is not None:
+            entry["resumes"] = {"111111111": {"hash": self.ssr_resume_id, "isIncomplete": False}}
+            entry["responseImpossible"] = False
         state = {"applicantVacancyResponseStatuses": {"1": entry}}
         return (
             '<template style="display:none" id="HH-Lux-InitialState">'
@@ -290,8 +295,8 @@ def test_antibot_detection_terminates_pipeline_before_per_vacancy_work(monkeypat
     assert page.apply_wait_for_calls == []
 
 
-def test_late_antibot_detection_stops_before_submit_audit_marker(monkeypatch):
-    page = FakePage(submit_in_form=True)
+def test_late_antibot_detection_preserves_initial_click_audit_marker(monkeypatch):
+    page = FakePage(ssr_letter_required=False, ssr_resume_id="RID")
     detection = AntiBotDetection("hcaptcha", "виден маркер hcaptcha")
     observations = iter((None, None, None, detection))
     monkeypatch.setattr(pipeline_module, "detect_antibot_on_page", lambda _page: next(observations))
@@ -307,9 +312,9 @@ def test_late_antibot_detection_stops_before_submit_audit_marker(monkeypatch):
             before_submit=lambda: before_submit_calls.append(True),
         )
 
-    # The challenge appeared on the last pre-submit barrier.  No durable action
-    # reservation is created because no irreversible submit was attempted.
-    assert before_submit_calls == []
+    # The initial response click can itself submit. A later challenge must not
+    # leave it without an audit reservation, even if form submit was not reached.
+    assert before_submit_calls == [True]
 
 
 def test_apply_already_responded_not_deduped_by_dom():
@@ -903,11 +908,8 @@ def _one_click_navigation(monkeypatch):
     )
 
 
-def test_apply_one_click_marker_is_success_without_external_verify(monkeypatch):
-    """#1093: видимый пост-откликный маркер после чистой pre-click проверки —
-    локальный позитивный сигнал (тот же класс доверия, что success-маркеры #7):
-    success с acted=True БЕЗ похода в /applicant/negotiations — иначе 8/10
-    вакансий прогона платили бы спасательным VERIFY за то, что уже доказано."""
+def test_apply_one_click_success_requires_resume_verification(monkeypatch):
+    """The generic marker proves a response, not which resume was attached."""
     _one_click_navigation(monkeypatch)
     verifier = _verifier("found", "topic=1")
     page = FakePage(apply_button=True)
@@ -916,7 +918,139 @@ def test_apply_one_click_marker_is_success_without_external_verify(monkeypatch):
     assert result.acted is True
     assert result.uncertain is False
     assert result.outcome_code == "one_click_success"
-    assert verifier.calls == []
+    assert verifier.calls == [(page, "1", "RID")]
+
+
+def test_one_click_single_confirmed_account_resume_can_proceed():
+    verifier = _verifier("found", "topic=1")
+    page = FakePage(ssr_letter_required=False)
+    result = apply_to_vacancy(
+        page,
+        _vacancy(),
+        "RID",
+        "x",
+        dry_run=False,
+        verifier=verifier,
+        account_resume_hashes={"RID"},
+    )
+    assert result.success
+    assert page.apply_clicks == [1]
+
+
+def test_one_click_identity_gate_compares_config_hash_domain():
+    """Хэш и числовой id разведены во всех доменах (правило «двойник с
+    одинаковыми id прячет расхождение»): ctx.resume_id — config-хэш
+    («01234567»), числовой домен («200») в pipeline не входит вовсе —
+    его подменяет только обёртка _verifier в apply_service. Гейт sole-resume
+    здесь не срабатывает (в аккаунте два резюме), identity подтверждает
+    vacancy-SSR по хэшу — клик состояться должен."""
+    verifier = _verifier("found", "topic=1")
+    page = FakePage(ssr_letter_required=False, ssr_resume_id="01234567")
+    result = apply_to_vacancy(
+        page,
+        _vacancy(),
+        "01234567",
+        "x",
+        dry_run=False,
+        verifier=verifier,
+        account_resume_hashes={"01234567", "fedcba98"},
+    )
+    assert result.success and result.acted
+    assert page.apply_clicks == [1]
+    # Верификатору уходит тот же config-хэш; числовой id подставляет _verifier.
+    assert verifier.calls == [(page, "1", "01234567")]
+
+
+def test_one_click_numeric_id_in_hash_domain_stops_before_click():
+    """Контракт доменов fail-closed: если бы в гейт попал числовой id («200»),
+    ни sole-resume-ветка ({хэшей} == {числовой} — всегда False), ни
+    vacancy-SSR (hash != числовой) не подтвердили бы identity — стоп ДО клика.
+    Ровно поэтому в apply_service в pipeline передаётся config-хэш, а не
+    verify_resume_id."""
+    page = FakePage(ssr_letter_required=False, ssr_resume_id="01234567")
+    result = apply_to_vacancy(
+        page,
+        _vacancy(),
+        "200",
+        "x",
+        False,
+        verifier=_verifier("found", "topic=1"),
+        account_resume_hashes={"01234567"},
+    )
+    assert not result.success and not result.acted and not result.uncertain
+    assert page.apply_clicks == []
+
+
+@pytest.mark.parametrize("status", ["not_found", "indeterminate", None])
+def test_one_click_unconfirmed_resume_remains_uncertain(monkeypatch, status):
+    _one_click_navigation(monkeypatch)
+    verifier = _verifier(status) if status is not None else None
+    result = apply_to_vacancy(FakePage(), _vacancy(), "RID", "x", False, verifier=verifier)
+    assert not result.success
+    assert result.acted and result.uncertain
+
+
+@pytest.mark.parametrize("ssr_resume_id", [None, "OTHER"])
+def test_one_click_without_requested_resume_stops_before_dispatch(ssr_resume_id):
+    page = FakePage(ssr_letter_required=False, ssr_resume_id=ssr_resume_id)
+    reservations = []
+    result = apply_to_vacancy(
+        page,
+        _vacancy(),
+        "RID",
+        "x",
+        False,
+        before_submit=lambda: reservations.append(True),
+    )
+    assert not result.success and not result.acted and not result.uncertain
+    assert not result.skipped
+    assert page.apply_clicks == []
+    assert reservations == []
+
+
+def test_initial_click_crash_has_durable_marker(tmp_path, monkeypatch):
+    from hhru_bot.history import History
+
+    history = History(tmp_path / "history.db")
+    page = FakePage(ssr_letter_required=False, ssr_resume_id="RID")
+    original_click = _FakeLocator.click
+
+    class DispatchedThenInterrupted(BaseException):
+        pass
+
+    def click(locator, **kwargs):
+        if locator._click_sink is page.apply_clicks:
+            page.apply_clicks.append(1)
+            raise DispatchedThenInterrupted()
+        return original_click(locator, **kwargs)
+
+    monkeypatch.setattr(_FakeLocator, "click", click)
+    with pytest.raises(DispatchedThenInterrupted):
+        apply_to_vacancy(
+            page,
+            _vacancy(),
+            "RID",
+            "x",
+            False,
+            before_submit=lambda: history.begin_action("RID", "1", "apply"),
+        )
+    assert page.apply_clicks == [1]
+    assert history.has_applied("RID", "1")
+
+
+def test_regular_form_reserves_once_before_initial_click():
+    page = FakePage(submit_in_form=True)
+    reservations = []
+    result = apply_to_vacancy(
+        page,
+        _vacancy(),
+        "RID",
+        "x",
+        False,
+        before_submit=lambda: reservations.append(list(page.apply_clicks)),
+    )
+    assert result.success
+    assert reservations == [[1]]
 
 
 def test_apply_one_click_marker_in_dry_run_is_uncertain(monkeypatch):
@@ -977,7 +1111,7 @@ def test_apply_battle_mode_one_click_shape_still_clicks():
     """Боевой путь не меняется (#1096 не деградировал): без dry-run кнопка
     отклика нажимается даже на one-click вакансии — детект stop-before-click
     включён только для dry-режимов."""
-    page = FakePage(apply_button=True, success=True, submit_in_form=True)
+    page = FakePage(apply_button=True, success=True, submit_in_form=True, ssr_resume_id="RID")
     page.ssr_letter_required = False
 
     result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False)

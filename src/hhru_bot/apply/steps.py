@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
@@ -95,8 +96,18 @@ class OneClickStopBeforeClick:
     у ensure_resume_selected (#33).
     """
 
-    def __init__(self, *, ssr_indeterminate: bool = False) -> None:
-        if ssr_indeterminate:
+    def __init__(
+        self,
+        *,
+        ssr_indeterminate: bool = False,
+        resume_unconfirmed: bool = False,
+    ) -> None:
+        if resume_unconfirmed:
+            self.reason = (
+                "one-click shape: выбранное резюме не подтверждено SSR-состоянием "
+                "вакансии — остановлено ДО клика (fail-closed, ноль мутаций)"
+            )
+        elif ssr_indeterminate:
             self.reason = (
                 "SSR страницы вакансии не подтверждает форму отклика: клик по "
                 "кнопке может быть реальным submit — остановлено ДО клика "
@@ -237,6 +248,9 @@ def navigate_to_response_form(
     allow_relocation: bool = False,
     run_id: str | None = None,
     stop_before_one_click: bool = False,
+    expected_resume_id: str | None = None,
+    account_resume_hashes: set[str] | None = None,
+    before_click: Callable[[], None] | None = None,
 ) -> str | bool | PostClickBlocker | OneClickResponded | OneClickStopBeforeClick:
     """Кликает кнопку отклика и дожидается навигации на форму отклика.
 
@@ -246,9 +260,9 @@ def navigate_to_response_form(
       на форму отклика);
     - ``True`` — submit-кнопка формы стала видимой;
     - ``OneClickResponded`` — отклик отправлен самим кликом без формы (#1093);
-    - ``OneClickStopBeforeClick`` — #1099: dry-режим (``stop_before_one_click=True``)
-      распознал one-click shape ДО клика и не нажал кнопку: в этом shape клик =
-      submit, «безбоевой» предпросмотр невозможен в принципе;
+    - ``OneClickStopBeforeClick`` — сухой режим или боевой путь с неподтверждённым
+      резюме остановился ДО клика: в one-click shape клик = submit, поэтому
+      продолжение без подтверждённой identity небезопасно;
     - ``False`` — рендер формы не подтверждён (навигация/рендер не удались).
 
     Это различие важно: pipeline не должен запускать детекцию вопросов для формы,
@@ -324,18 +338,39 @@ def navigate_to_response_form(
     # SSR-детект, и только при подтверждённой форме (letterRequired/hasTests)
     # кликаем. SSR не прочитан — тоже не кликаем: fail-closed, «не доказано,
     # что клик безопасен» (тот же принцип, что ensure_resume_selected #33).
-    # Боевой путь (flag=False) не проходит эту проверку вовсе — его поведение
-    # не меняется.
+    # Боевой путь тоже проходит identity-проверку, если вызывающий передал
+    # expected_resume_id; это отдельный fail-closed гейт, а не dry-run-логика.
+    one_click_shape = (
+        one_click_shape_by_ssr(page)
+        if stop_before_one_click or expected_resume_id is not None
+        else None
+    )
     if stop_before_one_click:
-        shape = one_click_shape_by_ssr(page)
-        if shape is not False:
-            sentinel = OneClickStopBeforeClick(ssr_indeterminate=shape is None)
+        if one_click_shape is not False:
+            sentinel = OneClickStopBeforeClick(ssr_indeterminate=one_click_shape is None)
             logger.info(
                 "Кнопка отклика НЕ нажата (%s): %s",
-                "one-click shape" if shape else "SSR не подтверждает форму",
+                "one-click shape" if one_click_shape else "SSR не подтверждает форму",
                 sentinel.reason,
             )
             return sentinel
+    # A one-click response is already a submit.  The vacancy page must prove
+    # that hh.ru will attach the requested resume before this click; a generic
+    # post-click marker cannot establish that identity after the fact.
+    if one_click_shape is True and expected_resume_id is not None:
+        single_account_resume = account_resume_hashes == {expected_resume_id}
+        if not single_account_resume and not _preselected_resume_confirmed_by_ssr(
+            page, expected_resume_id
+        ):
+            sentinel = OneClickStopBeforeClick(resume_unconfirmed=True)
+            logger.warning("Кнопка отклика НЕ нажата: %s", sentinel.reason)
+            return sentinel
+    # The initial vacancy click is itself a submit only in the one-click shape.
+    # Ordinary forms reserve the action immediately before their final submit
+    # in apply/pipeline.py, preserving the no-action contract for failed
+    # navigation to the form.
+    if before_click is not None and expected_resume_id is not None and one_click_shape is not False:
+        before_click()
     # #80/#179: потолок навигации на форму отклика — GOTO_TIMEOUT_MS (как у всех
     # goto). Двухшаговая навигация (CLAUDE.md п.4) — это сетевой запрос hh.ru,
     # который под DDoS-Guard грузится 33с+; APPLY_TIMEOUT_MS (10с) тут падал.

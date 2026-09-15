@@ -136,8 +136,14 @@ class ApplyContext:
     # pipeline инъектируют фейк или ничего; продакшн-проводка — в
     # commands/_common.run_apply_for_resume (verify_response_in_negotiations).
     verifier: ResponseVerifier | None = None
-    # #245: durable audit marker immediately before entering the submit path.
+    # #245: durable audit marker immediately before the first click that can
+    # submit (the vacancy response click in one-click shape, or the form path).
     before_submit: Callable[[], None] | None = None
+    # Hashes of all resumes confirmed in the account list. A one-click response
+    # may use the sole account resume without exposing a form-level SSR record;
+    # multiple resumes still require identity-bound vacancy SSR proof.
+    account_resume_hashes: set[str] | None = None
+    audit_reserved: bool = False
     question_answerer: AIQuestionAnswerer | None = None
     questionnaire_history: History | None = None
     run_id: str | None = None
@@ -205,6 +211,7 @@ def apply_to_vacancy(
     letter_match_threshold: float | None = None,
     verifier: ResponseVerifier | None = None,
     before_submit: Callable[[], None] | None = None,
+    account_resume_hashes: set[str] | None = None,
     question_answerer: AIQuestionAnswerer | None = None,
     questionnaire_history: History | None = None,
     run_id: str | None = None,
@@ -222,6 +229,7 @@ def apply_to_vacancy(
         letter_match_threshold=letter_match_threshold,
         verifier=verifier,
         before_submit=before_submit,
+        account_resume_hashes=account_resume_hashes,
         question_answerer=question_answerer,
         questionnaire_history=questionnaire_history,
         run_id=run_id,
@@ -536,6 +544,11 @@ def _run(ctx: ApplyContext) -> ApplyResult:
     if reason := check_already_responded(ctx.page, ctx.vacancy):
         return ctx.skip(reason, skip_reason=SKIP_REASONS.ALREADY_APPLIED)
 
+    def reserve_audit() -> None:
+        if ctx.before_submit is not None and not ctx.audit_reserved:
+            ctx.before_submit()
+            ctx.audit_reserved = True
+
     # #207: с клика по кнопке отклика начинается «серая зона» — дальнейшие
     # fail-исходы финализируются через _finalize_post_click_failure (внешняя
     # проверка /applicant/negotiations), а не сразу ctx.fail.
@@ -550,6 +563,9 @@ def _run(ctx: ApplyContext) -> ApplyResult:
         # отправляет реальный отклик. Боевой путь (dry_run=False) не меняется:
         # one-click для него легитимен (OneClickResponded ниже).
         stop_before_one_click=ctx.dry_run,
+        expected_resume_id=ctx.resume_id,
+        account_resume_hashes=ctx.account_resume_hashes,
+        before_click=reserve_audit,
     )
     _halt_if_antibot(ctx)
     if isinstance(navigation_result, apply_steps.OneClickStopBeforeClick):
@@ -591,11 +607,32 @@ def _run(ctx: ApplyContext) -> ApplyResult:
                 "one-click: клик по кнопке отклика в dry-run реально отправил "
                 "отклик без формы — исход неопределён"
             )
+        if ctx.verifier is None:
+            ctx.uncertain = True
+            return ctx.fail(
+                "one-click отклик обнаружен, но выбранное резюме не подтверждено "
+                "внешней проверкой — исход неопределён"
+            )
+        try:
+            verified = ctx.verifier(ctx.page, ctx.vacancy.vacancy_id, ctx.resume_id)
+        except Exception as exc:  # noqa: BLE001 - fail closed after a submit-capable click
+            ctx.uncertain = True
+            logger.warning("%s — one-click верификация упала: %s", ctx.vacancy.title, exc)
+            return ctx.fail(f"one-click отклик: внешняя проверка упала ({exc})")
+        if not verified.found:
+            ctx.uncertain = True
+            return ctx.fail(
+                "one-click отклик обнаружен, но внешняя проверка не подтвердила "
+                "выбранное резюме — исход неопределён"
+            )
         logger.info(
-            "[OK] %s — one-click отклик без формы: пост-откликный маркер",
+            "[OK] %s — one-click отклик без формы: резюме подтверждено внешней проверкой",
             ctx.vacancy.title,
         )
-        return ctx.ok(apply_steps.OneClickResponded.reason, outcome_code="one_click_success")
+        return ctx.ok(
+            f"{apply_steps.OneClickResponded.reason}; внешняя проверка подтвердила резюме",
+            outcome_code="one_click_success",
+        )
     if not navigation_result:
         # #1093: таймаут ожидания формы в один прогоне чаще всего one-click
         # (8/10 вакансий 2026-09-09), а не сбой — маркер просто не успел
@@ -745,10 +782,11 @@ def _run(ctx: ApplyContext) -> ApplyResult:
     #     ранних выходов #163, но traceback больше не рвёт цикл откликов.
     try:
         # Last pre-submit barrier: a challenge rendered after the form checks
-        # terminates the whole command before the irreversible click/audit marker.
+        # terminates the command before the irreversible form submit. The
+        # durable reservation is made immediately before this click for the
+        # ordinary form path (and before the vacancy click in one-click shape).
         _halt_if_antibot(ctx)
-        if ctx.before_submit is not None:
-            ctx.before_submit()
+        reserve_audit()
         reason = apply_steps.fill_response_form(ctx.page, ctx.resume_id, letter)
     except SubmitClickUncertain:
         ctx.acted = True

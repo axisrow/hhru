@@ -225,10 +225,15 @@ CREATE TABLE IF NOT EXISTS market_meta (
 """
 )
 
-# Маркер выполненной миграции данных из history.db в market.db: его наличие
-# делает повторное открытие no-op (копирование идемпотентно, но гонять его на
-# каждом открытии незачем).
+# Маркер базовой миграции данных из history.db в market.db. Полный no-op
+# требует также VACANCY_MIGRATION_MARKER_KEY: его добавили после исправления
+# конфликта локальных vacancies_seen.id, чтобы старые market.db можно было
+# восстановить идемпотентно.
 MIGRATION_MARKER_KEY = "migrated_from_history"
+
+# Earlier migrations copied account-local vacancies_seen.id and silently lost
+# rows on collisions. Replay only vacancies, preserving newer market snapshots.
+VACANCY_MIGRATION_MARKER_KEY = "vacancies_from_history:v2"
 
 # Маркер бэкфилла фолд-ключей и таблицы ролей, с версией схемы фолда: его
 # наличие делает повторные открытия MarketStore no-op (один SELECT вместо

@@ -142,6 +142,7 @@ WRITE_COMMANDS = frozenset(
         "upload-photo",
         "upload-portfolio-image",
         "wizard-next",
+        "import-resume",
     }
 )
 
@@ -350,7 +351,7 @@ def _write_lock_path(args: argparse.Namespace) -> Path:
     # apply --title to the other's clone and persist the wrong resume id.
     # resume-pool (#754) performs the identical copy_resume_on_hh reconciliation
     # in a loop, once per missing cluster -- same account-wide race, same fix.
-    mutates_external_resume_list = args.command in ("copy-resume", "resume-pool")
+    mutates_external_resume_list = args.command in ("copy-resume", "resume-pool", "import-resume")
     lock_root = Path(args.config if writes_config or mutates_external_resume_list else args.history)
     return lock_root.expanduser().resolve().parent / ".hhru.lock"
 
