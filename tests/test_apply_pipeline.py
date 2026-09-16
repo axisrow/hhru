@@ -125,6 +125,7 @@ class FakePage:
         submit_click_error: Exception | None = None,
         ssr_letter_required: bool = True,
         ssr_resume_id: str | None = None,
+        ssr_resume_multi: bool = False,
     ):
         self.url = ""
         self.context = SimpleNamespace(
@@ -136,6 +137,9 @@ class FakePage:
         # проходят к клику как раньше.
         self.ssr_letter_required = ssr_letter_required
         self.ssr_resume_id = ssr_resume_id
+        # #1144: multi-resume реестр доступности в vacancy-SSR (наш hash
+        # среди ДВУХ записей — shape 11-резюме аккаунта testing).
+        self.ssr_resume_multi = ssr_resume_multi
         # #1099: клики по кнопке отклика (VACANCY_APPLY_BUTTON).
         self.apply_clicks: list[int] = []
         self.goto_calls: list[str] = []
@@ -167,12 +171,22 @@ class FakePage:
         # one-click детекта — shortVacancy.@responseLetterRequired и test.hasTests.
         import json
 
-        entry = {
+        entry: dict = {
             "shortVacancy": {"@responseLetterRequired": self.ssr_letter_required},
             "test": {"hasTests": False},
         }
         if self.ssr_resume_id is not None:
-            entry["resumes"] = {"111111111": {"hash": self.ssr_resume_id, "isIncomplete": False}}
+            if self.ssr_resume_multi:
+                # #1144: наш hash среди ДВУХ записей (числовые ключи — очевидно
+                # подставные), реестр доступности, не предвыбор.
+                entry["resumes"] = {
+                    "111111111": {"hash": self.ssr_resume_id, "isIncomplete": False},
+                    "222222222": {"hash": "e" * 38, "isIncomplete": False},
+                }
+            else:
+                entry["resumes"] = {
+                    "111111111": {"hash": self.ssr_resume_id, "isIncomplete": False}
+                }
             entry["responseImpossible"] = False
         state = {"applicantVacancyResponseStatuses": {"1": entry}}
         return (
@@ -959,6 +973,54 @@ def test_one_click_identity_gate_compares_config_hash_domain():
     assert page.apply_clicks == [1]
     # Верификатору уходит тот же config-хэш; числовой id подставляет _verifier.
     assert verifier.calls == [(page, "1", "01234567")]
+
+
+def test_one_click_multi_resume_ssr_registry_with_our_hash_proceeds():
+    """#1144 регресс-тест: боевой гейт (allow_multi) принимает наш hash в
+    multi-resume реестре vacancy-SSR — живой shape 11-резюме аккаунта, на
+    котором 2026-09-16 отказало 96% one-click вакансий. Клик состояться
+    должен; фактическую атрибуцию доказывает пост-клик верификатор."""
+    verifier = _verifier("found", "topic=1")
+    page = FakePage(
+        ssr_letter_required=False,
+        ssr_resume_id="01234567",
+        ssr_resume_multi=True,
+    )
+    result = apply_to_vacancy(
+        page,
+        _vacancy(),
+        "01234567",
+        "x",
+        dry_run=False,
+        verifier=verifier,
+        account_resume_hashes={"01234567", "fedcba98"},
+    )
+    assert result.success and result.acted
+    assert page.apply_clicks == [1]
+    assert verifier.calls == [(page, "1", "01234567")]
+
+
+def test_one_click_multi_resume_registry_missing_hash_stops_before_dispatch():
+    """allow_multi не отменяет совпадения hash: нашего резюме в реестре нет —
+    стоп ДО клика, ноль мутаций (та же семантика, что и одноэлементный
+    test_one_click_without_requested_resume_stops_before_dispatch)."""
+    page = FakePage(
+        ssr_letter_required=False,
+        ssr_resume_id="OTHER",
+        ssr_resume_multi=True,
+    )
+    reservations = []
+    result = apply_to_vacancy(
+        page,
+        _vacancy(),
+        "RID",
+        "x",
+        False,
+        before_submit=lambda: reservations.append(True),
+    )
+    assert not result.success and not result.acted and not result.uncertain
+    assert page.apply_clicks == []
+    assert reservations == []
 
 
 def test_one_click_numeric_id_in_hash_domain_stops_before_click():

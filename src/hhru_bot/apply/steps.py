@@ -355,12 +355,16 @@ def navigate_to_response_form(
             )
             return sentinel
     # A one-click response is already a submit.  The vacancy page must prove
-    # that hh.ru will attach the requested resume before this click; a generic
-    # post-click marker cannot establish that identity after the fact.
+    # that hh.ru can attach the requested resume before this click: a generic
+    # post-click marker cannot establish identity after the fact.  #1144: on a
+    # multi-resume account the SSR `resumes` is an availability registry — our
+    # hash present in it (allow_multi=True) is the accepted proof; whichever
+    # resume hh.ru actually attaches is established post-click by the external
+    # verifier (OTHER_OWN → indeterminate).
     if one_click_shape is True and expected_resume_id is not None:
         single_account_resume = account_resume_hashes == {expected_resume_id}
         if not single_account_resume and not _preselected_resume_confirmed_by_ssr(
-            page, expected_resume_id
+            page, expected_resume_id, allow_multi=True
         ):
             sentinel = OneClickStopBeforeClick(resume_unconfirmed=True)
             logger.warning("Кнопка отклика НЕ нажата: %s", sentinel.reason)
@@ -540,7 +544,12 @@ def fill_cover_letter(page: Page, letter: str) -> str | None:
     return None
 
 
-def _preselected_resume_confirmed_by_ssr(page: Page, resume_id: str) -> bool:
+def _preselected_resume_confirmed_by_ssr(
+    page: Page,
+    resume_id: str,
+    *,
+    allow_multi: bool = False,
+) -> bool:
     """SSR-подтверждение ПРЕДВЫБРАННОГО резюме без дропдауна (2026-09-09).
 
     Живой факт (дамп probe_137014905_form.html + скриншот живой формы): на
@@ -555,13 +564,27 @@ def _preselected_resume_confirmed_by_ssr(page: Page, resume_id: str) -> bool:
     ``responseImpossible`` не true — это не «доверие дефолту» (#33), а чтение
     фактического выбора из состояния страницы (паттерн verify_wizard_save).
     Ровно одна запись в statuses: страница формы описывает одну вакансию;
-    иное — дрейф, не подтверждение. Ровно ОДНО резюме в ``resumes`` с нашим
-    hash: ``resumes`` — реестр доступности аккаунта для вакансии (рядом в SSR
-    живут usedResumeIds/unusedResumeIds/hiddenResumeIds, т.е. записей может
-    быть несколько), а какое из них предвыбрано формой состояние не сообщает.
-    Принять «наш hash есть среди многих» — submit с резюме, выбранным hh.ru,
-    а не нашим (#33); multi-resume-запись — дрейф относительно наблюдавшегося
-    single-resume shape, не подтверждение.
+    иное — дрейф, не подтверждение.
+
+    Строгий дефолт (``allow_multi=False``): ровно ОДНО резюме в ``resumes``
+    с нашим hash. Так вызывает ``ensure_resume_selected`` (form-fallback):
+    форма уже смонтирована, явный dropdown-выбор ПРОВАЛИЛСЯ — «наш hash среди
+    многих» не доказывает, что форма предвыбрала именно наше, принять его —
+    submit с резюме, выбранным hh.ru (#33).
+
+    ``allow_multi=True`` (#1144, только one-click pre-click гейт боевого
+    пути): ``resumes`` трактуется как РЕЕСТР ДОСТУПНОСТИ аккаунта (рядом в
+    SSR живут usedResumeIds/unusedResumeIds/hiddenResumeIds) — принимается
+    наш hash среди нескольких записей при неповреждённой записи (нет
+    ``forbidden``/``isIncomplete``). Живой факт 2026-09-16 (#1144): на
+    11-резюме аккаунте strict-вариант отказывал ~96% one-click вакансий;
+    11/11 успешных one-click откликов ушли с ДЕФОЛТНОГО резюме аккаунта
+    (проверено по ``topicList[].resumeId`` SSR /applicant/negotiations).
+    Граница метода: какое резюме hh.ru приложит, pre-click доказать нельзя
+    (поля предвыбора в SSR нет); неверная атрибуция ловится пост-клик
+    верификатором — ``apply/verify.py::_resume_attribution`` возвращает
+    OTHER_OWN → indeterminate (acted=True, uncertain=True, pipeline
+    ``_finalize_post_click_failure``).
     """
     from ..negotiations_probe import parse_initial_state
 
@@ -577,7 +600,22 @@ def _preselected_resume_confirmed_by_ssr(page: Page, resume_id: str) -> bool:
     if not isinstance(entry, dict) or entry.get("responseImpossible") is True:
         return False
     resumes = entry.get("resumes")
-    if not isinstance(resumes, dict) or len(resumes) != 1:
+    if not isinstance(resumes, dict):
+        return False
+    if allow_multi:
+        # #1144: реестр доступности — наш hash среди записей при
+        # неповреждённой записи. forbidden — гипотетическое поле, живьём
+        # не наблюдено (ни один дамп его не содержит); truthiness, не `is True`.
+        for record in resumes.values():
+            if (
+                isinstance(record, dict)
+                and record.get("hash") == resume_id
+                and not record.get("forbidden")
+                and record.get("isIncomplete") is not True
+            ):
+                return True
+        return False
+    if len(resumes) != 1:
         return False
     only = next(iter(resumes.values()))
     return (
@@ -712,6 +750,9 @@ def ensure_resume_selected(page: Page, resume_id: str) -> str | None:
         #     2026-09-09 показала, что отклик на таких формах возможен при
         #     заполненном письме, поэтому тексту предупреждения доверять
         #     нельзя — см. PR #1082/#1084).
+        # Строгость (allow_multi по умолчанию False) сохранена намеренно
+        # (#1144): форма уже смонтирована, явный dropdown-выбор ПРОВАЛИЛСЯ —
+        # «наш hash среди многих» здесь не доказывает предвыбор нашего резюме.
         if _preselected_resume_confirmed_by_ssr(page, resume_id):
             logger.info(
                 "Резюме '%s' предвыбрано формой (SSR identity подтверждён), "

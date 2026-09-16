@@ -810,7 +810,14 @@ def test_fill_form_missing_submit_returns_reason_no_click():
     assert "кнопка отправки отклика не найдена" in result
 
 
-def _ssr_form_state_html(resume_hash: str | None, *, multi_resume: bool = False) -> str:
+def _ssr_form_state_html(
+    resume_hash: str | None,
+    *,
+    multi_resume: bool = False,
+    matched_incomplete: bool = False,
+    matched_forbidden: bool = False,
+    response_impossible: bool = False,
+) -> str:
     """SSR HH-Lux-InitialState формы отклика с предвыбранным резюме.
 
     Живой shape (дамп probe_137014905_form.html, 2026-09-09):
@@ -819,7 +826,8 @@ def _ssr_form_state_html(resume_hash: str | None, *, multi_resume: bool = False)
     multi_resume=True — наш hash среди ДВУХ резюме (реестр доступности
     multi-resume аккаунта, не предвыбор). Числовые ключи резюме — очевидно
     подставные: реальные id аккаунта в фикстурах запрещены (hex-страж
-    числовой id не ловит).
+    числовой id не ловит). matched_incomplete/matched_forbidden — поля записи
+    НАШЕГО резюме (ключ «111111111»); response_impossible — entry-уровень.
     """
     resumes: dict
     if multi_resume:
@@ -831,9 +839,13 @@ def _ssr_form_state_html(resume_hash: str | None, *, multi_resume: bool = False)
         resumes = {"111111111": {"hash": resume_hash, "isIncomplete": False}}
     else:
         resumes = {"111111111": {"hash": "f" * 38, "isIncomplete": False}}
+    if matched_incomplete:
+        resumes["111111111"]["isIncomplete"] = True
+    if matched_forbidden:
+        resumes["111111111"]["forbidden"] = True
     entry: dict = {
         "hiddenResumeIds": [],
-        "responseImpossible": False,
+        "responseImpossible": response_impossible,
         "resumes": resumes,
     }
     state = {"applicantVacancyResponseStatuses": {"136173988": entry}}
@@ -935,6 +947,62 @@ def test_fill_form_resume_missing_without_warning_keeps_generic_reason():
     result = steps.fill_response_form(page, "RID", "письмо")
 
     assert result == "не удалось однозначно выбрать резюме 'RID' в форме отклика"
+
+
+def test_preselected_ssr_accepts_multi_resume_registry_when_allowed():
+    """#1144: allow_multi=True (one-click pre-click гейт) трактуёт `resumes`
+    как реестр доступности аккаунта: наш hash среди НЕСКОЛЬКИХ записей с
+    неповреждённой записью — подтверждение (живой факт 11/11: one-click уходит
+    с дефолтного резюме аккаунта; неверная атрибуция ловится пост-клик
+    верификатором)."""
+    page = FakeStepsPage()
+    page.content_html = _ssr_form_state_html("RID", multi_resume=True)
+
+    assert steps._preselected_resume_confirmed_by_ssr(page, "RID", allow_multi=True)
+
+
+def test_preselected_ssr_multi_resume_rejects_forbidden_entry():
+    """forbidden на записи нашего резюме — реестр его не предлагает: False.
+    Поле живьём не наблюдено, проверка defensive."""
+    page = FakeStepsPage()
+    page.content_html = _ssr_form_state_html("RID", multi_resume=True, matched_forbidden=True)
+
+    assert not steps._preselected_resume_confirmed_by_ssr(page, "RID", allow_multi=True)
+
+
+def test_preselected_ssr_multi_resume_rejects_incomplete_resume():
+    """isIncomplete на записи нашего резюме — отклик с ним невозможен: False."""
+    page = FakeStepsPage()
+    page.content_html = _ssr_form_state_html("RID", multi_resume=True, matched_incomplete=True)
+
+    assert not steps._preselected_resume_confirmed_by_ssr(page, "RID", allow_multi=True)
+
+
+def test_preselected_ssr_multi_resume_rejects_response_impossible():
+    """responseImpossible на entry статуса — отклик на вакансию запрещён
+    целиком: False независимо от реестра."""
+    page = FakeStepsPage()
+    page.content_html = _ssr_form_state_html("RID", multi_resume=True, response_impossible=True)
+
+    assert not steps._preselected_resume_confirmed_by_ssr(page, "RID", allow_multi=True)
+
+
+def test_preselected_ssr_multi_resume_rejects_missing_hash():
+    """allow_multi не отменяет совпадения hash: нашего резюме в реестре нет —
+    False (стоп до клика, как в test_one_click_without_requested_resume_*)."""
+    page = FakeStepsPage()
+    page.content_html = _ssr_form_state_html(None, multi_resume=True)
+
+    assert not steps._preselected_resume_confirmed_by_ssr(page, "RID", allow_multi=True)
+
+
+def test_preselected_ssr_default_remains_strict_on_multi_registry():
+    """Сторож дефолта: без allow_multi (form-fallback ensure_resume_selected)
+    multi-реестр по-прежнему False — строгая семантика len==1 не расползлась."""
+    page = FakeStepsPage()
+    page.content_html = _ssr_form_state_html("RID", multi_resume=True)
+
+    assert not steps._preselected_resume_confirmed_by_ssr(page, "RID")
 
 
 def test_fill_form_submit_click_error_raises_uncertain_marker():
