@@ -43,12 +43,17 @@ TRUSTED_SCHEME = "https"
 TRUSTED_HOST = "hh.ru"
 
 
-def _target_url_problem(raw: str) -> str | None:
-    """Отказ на невалидном --url ДО запуска браузера: схема https, хост hh.ru."""
+def _origin_mismatch(url: str) -> bool:
+    """Точный доверенный origin: схема https, хост ровно hh.ru, без поддоменов."""
     from urllib.parse import urlparse
 
-    parsed = urlparse(raw)
-    if parsed.scheme != TRUSTED_SCHEME or parsed.hostname != TRUSTED_HOST:
+    parsed = urlparse(url)
+    return parsed.scheme != TRUSTED_SCHEME or parsed.hostname != TRUSTED_HOST
+
+
+def _target_url_problem(raw: str) -> str | None:
+    """Отказ на невалидном --url ДО запуска браузера: схема https, хост hh.ru."""
+    if _origin_mismatch(raw):
         return (
             f"--url должен вести на {TRUSTED_SCHEME}://{TRUSTED_HOST} (точный хост, "
             f"без поддоменов), получено: {raw}"
@@ -61,10 +66,7 @@ def _final_url_problem(url: str) -> str | None:
     страница ушла с доверенного origin — сессия не перезаписывается."""
     if _captcha_page_still_up(url):
         return f"капча не решена (URL содержит /captcha): {url}"
-    from urllib.parse import urlparse
-
-    parsed = urlparse(url)
-    if parsed.scheme != TRUSTED_SCHEME or parsed.hostname != TRUSTED_HOST:
+    if _origin_mismatch(url):
         return f"финальный URL вне доверенного origin {TRUSTED_SCHEME}://{TRUSTED_HOST}: {url}"
     return None
 

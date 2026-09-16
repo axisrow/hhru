@@ -132,6 +132,7 @@ WRITE_COMMANDS = frozenset(
         "robot-reply",
         "settings",
         "config",
+        "solve-captcha",
         "reject",
         "backup",
         "restore",

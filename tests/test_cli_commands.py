@@ -1047,3 +1047,25 @@ def test_solve_captcha_final_url_guard_blocks_off_origin_and_captcha():
     assert sc._final_url_problem("https://hh.ru/captcha?back=vacancy") is not None
     assert sc._final_url_problem("https://attacker.hh.ru/solved") is not None
     assert sc._final_url_problem("http://hh.ru/") is not None
+
+
+def test_solve_captcha_holds_account_write_lock():
+    """#1146 cycle-review round 2: solve-captcha перезаписывает storage_state,
+    пока человек решает капчу (~5 минут окно) — параллельный durable-запуск
+    того же аккаунта должен получать WriteLockBusy, а не гоняться с ним за
+    одну сессию. Классификация WRITE_COMMANDS даёт это через существующий
+    acquire_write_lock в cli.main без нового кода блокировки."""
+    from hhru_bot.cli import WRITE_COMMANDS
+
+    assert "solve-captcha" in WRITE_COMMANDS
+
+
+def test_solve_captcha_origin_check_is_shared_between_guards():
+    """cycle-review round 2 (minor): scheme/host-проверка — один общий
+    хелпер для pre-launch и финальной проверки, иначе правка доверенного
+    origin в будущем разойдётся по двум копиям."""
+    from hhru_bot.commands import solve_captcha as sc
+
+    assert sc._origin_mismatch("https://hh.ru/vacancy/1") is False
+    assert sc._origin_mismatch("https://attacker.hh.ru/") is True
+    assert sc._origin_mismatch("http://hh.ru/") is True

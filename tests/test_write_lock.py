@@ -103,6 +103,7 @@ def test_lock_covers_all_hhru_write_commands():
         "edit-skills",
         "edit-languages",
         "settings",
+        "solve-captcha",
         "reject",
         "review",
         "config",
