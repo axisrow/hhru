@@ -1021,3 +1021,29 @@ def test_census_is_read_only_command():
     assert "census" not in WRITE_COMMANDS
     choices = build_parser()._subparsers._group_actions[0].choices
     assert "census" in choices
+
+
+def test_solve_captcha_target_url_must_be_hh_ru_origin():
+    """#1146 cycle-review: контекст с hhtoken не должен ходить по
+    пользовательскому --url вне точного origin https://hh.ru — куки домена
+    .hh.ru достаются любому поддомену (fail-closed: отказ до запуска
+    браузера)."""
+    from hhru_bot.commands import solve_captcha as sc
+
+    assert sc._target_url_problem("https://hh.ru") is None
+    assert sc._target_url_problem("https://hh.ru/vacancy/137423056") is None
+    assert sc._target_url_problem("http://hh.ru") is not None
+    assert sc._target_url_problem("https://attacker.hh.ru") is not None
+    assert sc._target_url_problem("https://hh.ru.attacker.com") is not None
+    assert sc._target_url_problem("https://example.com/vacancy/1") is not None
+
+
+def test_solve_captcha_final_url_guard_blocks_off_origin_and_captcha():
+    """Финальная проверка перед сохранением сессии: капча не решена ИЛИ
+    страница ушла с доверенного origin — сессия не перезаписывается."""
+    from hhru_bot.commands import solve_captcha as sc
+
+    assert sc._final_url_problem("https://hh.ru/vacancy/137423056") is None
+    assert sc._final_url_problem("https://hh.ru/captcha?back=vacancy") is not None
+    assert sc._final_url_problem("https://attacker.hh.ru/solved") is not None
+    assert sc._final_url_problem("http://hh.ru/") is not None

@@ -35,6 +35,39 @@ from ..browser import HH_BASE_URL
 DEFAULT_WAIT_SECONDS = 300
 PROGRESS_INTERVAL_SECONDS = 30
 
+# Контекст несёт hhtoken — куку домена .hh.ru, которую браузер отдаёт ЛЮБОМУ
+# поддомену (cycle-review #1147): --url валидируется до запуска браузера, а
+# финальный URL — перед сохранением сессии (редиректы/опечатки/фишинг в том же
+# залогиненном контексте). Точный хост, без поддоменов.
+TRUSTED_SCHEME = "https"
+TRUSTED_HOST = "hh.ru"
+
+
+def _target_url_problem(raw: str) -> str | None:
+    """Отказ на невалидном --url ДО запуска браузера: схема https, хост hh.ru."""
+    from urllib.parse import urlparse
+
+    parsed = urlparse(raw)
+    if parsed.scheme != TRUSTED_SCHEME or parsed.hostname != TRUSTED_HOST:
+        return (
+            f"--url должен вести на {TRUSTED_SCHEME}://{TRUSTED_HOST} (точный хост, "
+            f"без поддоменов), получено: {raw}"
+        )
+    return None
+
+
+def _final_url_problem(url: str) -> str | None:
+    """Финальная проверка перед сохранением сессии: капча не решена или
+    страница ушла с доверенного origin — сессия не перезаписывается."""
+    if _captcha_page_still_up(url):
+        return f"капча не решена (URL содержит /captcha): {url}"
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    if parsed.scheme != TRUSTED_SCHEME or parsed.hostname != TRUSTED_HOST:
+        return f"финальный URL вне доверенного origin {TRUSTED_SCHEME}://{TRUSTED_HOST}: {url}"
+    return None
+
 
 def register(subparsers) -> None:
     parser = subparsers.add_parser(
@@ -67,6 +100,10 @@ def run(args: argparse.Namespace) -> bool:
     from ..cookie_import import write_storage_state
 
     config = load_config_or_exit(args.config)
+    target_problem = _target_url_problem(args.url)
+    if target_problem is not None:
+        print(f"[FAIL] {target_problem}")
+        return True
     try:
         with launch_context(
             config.storage_state_file,
@@ -88,10 +125,10 @@ def run(args: argparse.Namespace) -> bool:
                 )
                 time.sleep(min(PROGRESS_INTERVAL_SECONDS, remaining))
 
-            if _captcha_page_still_up(page.url) or not has_auth_cookie(page):
+            final_problem = _final_url_problem(page.url)
+            if final_problem is not None or not has_auth_cookie(page):
                 print(
-                    f"[FAIL] Капча не решена (url={page.url}, "
-                    "auth-cookie отсутствует или URL содержит /captcha); "
+                    f"[FAIL] {final_problem or 'auth-cookie отсутствует'}; "
                     "сессия НЕ перезаписана — повторите solve-captcha"
                 )
                 return True
