@@ -38,6 +38,7 @@ def test_browser_command_registry_is_complete() -> None:
         "login",
         "login-code",
         "login-external",
+        "solve-captcha",
         "probe",
         "professional-roles",
         "publish-resume",

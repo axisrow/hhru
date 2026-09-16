@@ -244,6 +244,23 @@ def test_create_resume_unresolved_area_flag_is_explicit():
     assert args.allow_unresolved_area is True
 
 
+def test_solve_captcha_args_defaults_and_overrides():
+    """#1146: headful-окно с ожиданием человека — флаги --url/--wait-seconds,
+    дефолт ожидания 300 с. Команда WRITE-local: только пересохранение
+    storage_state, никаких --dry-run-семантик ей не нужно (как у login)."""
+    parser = _build()
+    defaults = parser.parse_args(["solve-captcha"])
+    assert defaults.func.__module__.endswith("solve_captcha")
+    assert defaults.wait_seconds == 300
+    assert defaults.url == "https://hh.ru"
+
+    custom = parser.parse_args(
+        ["solve-captcha", "--url", "https://hh.ru/vacancy/137423056", "--wait-seconds", "60"]
+    )
+    assert custom.url == "https://hh.ru/vacancy/137423056"
+    assert custom.wait_seconds == 60
+
+
 def test_all_commands_registered():
     parser = _build()
     action = _subparser_actions(parser)
@@ -253,6 +270,7 @@ def test_all_commands_registered():
         "login",
         "login-code",
         "login-external",
+        "solve-captcha",
         "search",
         "apply",
         "bump",
@@ -341,6 +359,7 @@ def test_register_commands_returns_names():
         "login",
         "login_code",
         "login_external",
+        "solve_captcha",
         "search",
         "apply",
         "bump",
@@ -1002,3 +1021,51 @@ def test_census_is_read_only_command():
     assert "census" not in WRITE_COMMANDS
     choices = build_parser()._subparsers._group_actions[0].choices
     assert "census" in choices
+
+
+def test_solve_captcha_target_url_must_be_hh_ru_origin():
+    """#1146 cycle-review: контекст с hhtoken не должен ходить по
+    пользовательскому --url вне точного origin https://hh.ru — куки домена
+    .hh.ru достаются любому поддомену (fail-closed: отказ до запуска
+    браузера)."""
+    from hhru_bot.commands import solve_captcha as sc
+
+    assert sc._target_url_problem("https://hh.ru") is None
+    assert sc._target_url_problem("https://hh.ru/vacancy/137423056") is None
+    assert sc._target_url_problem("http://hh.ru") is not None
+    assert sc._target_url_problem("https://attacker.hh.ru") is not None
+    assert sc._target_url_problem("https://hh.ru.attacker.com") is not None
+    assert sc._target_url_problem("https://example.com/vacancy/1") is not None
+
+
+def test_solve_captcha_final_url_guard_blocks_off_origin_and_captcha():
+    """Финальная проверка перед сохранением сессии: капча не решена ИЛИ
+    страница ушла с доверенного origin — сессия не перезаписывается."""
+    from hhru_bot.commands import solve_captcha as sc
+
+    assert sc._final_url_problem("https://hh.ru/vacancy/137423056") is None
+    assert sc._final_url_problem("https://hh.ru/captcha?back=vacancy") is not None
+    assert sc._final_url_problem("https://attacker.hh.ru/solved") is not None
+    assert sc._final_url_problem("http://hh.ru/") is not None
+
+
+def test_solve_captcha_holds_account_write_lock():
+    """#1146 cycle-review round 2: solve-captcha перезаписывает storage_state,
+    пока человек решает капчу (~5 минут окно) — параллельный durable-запуск
+    того же аккаунта должен получать WriteLockBusy, а не гоняться с ним за
+    одну сессию. Классификация WRITE_COMMANDS даёт это через существующий
+    acquire_write_lock в cli.main без нового кода блокировки."""
+    from hhru_bot.cli import WRITE_COMMANDS
+
+    assert "solve-captcha" in WRITE_COMMANDS
+
+
+def test_solve_captcha_origin_check_is_shared_between_guards():
+    """cycle-review round 2 (minor): scheme/host-проверка — один общий
+    хелпер для pre-launch и финальной проверки, иначе правка доверенного
+    origin в будущем разойдётся по двум копиям."""
+    from hhru_bot.commands import solve_captcha as sc
+
+    assert sc._origin_mismatch("https://hh.ru/vacancy/1") is False
+    assert sc._origin_mismatch("https://attacker.hh.ru/") is True
+    assert sc._origin_mismatch("http://hh.ru/") is True
