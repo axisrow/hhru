@@ -109,7 +109,12 @@ python3 -m playwright install chromium
      НЕ нажимая кнопку: acted=False, ноль мутаций. SSR не прочитан — тоже стоп
      (fail-closed: «не доказано, что клик безопасен»). Боевой путь флаг не
      передаёт и кликает как раньше; пост-клик сентинел `OneClickResponded`
-     из #1096 остаётся defense-in-depth.
+     из #1096 остаётся defense-in-depth. Боевой identity-гейт (#1144) на
+     multi-resume аккаунте принимает наш hash в SSR-реестре доступности
+     `resumes` (`allow_multi=True`); какое резюме hh.ru приложит фактически,
+     pre-click не доказуемо — неверная атрибуция фиксируется пост-клик
+     верификатором (OTHER_OWN → `indeterminate`), а form-fallback
+     `ensure_resume_selected` остаётся строгим (ровно одна запись).
 
 4. **Форма отклика — двухшаговая навигация.** `VACANCY_APPLY_BUTTON` на странице вакансии
    это `<a href="/applicant/vacancy_response?...">`, а НЕ триггер модалки на той же
