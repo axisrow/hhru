@@ -78,6 +78,7 @@ BROWSER_COMMANDS = frozenset(
         "login",
         "login-code",
         "login-external",
+        "solve-captcha",
         "probe",
         "professional-roles",
         "publish-resume",
