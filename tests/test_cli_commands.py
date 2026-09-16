@@ -244,6 +244,23 @@ def test_create_resume_unresolved_area_flag_is_explicit():
     assert args.allow_unresolved_area is True
 
 
+def test_solve_captcha_args_defaults_and_overrides():
+    """#1146: headful-окно с ожиданием человека — флаги --url/--wait-seconds,
+    дефолт ожидания 300 с. Команда WRITE-local: только пересохранение
+    storage_state, никаких --dry-run-семантик ей не нужно (как у login)."""
+    parser = _build()
+    defaults = parser.parse_args(["solve-captcha"])
+    assert defaults.func.__module__.endswith("solve_captcha")
+    assert defaults.wait_seconds == 300
+    assert defaults.url == "https://hh.ru"
+
+    custom = parser.parse_args(
+        ["solve-captcha", "--url", "https://hh.ru/vacancy/137423056", "--wait-seconds", "60"]
+    )
+    assert custom.url == "https://hh.ru/vacancy/137423056"
+    assert custom.wait_seconds == 60
+
+
 def test_all_commands_registered():
     parser = _build()
     action = _subparser_actions(parser)
@@ -253,6 +270,7 @@ def test_all_commands_registered():
         "login",
         "login-code",
         "login-external",
+        "solve-captcha",
         "search",
         "apply",
         "bump",
@@ -341,6 +359,7 @@ def test_register_commands_returns_names():
         "login",
         "login_code",
         "login_external",
+        "solve_captcha",
         "search",
         "apply",
         "bump",
