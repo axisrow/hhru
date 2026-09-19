@@ -52,8 +52,8 @@ def test_parse_contacts_preferred_family_gets_type_from_href() -> None:
             {"qa": "resume-contact-email", "text": "user@example.com", "href": None},
             {
                 "qa": "resume-contact-preferred",
-                "text": "+7 903 144-49-87",
-                "href": "tel:+79031444987",
+                "text": "+7 000 000-00-01",
+                "href": "tel:+70000000001",
             },
         ]
     )
@@ -67,8 +67,8 @@ def test_parse_contacts_preferred_family_gets_type_from_href() -> None:
         {
             "type": "phone",
             "preferred": True,
-            "value": "+7 903 144-49-87",
-            "href": "tel:+79031444987",
+            "value": "+7 000 000-00-01",
+            "href": "tel:+70000000001",
         },
     ]
 

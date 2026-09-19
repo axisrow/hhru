@@ -289,20 +289,19 @@ _YEAR_RE = re.compile(r"\b(19\d{2}|20\d{2})\b")
 def parse_certificate_items(items: list[dict]) -> list[dict]:
     """Элементы блока сертификатов в shape {name, year, url} (#1123).
 
-    Разбор best-effort, но честный: name=title либо первая строка текста;
+    Разбор best-effort, но честный: name=title либо первая строка text;
     year — первая 4-значная дата (19xx/20xx) в subtitle/description/строках
-    текста; url — первая http(s)-ссылка элемента. Поле, которое не
+    text; url — первая http(s)-ссылка элемента. Строки достраиваются из
+    text — единственного всегда доступного поля элемента в живом JS-потоке
+    (review PR #1157: шейпа с lines прод не производит). Поле, которое не
     распозналось, остаётся None — импорт отклонит такую строку с явной
     причиной, а не выдумает значение.
     """
     parsed = []
     for item in items:
         name = item.get("title") or None
-        # lines — шейп parse_block_items; в живом JS-потоке его нет, строки
-        # достраиваются из text, который _COLLECT_JS отдаёт всегда.
         text_lines = [line for line in str(item.get("text") or "").split("\n") if line.strip()]
-        lines = item.get("lines") or text_lines
-        haystack_parts = [item.get("subtitle"), item.get("description"), *lines]
+        haystack_parts = [item.get("subtitle"), item.get("description"), *text_lines]
         year = None
         for part in haystack_parts:
             if not part:
@@ -318,7 +317,7 @@ def parse_certificate_items(items: list[dict]) -> list[dict]:
                 url = href
                 break
         if name is None:
-            name = lines[0] if lines else None
+            name = text_lines[0] if text_lines else None
         parsed.append({"name": name, "year": year, "url": url})
     return parsed
 

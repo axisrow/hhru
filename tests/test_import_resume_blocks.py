@@ -114,24 +114,9 @@ def test_parse_certificate_items_extracts_name_year_url() -> None:
     ]
 
 
-def test_parse_certificate_items_falls_back_to_lines() -> None:
-    """Структура -title/-subtitle не подтвердилась — имя из строк, без выдумывания."""
-    items = parse_certificate_items(
-        [
-            {
-                "id": "2",
-                "title": None,
-                "subtitle": None,
-                "description": None,
-                "lines": ["Скрипты и диаграммы 2019"],
-            }
-        ]
-    )
-    assert items == [{"name": "Скрипты и диаграммы 2019", "year": "2019", "url": None}]
-
-
 def test_parse_certificate_items_falls_back_to_raw_text() -> None:
-    """Живой JS-поток lines не отдаёт — строки достраиваются из text."""
+    """Живой JS-поток отдаёт только text (шейпа с lines прод не производит,
+    review PR #1157) — строки достраиваются из него."""
     items = parse_certificate_items(
         [
             {
