@@ -41,8 +41,8 @@ class FakeLiveChannel(LiveChannel):
     def check(self, selector: str) -> dict:
         return {"found": False}
 
-    def click(self, selector: str) -> dict:
-        return {"clicked": True}
+    def click(self, selector: str, wait_for: dict | None = None, allow_apply: bool = False) -> dict:
+        return {"clicked": True, "wait": {"met": True}}
 
     def wait(self, selector: str, state: str, timeout_ms: int) -> bool:
         return self.wait_results.pop(0)

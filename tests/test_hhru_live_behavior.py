@@ -428,11 +428,37 @@ def test_hhru_live_executor_click_dangerous_refused_without_click():
 
 
 def test_hhru_live_executor_click_apply_step_refused_without_click():
-    """apply-сигналы (data-qa vacancy-response) — отказ без клика: сценарий
-    отклика не входит в примитивы исполнителя, это S3/S4 (#1161/#1162)."""
+    """apply-сигналы (data-qa vacancy-response) — отказ без клика БЕЗ явной
+    авторизации: ключ сценария отклика — allowApply команды агента (#1162)."""
     scenario = _run_executor_scenario("click_apply_step_refused")
     assert scenario["error"] == "policy_refused" and scenario["reason"] == "apply_step"
     assert scenario["clickCount"] == 0
+
+
+def test_hhru_live_executor_allow_apply_clicks_only_apply_step():
+    """#1162: allowApply понижает ТОЛЬКО apply_step-отказ цели (context
+    apply_flow, клик выполняется); якорь опасности и ambiguous-предок
+    отказывают и с allowApply — гейты этапа 1 не ослаблены."""
+    scenario = _run_executor_scenario("click_apply_allowed_only_with_permission")
+    assert scenario["allowedOk"] and scenario["allowedContext"] == "apply_flow"
+    assert scenario["allowedClicked"] and scenario["clickedApply"]
+    assert scenario["dangerError"] == "policy_refused" and scenario["dangerReason"] == "dangerous"
+
+
+def test_hhru_live_executor_fill_element_sets_value():
+    """#1162: текст письма проходит через native setter и читается обратно;
+    расхождение — ok:false, а не молчаливая полузаполненная форма."""
+    scenario = _run_executor_scenario("fill_element_sets_value")
+    assert scenario["ok"] and scenario["filled"]
+    assert scenario["valueInField"] and scenario["length"] == len(scenario["valueInField"])
+
+
+def test_hhru_live_executor_fill_element_dangerous_refused():
+    """Пустой input meanings в атрибутах: data-qa с captcha — отказ без
+    записи значения, гейт опасности у fill сильнее текстового скана."""
+    scenario = _run_executor_scenario("fill_element_dangerous_refused")
+    assert scenario["error"] == "policy_refused" and scenario["reason"] == "dangerous"
+    assert scenario["untouched"]
 
 
 def test_hhru_live_executor_click_ambiguous_overlay_refused():
