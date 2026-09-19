@@ -75,7 +75,9 @@ def parse_envelope(text: str) -> Command:
     raw_v = obj.get("v")
     if raw_v is None:
         raise ProtocolError(BAD_ENVELOPE, "нет поля v (версия протокола)", command_id)
-    if raw_v != PROTOCOL_VERSION:
+    # Строго int: bool исключён (True == 1 в Python), float исключён (1.0 == 1)
+    # — версия протокола совпадает только по типу И значению.
+    if not isinstance(raw_v, int) or isinstance(raw_v, bool) or raw_v != PROTOCOL_VERSION:
         raise ProtocolError(
             UNSUPPORTED_VERSION,
             f"версия протокола {raw_v!r} не поддерживается, ожидается {PROTOCOL_VERSION}",

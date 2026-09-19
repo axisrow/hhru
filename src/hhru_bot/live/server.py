@@ -261,6 +261,10 @@ class LiveServeServer:
         try:
             client.send_text(envelope)
         except (WSError, OSError) as exc:
+            # Частичная запись бьёт поток фреймов — битый клиент не остаётся
+            # в слоте (fail-closed): следующая команда ушла бы в мусор и
+            # сгорела по timeout вместо немедленного отказа.
+            self._drop_client(str(exc), out)
             self._emit(out, error_response(cmd.id, CLIENT_DISCONNECTED, str(exc)))
             return
         self.commands_forwarded += 1

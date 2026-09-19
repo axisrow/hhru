@@ -463,6 +463,28 @@ def test_eof_stdin_stops_foreground_server(server_harness):
     client.close()
 
 
+def test_send_failure_drops_client_and_frees_slot():
+    harness = ServerHarness()
+    client = ExtensionClientStub(harness.server.port)
+    try:
+        # Симуляция частичной записи: send_text падает, битый клиент не
+        # должен остаться в слоте (следующая команда ушла бы в мусор).
+        def _broken_send(text, timeout=10.0):
+            raise OSError("битый поток фреймов")
+
+        harness.server._client.send_text = _broken_send
+        harness.send_stdin(_envelope("c1", "list_overlays"))
+        line = harness.wait_for_line(_has_code("client_disconnected"))
+        assert json.loads(line)["id"] == "c1"
+        # Слот свободен: следующая команда получает no_client, а не уходит
+        # в битый поток ([INFO] об отключении уже вычитан первым wait'ом).
+        harness.send_stdin(_envelope("c2", "list_overlays"))
+        assert harness.wait_for_line(_has_code("no_client"))
+    finally:
+        client.close()
+        harness.stop()
+
+
 def test_commands_are_single_flight():
     # response_timeout больше окна тишины: pending c1 не должен успеть
     # истечь, иначе сервер штатно переслал бы c2 уже после таймаута.

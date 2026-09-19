@@ -21,6 +21,18 @@ from ..exit_codes import CommandExitCode
 from ..live import ALLOWED_ACTIONS, PROTOCOL_VERSION, LiveServeServer
 
 
+def _port(value: str) -> int:
+    """Валидация диапазона TCP-портов: вне 0..65535 socket.bind бросает
+    OverflowError (сырой traceback), поэтому диапазон ловим на argparse,
+    как _positive_page_count в commands/_common.py."""
+    parsed = int(value)
+    if not 0 <= parsed <= 65535:
+        raise argparse.ArgumentTypeError(
+            f"порт должен быть в диапазоне 0..65535 (0 — ephemeral), получено {value!r}"
+        )
+    return parsed
+
+
 def register(subparsers: Any) -> None:
     parser = subparsers.add_parser(
         "live-serve",
@@ -31,7 +43,7 @@ def register(subparsers: Any) -> None:
     )
     parser.add_argument(
         "--port",
-        type=int,
+        type=_port,
         default=0,
         help="Порт на 127.0.0.1 (0 — свободный ephemeral, печатается при старте)",
     )

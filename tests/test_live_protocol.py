@@ -80,6 +80,13 @@ class TestEnvelope:
         # id прочитан — отказ адресован конкретной команде, не тишине.
         assert exc.value.command_id == "c1"
 
+    @pytest.mark.parametrize("bad_v", [True, 1.0, "1"])
+    def test_version_must_be_exact_int(self, bad_v):
+        # bool исключён явно (True == 1 в Python), float и строка — по типу.
+        with pytest.raises(ProtocolError) as exc:
+            parse_envelope(_envelope(v=bad_v))
+        assert exc.value.code == UNSUPPORTED_VERSION
+
     def test_unknown_action_is_explicit_error(self):
         with pytest.raises(ProtocolError) as exc:
             parse_envelope(_envelope(action="click_apply_button"))
@@ -196,3 +203,13 @@ class TestCommandRegistration:
         from hhru_bot.cli import build_parser
 
         assert build_parser().parse_args(["live-serve"]).port == 0
+
+    @pytest.mark.parametrize("bad_port", ["99999", "-1", "65536"])
+    def test_port_out_of_range_rejected_at_argparse(self, bad_port, capsys):
+        # Вне диапазона bind() бросает OverflowError (сырой traceback);
+        # диапазон ловится типом аргумента, до всякого сокета.
+        from hhru_bot.cli import build_parser
+
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(["live-serve", "--port", bad_port])
+        assert "0..65535" in capsys.readouterr().err
