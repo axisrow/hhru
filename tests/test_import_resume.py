@@ -179,6 +179,15 @@ def test_parse_salary_text_refuses_range():
     assert parse_salary_text("от 150 000 до 200 000 ₽") == (None, None)
 
 
+def test_parse_salary_text_strips_unicode_space_separators():
+    # Разделитель тысяч hh.ru — юникод-пробел, не обычный (#1166): NBSP (U+00A0)
+    # и тонкий пробел (U+2009, боевой экспорт «180 000 ₽ на руки») — одна сумма,
+    # а не диапазон; настоящий диапазон отказывает по-прежнему.
+    assert parse_salary_text("300\u00a0000 ₽ на руки") == (300000, "RUR")
+    assert parse_salary_text("180\u2009000 ₽ на руки") == (180000, "RUR")
+    assert parse_salary_text("от 150 000 до 200 000 ₽") == (None, None)
+
+
 def test_plan_experience_skips_unparsable_period():
     payload = {
         "experience": {
