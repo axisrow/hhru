@@ -208,7 +208,10 @@ class FakeContactField:
         return self
 
     def count(self):
-        return 1
+        # ready=False моделирует негидратированную страницу: поле вообще не
+        # отрисовалось (count=0), в отличие от hidden_fields — attached,
+        # но скрытых полей черновика (census #1165).
+        return 0 if not self._page.ready else 1
 
     def input_value(self):
         if self._qa == self._page.readback_raises:
@@ -238,6 +241,10 @@ class FakeContactField:
         self._page.filled[self._qa] = value
 
     def wait_for(self, *, state="visible", timeout=None):  # noqa: ARG002
+        if self._qa in self._page.hidden_fields:
+            # Боевой факт #1157/census #1165: поле attached, но hidden —
+            # Playwright вежливо ждёт видимость и падает по таймауту.
+            raise PlaywrightTimeoutError("locator resolved to hidden <input …>")
         if not self._page.ready:
             raise PlaywrightTimeoutError("гидратация не завершилась вовремя")
 
@@ -281,6 +288,8 @@ class FakeContactsPage:
         self.url = CONTACTS_URL
         self.ready = ready
         self.save_wait_times_out = save_wait_times_out
+        # Census #1165: поля attached, но скрытые (phone на свежем черновике).
+        self.hidden_fields: set[str] = set()
         self.filled: dict[str, str] = {}
         self.readback_values: dict[str, str] = {}
         self.readback_raises: str = ""
@@ -522,6 +531,43 @@ def test_contacts_hydration_timeout_fails_before_save(contacts_page):
     assert not contacts_page.saved
     assert len(errors) == 1
     assert [o.status for o in outcomes] == [OUTCOME_FAILED]
+
+
+def test_contacts_draft_hidden_phone_does_not_block_email_plan(contacts_page):
+    # Census #1165: на свежем черновике phone hidden, email видим — план из
+    # одного email обязан проходить; phone-гейт больше не хардкод.
+    contacts_page.hidden_fields.add("resume-phone-cell_phone")
+    items = [resume_sections.Contact(type="email", value="a@b.c")]
+    outcomes = [RowOutcome("contacts", 0, OUTCOME_PLANNED)]
+
+    errors = _apply_contacts(
+        contacts_page, "test-resume-id", items, dry_run=False, outcomes=outcomes
+    )
+
+    assert errors == []
+    assert contacts_page.saved and contacts_page.closed
+    assert [o.status for o in outcomes] == [OUTCOME_UPDATED]
+
+
+def test_contacts_hidden_plan_field_refuses_before_save(contacts_page):
+    # Census #1165: поле плана attached, но hidden (phone на черновике) —
+    # честный отказ ДО клика save (failed/retry, #176-семантика не задета),
+    # а не таймаут гидратации; заполнение и клики не начинаются.
+    contacts_page.hidden_fields.update({"resume-phone-cell_phone", "resume-editor-email-input"})
+    items = [
+        resume_sections.Contact(type="phone", value="+66 1234"),
+        resume_sections.Contact(type="email", value="a@b.c"),
+    ]
+    outcomes = [RowOutcome("contacts", i, OUTCOME_PLANNED) for i in range(2)]
+
+    errors = _apply_contacts(
+        contacts_page, "test-resume-id", items, dry_run=False, outcomes=outcomes
+    )
+
+    assert not contacts_page.saved and not contacts_page.filled
+    assert len(errors) == 1 and "скрыт" in errors[0]
+    assert [o.status for o in outcomes] == [OUTCOME_FAILED, OUTCOME_FAILED]
+    assert "черновик" in outcomes[0].reason
 
 
 def test_apply_plan_early_exit_fails_contacts_rows(monkeypatch):
