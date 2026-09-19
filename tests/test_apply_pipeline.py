@@ -112,6 +112,30 @@ class _FakeLocator:
         return self
 
 
+class _VisibleLocator(_FakeLocator):
+    """Локатор с рабочим is_visible — только для попапа переезда (#1135).
+
+    Базовый _FakeLocator не реализует is_visible: blockers._visible ловит
+    AttributeError как «не видно», и это корректно для всех селекторов, кроме
+    попапа переезда — его видимость и есть предмет тестов dry-run-гейта и
+    боевого клика подтверждения.
+    """
+
+    def __init__(self, *, page: FakePage, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._page = page
+
+    def is_visible(self) -> bool:
+        return self._present
+
+    def click(self, *, timeout=None, no_wait_after=None) -> None:
+        super().click(timeout=timeout, no_wait_after=no_wait_after)
+        # Клик подтверждения закрывает попап (в живом DOM он исчезает) —
+        # иначе второй блокер-проход кликнет его ещё раз.
+        self._page._relocation_visible = False
+        self._present = False
+
+
 class FakePage:
     """Имитирует Playwright Page для путей pipeline. Настраивает «состояние» страницы."""
 
@@ -126,6 +150,7 @@ class FakePage:
         ssr_letter_required: bool = True,
         ssr_resume_id: str | None = None,
         ssr_resume_multi: bool = False,
+        relocation_visible: bool = False,
     ):
         self.url = ""
         self.context = SimpleNamespace(
@@ -142,6 +167,8 @@ class FakePage:
         self.ssr_resume_multi = ssr_resume_multi
         # #1099: клики по кнопке отклика (VACANCY_APPLY_BUTTON).
         self.apply_clicks: list[int] = []
+        # #1135: клики по кнопке подтверждения переезда в попапе.
+        self.relocation_clicks: list[int] = []
         self.goto_calls: list[str] = []
         self._apply_button = apply_button
         self._already_responded = already_responded
@@ -152,6 +179,7 @@ class FakePage:
         self._submit_in_form = submit_in_form
         # #176: PlaywrightError в момент submit-клика (клик мог уйти).
         self._submit_click_error = submit_click_error
+        self._relocation_visible = relocation_visible
         # #226 cycle-review: общий счётчик wait_for-вызовов apply-button/
         # already-responded локаторов — считает, что wait_apply_button ждёт
         # объединённым локатором (1 wait_for), а не последовательно.
@@ -213,6 +241,14 @@ class FakePage:
                 present=self._already_responded,
                 wait_for_calls=self.apply_wait_for_calls,
                 wait_for_timeouts=self.already_responded_wait_for_timeouts,
+            )
+        if selector == vacancy_page.VACANCY_RELOCATION_CONFIRM:
+            # #1135: попап запроса подтверждения переезда; клик по нему —
+            # мутация профиля, тестируем dry-run-гейт и боевой маркер.
+            return _VisibleLocator(
+                page=self,
+                present=self._relocation_visible,
+                click_sink=self.relocation_clicks,
             )
         if selector == success.APPLY_SUCCESS_MARKER:
             return _FakeLocator(present=self._success)
@@ -1848,3 +1884,132 @@ def test_template_answer_reaches_the_audit(monkeypatch):
     assert recorded["cluster"] == "conditions"
     assert recorded["resolver_source"] == "static"
     assert recorded["answer_source"] == "profile", "закрытая пара profile/llm"
+
+
+# --- #1135: попап подтверждения переезда — dry-run без клика, бой с маркером ---
+
+
+def test_apply_dry_run_does_not_click_relocation_confirm():
+    # Подтверждение переезда — мутация профиля (hh.ru сам меняет сигнал «готов
+    # к переезду»): dry-run гейтится, сухой прогон получает честный
+    # relocation-блокер (skip-строку, которую считает stats-счётчик), клика нет.
+    page = FakePage(apply_button=True, success=True, relocation_visible=True)
+
+    result = apply_to_vacancy(
+        page,
+        _vacancy(),
+        "RID",
+        "x",
+        dry_run=True,
+        allow_relocation=True,
+        question_answerer=SimpleNamespace(),
+    )
+
+    assert result.skipped is True
+    assert result.skip_reason == SKIP_REASONS.RELOCATION_NOT_ALLOWED
+    assert page.relocation_clicks == []
+
+
+def test_apply_battle_relocation_confirm_is_marked_in_success_reason():
+    # Боевой путь с флагом: попап закрыт кликом, отклик дошёл до success,
+    # reason несёт outcome-пометку — без неё срабатывания попапа при
+    # включённом флаге невидимы (п.3 CLAUDE.md, #1135).
+    page = FakePage(
+        apply_button=True,
+        success=True,
+        submit_in_form=True,
+        relocation_visible=True,
+    )
+
+    result = apply_to_vacancy(
+        page,
+        _vacancy(),
+        "RID",
+        "x",
+        dry_run=False,
+        allow_relocation=True,
+    )
+
+    assert result.success is True
+    assert "попап переезда подтверждён кликом" in result.reason
+    assert page.relocation_clicks == [1]
+    assert result.acted is True
+
+
+def test_apply_relocation_confirm_reconciled_success_also_marked(monkeypatch):
+    # #1135 (adversarial round): confirm-клик был, форма не отрисовалась, но
+    # внешняя сверка нашла отклик — reconciled_success обязан нести ту же
+    # пометку клика, иначе это подмножество success-исходов невидимо.
+    from hhru_bot.apply.verify import NegotiationsVerifyResult
+
+    monkeypatch.setattr(
+        pipeline_module.apply_steps, "_dump_navigation_diagnostics", lambda *_args: None
+    )
+    page = FakePage(apply_button=True, success=False, relocation_visible=True)
+
+    result = apply_to_vacancy(
+        page,
+        _vacancy(),
+        "RID",
+        "x",
+        dry_run=False,
+        allow_relocation=True,
+        verifier=lambda *_args: NegotiationsVerifyResult("found", "topic=42"),
+    )
+
+    assert result.success is True
+    assert "попап переезда подтверждён кликом" in result.reason
+    assert page.relocation_clicks == [1]
+    assert result.acted is True
+
+
+class _LateRejectWarningPage(FakePage):
+    """Reject-warning монтируется после первого блокер-прохода (async render).
+
+    Первый locator(REJECT_WARNING) — первый проход (post_navigation=False):
+    предупреждение ещё не смонтировано, найденный там блокер до verify не
+    доходит. Со второго вызова (проход с post_navigation=True) — видно, и
+    терминальный блокер уходит в внешнюю проверку.
+    """
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.reject_locator_calls = 0
+
+    def locator(self, selector: str):
+        from hhru_bot.selector_groups import vacancy_page
+
+        if selector == vacancy_page.VACANCY_RESPONSE_REJECT_WARNING:
+            self.reject_locator_calls += 1
+            if self.reject_locator_calls >= 2:
+                return _VisibleLocator(page=self, present=True)
+            return _FakeLocator(present=False)
+        return super().locator(selector)
+
+
+def test_apply_relocation_confirm_blocker_found_success_also_marked(monkeypatch):
+    # #1135 (review round 2): попап подтверждён кликом, затем смонтировался
+    # ДРУГОЙ терминальный блокер (post_navigation=True) — verify found даёт
+    # success в _finalize_blocker; пометка клика обязательна и здесь, иначе
+    # этот success-исход скрывает мутирующую профиль операцию.
+    from hhru_bot.apply.verify import NegotiationsVerifyResult
+
+    monkeypatch.setattr(
+        pipeline_module.apply_steps, "_dump_navigation_diagnostics", lambda *_args: None
+    )
+    page = _LateRejectWarningPage(apply_button=True, success=True, relocation_visible=True)
+
+    result = apply_to_vacancy(
+        page,
+        _vacancy(),
+        "RID",
+        "x",
+        dry_run=False,
+        allow_relocation=True,
+        verifier=lambda *_args: NegotiationsVerifyResult("found", "topic=42"),
+    )
+
+    assert result.success is True
+    assert "попап переезда подтверждён кликом" in result.reason
+    assert page.relocation_clicks == [1]
+    assert result.acted is True

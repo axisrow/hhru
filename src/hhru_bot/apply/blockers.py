@@ -8,6 +8,8 @@ modal close buttons can close the response form itself.
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from playwright.sync_api import Error as PlaywrightError
@@ -15,6 +17,8 @@ from playwright.sync_api import Page
 
 from ..history import SKIP_REASONS
 from ..selector_groups import vacancy_page
+
+logger = logging.getLogger(__name__)
 
 # CLAUDE.md п.4: клик по кнопке отклика запускает асинхронный React-рендер,
 # поэтому сразу после него DOM ещё пуст.  Терминальные модалки проверяем только
@@ -147,12 +151,25 @@ def _wait_for_any_blocker(page: Page, timeout_ms: int) -> None:
         return
 
 
+def relocation_popup_visible(page: Page) -> bool:
+    """Видим ли попап запроса подтверждения переезда (#1135).
+
+    Точечная перепроверка для form-timeout пути (steps): общий проход
+    ``handle_post_click_blockers`` при ``allow_relocation=true`` КЛИКАЕТ
+    подтверждение, поэтому «просто проверить ещё раз» через него нельзя —
+    проверка и действие в нём неразделимы.
+    """
+
+    return _visible(page, vacancy_page.VACANCY_RELOCATION_CONFIRM)
+
+
 def handle_post_click_blockers(
     page: Page,
     *,
     allow_relocation: bool,
     render_timeout_ms: int = BLOCKER_RENDER_TIMEOUT_MS,
     post_navigation: bool = False,
+    on_relocation_confirmed: Callable[[], None] | None = None,
 ) -> PostClickBlocker | None:
     """Handle one post-click DOM state and return a terminal blocker if any.
 
@@ -166,6 +183,15 @@ def handle_post_click_blockers(
     if _visible(page, vacancy_page.VACANCY_RELOCATION_CONFIRM):
         if allow_relocation:
             _close_specific(page, vacancy_page.VACANCY_RELOCATION_CONFIRM)
+            # #1135: клик подтверждения мутирует профиль (hh.ru сам меняет сигнал
+            # «готов к переезду», боевой факт 2026-09-19) — срабатывание попапа
+            # не должно остаться невидимым: лог здесь, маркер в reason успеха
+            # через колбэк (см. pipeline._relocation_confirmed_suffix).
+            logger.info(
+                "Попап запроса подтверждения переезда закрыт кликом (allow_relocation=true, #1135)"
+            )
+            if on_relocation_confirmed is not None:
+                on_relocation_confirmed()
             # Подтверждение переезда — это клик, запускающий свой ре-рендер:
             # следующие строгие проверки нельзя делать по неотстоявшемуся DOM
             # (CLAUDE.md п.4), иначе терминальная модалка будет пропущена.

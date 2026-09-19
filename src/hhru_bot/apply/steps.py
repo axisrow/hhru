@@ -28,6 +28,7 @@ from .blockers import (
     limit_refusal_blocker,
     limit_refusal_visible,
     raise_if_post_submit_limit,
+    relocation_popup_visible,
 )
 
 logger = logging.getLogger("hhru_bot.apply.steps")
@@ -251,6 +252,7 @@ def navigate_to_response_form(
     expected_resume_id: str | None = None,
     account_resume_hashes: set[str] | None = None,
     before_click: Callable[[], None] | None = None,
+    on_relocation_confirmed: Callable[[], None] | None = None,
 ) -> str | bool | PostClickBlocker | OneClickResponded | OneClickStopBeforeClick:
     """Кликает кнопку отклика и дожидается навигации на форму отклика.
 
@@ -285,6 +287,13 @@ def navigate_to_response_form(
     константа ``RESPONSE_READY_TIMEOUT_MS``; probe/questionnaire передают явное
     значение для своих быстрых режимов (см. ``FAST_FORM_TIMEOUT_MS`` в
     questionnaire.py).
+
+    #1135: попап запроса подтверждения переезда может монтироваться позже обоих
+    блокер-проходов (окно 1,5–8 с после клика, боевой дамп 2026-09-16), поэтому
+    form-timeout путь перепроверяет попап до вердикта form_timeout. При
+    ``allow_relocation`` подтверждение кликается и форме даётся второй бюджет
+    ожидания; ``on_relocation_confirmed`` (опционален) вызывается после каждого
+    такого клика — outcome-фиксация мутации профиля.
 
     #179: раньше ожидание было ``page.expect_navigation(wait_until="domcontentloaded")``.
     Живая диагностика (боевой аккаунт, vacancy_id 136221532) показала: кнопка
@@ -385,7 +394,11 @@ def navigate_to_response_form(
         # нет, не крашим цикл откликов необработанным исключением.
         logger.warning("Клик по кнопке отклика упал с ошибкой (%s) — вакансия пропущена", exc)
         return False
-    blocker = handle_post_click_blockers(page, allow_relocation=allow_relocation)
+    blocker = handle_post_click_blockers(
+        page,
+        allow_relocation=allow_relocation,
+        on_relocation_confirmed=on_relocation_confirmed,
+    )
     if blocker is not None:
         # #1134 (боевой прогон 2026-09-14): отказ лимита чаще всего ловится
         # этим pre-navigation проходом, а не позже — без дампа здесь
@@ -411,6 +424,7 @@ def navigate_to_response_form(
         allow_relocation=allow_relocation,
         render_timeout_ms=0,
         post_navigation=True,
+        on_relocation_confirmed=on_relocation_confirmed,
     )
     if blocker is not None:
         return blocker
@@ -444,12 +458,50 @@ def navigate_to_response_form(
                 "текущий прогон остановлен"
             )
             return limit_refusal_blocker()
-        if dump_diagnostics:
-            _dump_navigation_diagnostics(page, "form_timeout", vacancy_id, run_id)
-        # Форма не загрузилась — сообщаем pipeline отдельно от детекции вопросов,
-        # чтобы таймаут рендера не выглядел как неверная граница <form>.
-        logger.warning("Форма отклика не отрисовалась (%s)", exc)
-        return False
+        # #1135 (боевой дамп apply_136789544_form_timeout.html, 2026-09-16):
+        # попап запроса подтверждения переезда может монтироваться ПОЗЖЕ обоих
+        # блокер-проходов — наблюдаемое окно 1,5–8 с после клика. Перед
+        # вердиктом form_timeout перепроверяем: без этого вакансия сгорает в
+        # uncertain (блокирующем повтор по has_unresolved_uncertain), а при
+        # включённом флаге теряется клик подтверждения, после которого форма
+        # ещё могла отрисоваться. Сначала точечная проверка (общий проход при
+        # allow_relocation кликает — проверка и действие в нём неразделимы),
+        # затем сам проход.
+        relocation_was_visible = relocation_popup_visible(page)
+        late_blocker = handle_post_click_blockers(
+            page,
+            allow_relocation=allow_relocation,
+            render_timeout_ms=0,
+            post_navigation=True,
+            on_relocation_confirmed=on_relocation_confirmed,
+        )
+        if late_blocker is not None:
+            return late_blocker
+        if not (relocation_was_visible and allow_relocation):
+            if dump_diagnostics:
+                _dump_navigation_diagnostics(page, "form_timeout", vacancy_id, run_id)
+            # Форма не загрузилась — сообщаем pipeline отдельно от детекции вопросов,
+            # чтобы таймаут рендера не выглядел как неверная граница <form>.
+            logger.warning("Форма отклика не отрисовалась (%s)", exc)
+            return False
+        # Поздний проход кликнул подтверждение переезда — клик запускает свой
+        # React-рендер (CLAUDE.md п.4): даём форме второй полный бюджет. Не
+        # отрисовалась и теперь — штатная классификация form_timeout ниже.
+        try:
+            page.locator(apply_form.APPLY_SUBMIT_BUTTON).or_(post_response).filter(
+                visible=True
+            ).first.wait_for(state="visible", timeout=ready_timeout_ms)
+        except PlaywrightError as second_exc:
+            if dump_diagnostics:
+                _dump_navigation_diagnostics(page, "form_timeout", vacancy_id, run_id)
+            # Реальная причина отказа — провал ВТОРОГО ожидания (другой момент,
+            # другой DOM), а не первый таймаут из exc: печатаем second_exc.
+            logger.warning(
+                "Форма отклика не отрисовалась и после подтверждения переезда (#1135): %s",
+                second_exc,
+            )
+            return False
+        logger.info("Форма отклика отрисовалась после подтверждения переезда (#1135)")
     # #1134: гонку мог выиграть попап отказа лимита — он проверяется первым,
     # пока страница с текстом отказа ещё не покинута.
     if limit_refusal_visible(page):
