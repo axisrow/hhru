@@ -1,17 +1,12 @@
 """Команда apply-live: отклик на вакансию через живую вкладку (#1162, этап 2 #588).
 
-Клик по кнопке отклика, форма (оба shape), письмо и submit исполняются
-расширением hhru-live в открытой пользователем вкладке Chrome (канал live-serve
-#1159 + исполнитель #1160). CLI не мутирует hh.ru напрямую: мутирующие клики
-идут через policy-ядро с явной авторизацией сценария (allowApply).
-
-Боевая семантика переиспользована, не переписана: дедупликация has_applied,
-дневной лимит, throttle.wait после реального действия, durable begin_action
-(#245) и запись статусов — тот же контракт, что у боевого apply
-(commands/apply_service._execute_apply_wave). Серая зона #207 финализируется
-внешним источником истины — verify_response_in_negotiations — в ОТДЕЛЬНОМ
-read-only Playwright-контексте с storage_state аккаунта (чтение SSR/DOM —
-не скрытый запрос; мутирующих вызовов page.request нет, страж это проверяет).
+Клики кнопки отклика/формы/submit исполняет расширение hhru-live во вкладке
+пользователя (канал #1159 + исполнитель #1160, policy-ядро с allowApply).
+Боевая семантика импортирована, не переписана: дедуп has_applied, дневной
+лимит, throttle.wait после acted, durable begin_action (#245) — контракт
+боевого apply (apply_service._execute_apply_wave). Серая зона #207
+финализируется verify_response_in_negotiations в отдельном read-only
+Playwright-контексте со storage_state аккаунта (чтение SSR/DOM, не мутация).
 """
 
 from __future__ import annotations
@@ -104,8 +99,8 @@ def _run(
         return False
 
     # Identity + внешний источник серой зоны — read-only Playwright-контекст
-    # со storage_state аккаунта (тот же приём, что у боевого apply; мутирующих
-    # вызовов нет). Успех подтверждается только совпадением резюме (#212).
+    # со storage_state аккаунта; успех подтверждается только совпадением
+    # резюме (#212).
     with launch_context(
         config.storage_state_file, headless=args.headless, user_agent=config.user_agent
     ) as context:
@@ -144,9 +139,8 @@ def _run(
 
         letter = render_cover_letter(config.cover_letter_for(resume), card)
 
-        # Пикер резюме обязателен, если аккаунт мульти-резюме (или маппинг не
-        # получен): hh.ru иначе приложит дефолтное резюме (11/11 боевых фактов
-        # #1144). Единственное резюме аккаунта — hh.ru приложит его и так.
+        # Пикер обязателен на мульти-резюме (или без маппинга): иначе hh.ru
+        # приложит дефолтное резюме (#1144, 11/11 боевых фактов).
         require_select = identity.account_resume_ids is None or len(identity.account_resume_ids) > 1
 
         channel = LiveChannel(port=args.port, client_timeout=CLIENT_TIMEOUT_SECONDS)
@@ -163,8 +157,8 @@ def _run(
         action_id = None
 
         def _before_submit() -> None:
-            # #245: durable-маркер сразу перед кликом, который может отправить
-            # отклик (в live это клик самой кнопки отклика — one-click shape).
+            # #245: durable-маркер перед кликом, который может отправить отклик
+            # (в live это сама кнопка отклика — one-click shape).
             nonlocal action_id
             action_id = history.begin_action(
                 resume.resume_id,
@@ -195,7 +189,7 @@ def _run(
             {
                 "text": text,
                 "kind": "text",
-                "reason": "apply-live: census текста вопроса, канал не отвечает на анкеты сам",
+                "reason": "apply-live: census текста, канал не отвечает сам",
             }
             for text in result.question_texts
         ],
@@ -208,8 +202,8 @@ def _run(
 
     if result.skipped:
         progress.finish(result)
-        # Зарезервированная строка не должна остаться 'uncertain' на skip-пути —
-        # тот же маппинг, что у боевого _execute_apply_wave (ветка skipped).
+        # Зарезервированная строка не остаётся 'uncertain' на skip-пути —
+        # маппинг боевого _execute_apply_wave (ветка skipped).
         if action_id is not None:
             history.finalize_action(
                 action_id, "failed", result.reason, reason_code=result.skip_reason or "skipped"

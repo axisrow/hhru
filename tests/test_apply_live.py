@@ -68,6 +68,7 @@ class FakeFormChannel:
         question_text: str = "Ваш опыт с LLM?",
         picker_present: bool = True,
         option_present: bool = True,
+        option_click_lost: bool = False,
         panel_closes: bool = True,
         toggle_present: bool = True,
         textarea_after_click: bool = True,
@@ -96,6 +97,10 @@ class FakeFormChannel:
         self.apply_clicked = False
         self.toggle_clicked = False
         self.option_clicked = False
+        # Выбор не подтверждён, пока click по опции его не выставил; клик может
+        # потеряться в окне гидрации (#858) — option_click_lost это моделирует.
+        self.option_selected = False
+        self.option_click_lost = option_click_lost
         self.panel_open = False
         self.submitted = False
         self.filled_text: str | None = None
@@ -133,6 +138,8 @@ class FakeFormChannel:
                 self.panel_open = True
         elif "magritte-select-option-" in selector:
             self.option_clicked = True
+            if not self.option_click_lost:
+                self.option_selected = True
         elif "add-cover-letter" in selector or "letter-toggle" in selector:
             if self.toggle_present:
                 self.toggle_clicked = True
@@ -178,6 +185,9 @@ class FakeFormChannel:
             )
         if "resume-title" in selector:
             return self.picker_present and self._form_open(), "", 1
+        if "aria-selected" in selector:
+            # Факт выбора опции: aria-selected="true" через атрибутный матчинг.
+            return self.option_selected, "", 1
         if "magritte-select-option-" in selector:
             return self.option_present and self.panel_open, "", 1
         if "drop-base" in selector:
@@ -450,6 +460,34 @@ def test_fill_read_back_mismatch_blocks_submit() -> None:
     assert not channel.submitted
 
 
+def test_unconfirmed_resume_selection_blocks_submit() -> None:
+    # Клик по опции потерялся (окно гидрации #858): aria-selected не появится —
+    # submit запрещён, решает внешний источник (иначе hh.ru приложил бы
+    # дефолтное резюме, 11/11 боевых фактов #1144).
+    channel = FakeFormChannel(option_click_lost=True)
+    result = _run(channel, verify=_verify_of("not_found"))
+
+    assert (result.success, result.acted) == (False, False)
+    assert "не подтверждён" in result.reason
+    assert not channel.submitted
+
+
+def test_selection_confirmed_by_aria_selected_read() -> None:
+    # Факт выбора читается атрибутным селектором до submit — клик по опции и
+    # скрытие панели выбор не доказывают.
+    channel = FakeFormChannel()
+    result = _run(channel, verify=_verify_of("found"))
+
+    assert result.success
+    checks = [
+        str(payload.get("selector", ""))
+        for action, payload in channel.calls
+        if action == ACTION_CHECK
+    ]
+    # Факт выбора читается атрибутным матчингом aria-selected на опции.
+    assert f"[data-qa='magritte-select-option-{RESUME_ID}'][aria-selected='true']" in checks
+
+
 def test_submit_channel_death_is_uncertain_acting() -> None:
     # Отказ канала при submit (#176): команда ушла в браузер — acted+uncertain;
     # внешний not_found снимает неопределённость, но acted остаётся.
@@ -507,25 +545,16 @@ def test_grey_zone_verifier_crash_is_uncertain() -> None:
 
 
 def test_result_is_progress_compatible() -> None:
-    # ApplyProgress.finish() классифицирует по структурным флагам —
-    # ApplyLiveResult обязан работать с ним без адаптеров.
+    # ApplyProgress.finish() классифицирует по структурным флагам.
     from hhru_bot.commands.supervision import ApplyProgress
 
-    progress = ApplyProgress()
-    progress.begin_attempt()
-    assert (
-        progress.finish(ApplyLiveResult(RESUME_ID, VACANCY_ID, True, "ok", acted=True)) == "success"
-    )
-    progress.begin_attempt()
-    assert (
-        progress.finish(
-            ApplyLiveResult(RESUME_ID, VACANCY_ID, False, "x", acted=True, uncertain=True)
-        )
-        == "uncertain"
-    )
-    progress.begin_attempt()
-    assert (
-        progress.finish(
+    cases = [
+        (ApplyLiveResult(RESUME_ID, VACANCY_ID, True, "ok", acted=True), "success"),
+        (
+            ApplyLiveResult(RESUME_ID, VACANCY_ID, False, "x", acted=True, uncertain=True),
+            "uncertain",
+        ),
+        (
             ApplyLiveResult(
                 RESUME_ID,
                 VACANCY_ID,
@@ -533,8 +562,12 @@ def test_result_is_progress_compatible() -> None:
                 "x",
                 skipped=True,
                 skip_reason=SKIP_REASONS.HAS_QUESTIONS,
-            )
-        )
-        == "skipped"
-    )
+            ),
+            "skipped",
+        ),
+    ]
+    progress = ApplyProgress()
+    for result, expected in cases:
+        progress.begin_attempt()
+        assert progress.finish(result) == expected
     assert (progress.applied_count, progress.uncertain_count, progress.skipped_count) == (1, 1, 1)

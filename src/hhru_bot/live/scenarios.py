@@ -60,6 +60,16 @@ MARKER_GONE_TIMEOUT_MS = 3_000
 # не примет, клик честно откажется (PrimitiveError, не наш клик), не промахнётся.
 RESUME_CARD_SCOPE_TEMPLATE = "[data-qa='resume']:has(a[data-qa='resume-card-link-{resume_id}'])"
 
+
+def _is_hh_ru_host(netloc: str) -> bool:
+    """Строгий гейт хоста вкладки: ровно hh.ru или его поддомен.
+
+    endswith("hh.ru") пропускал бы произвольные хосты вида evil-hh.ru —
+    гейт читает и кликает в этой вкладке, строгость стоит столько же.
+    """
+    return netloc == "hh.ru" or netloc.endswith(".hh.ru")
+
+
 # --- Бюджеты сценария apply (#1162). Верхняя граница — response_timeout ---
 # сервера #1159 (30 с): каждый wait-бюджет умещается в ответ канала целиком.
 FORM_WAIT_TIMEOUT_MS = 15_000  # модалка отклика после клика по кнопке (гонка монтажа)
@@ -174,14 +184,13 @@ def apply_via_live(
 
     # Позитивные success-маркеры submit (#7): только структурные data-qa;
     # vacancy-response-link-top (кнопка отклика позади модалки) и legacy
-    # селекторы в waitFor не идут — ложный positive дал бы выдуманный success.
+    # селекторы не идут — ложный positive дал бы выдуманный success.
     success_markers = (
         "[data-qa='vacancy-response-sent-message']",
         "[data-qa='vacancy-response-success']",
         "[data-qa='responded-success-attach-cover-letter']",
     )
     textarea_selector = f"{APPLY_COVER_LETTER_TEXTAREA}, {APPLY_COVER_LETTER_TEXTAREA_FORM}"
-    toggle_selector = f"{APPLY_COVER_LETTER_TOGGLE}, {APPLY_COVER_LETTER_TOGGLE_POPUP}"
     already_selector = f"{VACANCY_ALREADY_RESPONDED_AGAIN}, {VACANCY_ALREADY_RESPONDED_CHAT}"
 
     def _wait(selector: str, state: str, timeout_ms: int) -> bool:
@@ -215,10 +224,10 @@ def apply_via_live(
     def _grey_zone(reason: str, *, acted: bool, uncertain: bool):
         """Финализация fail-исхода ПОСЛЕ клика по кнопке отклика (#207).
 
-        found → success; not_found → вердикт сайта (uncertain СНИМАЕТСЯ —
+        found → success; not_found → вердикт сайта (uncertain снимается —
         список подтверждённо прочитан, отклик не ушёл); не прочитан/упал →
-        uncertain+acted (как #176). Тот же словарь вердиктов, что у боевого
-        _finalize_post_click_failure; ничего не расширяем.
+        uncertain+acted (#176). Словарь вердиктов боевого
+        _finalize_post_click_failure, ничего не расширяем.
         """
         if verify is None:
             return _result(False, reason, acted=acted, uncertain=uncertain)
@@ -259,7 +268,7 @@ def apply_via_live(
         except (ChannelError, PrimitiveError) as exc:
             return _result(False, f"канал/исполнитель: {exc}")
         parts = urlsplit(url)
-        if parts.path.rstrip("/") != f"/vacancy/{vacancy_id}" or not parts.netloc.endswith("hh.ru"):
+        if parts.path.rstrip("/") != f"/vacancy/{vacancy_id}" or not _is_hh_ru_host(parts.netloc):
             return _result(
                 False,
                 f"живая вкладка не на странице вакансии {vacancy_id} ({url or 'URL не прочитан'}); "
@@ -321,6 +330,9 @@ def apply_via_live(
         # --- форма открыта: анкеты → skip в очередь (#482), канал не отвечает -
         questions = _read(str(APPLY_QUESTION_BODY))
         if questions.get("found") or (questions.get("matchCount") or 0) > 0:
+            # Осознанное ограничение: check_element отдаёт census ОДНОГО
+            # элемента — в очередь идёт текст первого вопроса; полный список
+            # допишет боевой extract_questions на живом прогоне.
             texts: list[str] = []
             question = _read(str(APPLY_QUESTION_TEXT))
             if question.get("text"):
@@ -339,6 +351,13 @@ def apply_via_live(
             trigger = str(APPLY_RESUME_SELECT)
             panel = str(APPLY_RESUME_DROPDOWN)
             option = str(APPLY_RESUME_OPTION).format(resume_id=resume_id)
+            # Факт ВЫБОРА — aria-selected="true" на опции (документирован
+            # apply_form.APPLY_RESUME_DROPDOWN): атрибутный матчинг превращает
+            # его в обычное чтение через check_element. Видимость опции и
+            # закрытие панели выбор не доказывают — клик мог потеряться в
+            # окне гидрации (#858), а submit тогда приложил бы дефолтное
+            # резюме (11/11 боевых фактов #1144).
+            selected = f"{option}[aria-selected='true']"
             if not _read(trigger).get("found"):
                 return _grey_zone(
                     "пикер резюме не найден: подтверждённо приложить нужное резюме "
@@ -382,23 +401,37 @@ def apply_via_live(
                     acted=False,
                     uncertain=False,
                 )
+            if not _read(selected).get("found"):
+                return _grey_zone(
+                    f"выбор резюме {resume_id} не подтверждён (нет aria-selected) — "
+                    "отправка запрещена",
+                    acted=False,
+                    uncertain=False,
+                )
 
         # --- письмо: отсутствие textarea = fail-closed отказ ДО submit --------
         if not _wait(textarea_selector, WAIT_STATE_VISIBLE, LETTER_WAIT_TIMEOUT_MS):
-            # Тоггла может не быть, когда hh.ru отрендерил textarea уже
-            # развёрнутой (оба варианта встречались в дампах) — его отсутствие
-            # не отказ: решает повторная проверка textarea.
-            try:
-                expanded = _click(
-                    toggle_selector,
-                    {
-                        "selector": textarea_selector,
-                        "state": WAIT_STATE_VISIBLE,
-                        "timeoutMs": LETTER_WAIT_TIMEOUT_MS,
-                    },
-                )
-            except _RefusedBeforeAction:
-                expanded = False
+            # Оба варианта тоггла МОГУТ сосуществовать в DOM (дампы 2026-08-20,
+            # apply_form.py) — OR-селектор дал бы ambiguous_target, поэтому
+            # кликаем по одному: первый отсутствующий/невидимый откатывает ко
+            # второму. Тоггла может не быть вовсе, когда hh.ru отрендерил
+            # textarea уже развёрнутой — его отсутствие не отказ: решает
+            # повторная проверка textarea.
+            expanded = False
+            for toggle in (str(APPLY_COVER_LETTER_TOGGLE_POPUP), str(APPLY_COVER_LETTER_TOGGLE)):
+                try:
+                    if _click(
+                        toggle,
+                        {
+                            "selector": textarea_selector,
+                            "state": WAIT_STATE_VISIBLE,
+                            "timeoutMs": LETTER_WAIT_TIMEOUT_MS,
+                        },
+                    ):
+                        expanded = True
+                        break
+                except _RefusedBeforeAction:
+                    continue
             if not expanded and not _wait(
                 textarea_selector, WAIT_STATE_VISIBLE, LETTER_WAIT_TIMEOUT_MS
             ):
@@ -429,17 +462,15 @@ def apply_via_live(
         if not grey_zone:
             # Чтение/клик не состоялись ДО кнопки отклика — на hh.ru следа нет.
             return _result(False, str(exc))
-        # Отказ ПОСЛЕ клика по кнопке отклика (обрыв канала, таймаут, полная
-        # навигация): отправка могла состояться на любом шаге — решает внешний
-        # источник (#176: fail-closed acted+uncertain до вердикта).
+        # Отказ ПОСЛЕ клика (обрыв/таймаут/полная навигация): отправка могла
+        # состояться на любом шаге — решает внешний источник (#176).
         return _grey_zone(str(exc), acted=True, uncertain=True)
     except _RefusedBeforeAction as exc:
         if not grey_zone:
             return _result(False, f"клик по кнопке отклика не выполнен: {exc}")
-        # Исполнитель отказал до конкретного клика (мутации не было, как у
-        # прочих PlaywrightError заполнения в боевом пути) — флаги чистые;
-        # вердикт всё равно финализирует внешний источник: found докажет
-        # ушедший отклик, not_found снимет серую зону.
+        # Отказ исполнителя до конкретного клика: мутации не было (как у
+        # PlaywrightError заполнения в боевом пути) — флаги чистые; вердикт
+        # всё равно финализирует внешний источник.
         return _grey_zone(f"шаг формы не выполнен: {exc}", acted=False, uncertain=False)
 
     if submitted:
@@ -499,7 +530,7 @@ def bump_via_live(channel, resume, dry_run: bool):
     try:
         url = str(channel.get_state().get("url", ""))
         parts = urlsplit(url)
-        if parts.path != "/applicant/resumes" or not parts.netloc.endswith("hh.ru"):
+        if parts.path != "/applicant/resumes" or not _is_hh_ru_host(parts.netloc):
             return BumpResult(
                 resume.id,
                 False,
