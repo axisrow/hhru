@@ -193,6 +193,9 @@ HHRU_ACCOUNT=marketing scripts/scheduled_run.sh --headless apply --limit 5
 # тот же кулдаун 4ч, дневной лимит и --dry-run, что у bump
 ./scripts/run.sh bump-live --resume resume-name-1 --dry-run
 
+# Диагностика live-канала (сервер, расширение, протокол, allowlist, permissions)
+./scripts/run.sh live-doctor
+
 # Полный цикл (apply + bump) для всех резюме из конфига
 ./scripts/run.sh run
 ```
@@ -210,6 +213,26 @@ HHRU_ACCOUNT=marketing scripts/scheduled_run.sh --headless apply --limit 5
 ```
 
 Добавь `--headless`, если не нужно видеть окно браузера.
+
+## Live-канал: установка расширения hhru-live
+
+`bump-live` кликает в ЖИВОЙ вкладке Chrome через расширение hhru-live
+(каталог `extensions/hhru-live`) по loopback WebSocket `ws://127.0.0.1:8765`.
+Расширение ставится вручную — инсталляторов и автоустановки нет:
+
+1. **Загрузи расширение.** Открой `chrome://extensions`, включи «Developer
+   mode», нажми «Load unpacked» и выбери каталог `extensions/hhru-live`.
+   Альтернатива — `./scripts/run_extension_chrome.sh`: запустит Chromium из
+   кэша Playwright с уже загруженным расширением (брендированный Google
+   Chrome флаг `--load-extension` не принимает).
+2. **Запусти сервер канала.** `./scripts/run.sh live-serve` — он живёт, пока
+   открыта команда (Ctrl+C гасит), и печатает порт, на котором слушает.
+3. **Открой вкладку hh.ru.** Расширение подключается к серверу само и
+   переподключается после обрывов; работает только на страницах hh.ru.
+4. **Первая проверка.** `./scripts/run.sh live-doctor` — построчная
+   диагностика: сервер, подключение расширения, версия протокола, allowlist,
+   permissions. Каждая строка `[FAIL]` печатает подсказку следующего шага;
+   сам doctor поднимает свой сервер, держать `live-serve` ради него не нужно.
 
 ## Автопилот: запуск по расписанию
 

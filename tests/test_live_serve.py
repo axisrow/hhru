@@ -510,3 +510,62 @@ def test_commands_are_single_flight():
     finally:
         client.close()
         harness.stop()
+
+
+# ---------------------------------------------------------------------------
+# kind-кадры — диагностика клиента, не ответы на команды (#1163): hello
+# сохраняется для live-doctor, heartbeat молчит (не bad_response-спам).
+# ---------------------------------------------------------------------------
+
+_HELLO = {
+    "kind": "hello",
+    "v": PROTOCOL_VERSION,
+    "actions": ["check_element", "list_overlays"],
+    "permissions": ["storage"],
+    "hostPermissions": ["https://hh.ru/*"],
+}
+
+
+def test_hello_frame_stored_as_diagnostics_not_error(server_harness):
+    client = ExtensionClientStub(server_harness.server.port)
+    try:
+        client.send_text(json.dumps(_HELLO))
+        time.sleep(0.2)  # окно, в котором старое поведение дало бы bad_response
+        assert server_harness.server.client_hello == _HELLO
+        # Ни одной JSON-строки ответа в stdout — диагностика не ошибка.
+        assert all(_json_response_line(line) is None for line in server_harness.lines())
+    finally:
+        client.close()
+
+
+def test_heartbeat_frames_are_silent_and_keep_connection(server_harness):
+    client = ExtensionClientStub(server_harness.server.port)
+    try:
+        client.send_text(json.dumps({"kind": "heartbeat", "observedAt": "2026-09-20T00:00:00Z"}))
+        time.sleep(0.2)
+        assert server_harness.server.client_hello is None
+        # Соединение живо: команда доходит и отвечается как обычно.
+        server_harness.send_stdin(_envelope("c1", "list_overlays"))
+        opcode, payload = client.recv_frame()
+        assert json.loads(payload)["id"] == "c1"
+        client.send_text(json.dumps({"id": "c1", "status": "ok", "result": {}}))
+        assert json.loads(server_harness.wait_for_line(_json_response_line))["status"] == "ok"
+    finally:
+        client.close()
+
+
+def test_reconnect_hello_overwrites_previous(server_harness):
+    first = ExtensionClientStub(server_harness.server.port)
+    first.send_text(json.dumps(_HELLO))
+    time.sleep(0.2)
+    first.close()
+    server_harness.wait_for_line(lambda line: "отключён" in line)
+
+    second_hello = {**_HELLO, "actions": ["check_element"]}
+    second = ExtensionClientStub(server_harness.server.port)
+    try:
+        second.send_text(json.dumps(second_hello))
+        time.sleep(0.2)
+        assert server_harness.server.client_hello == second_hello
+    finally:
+        second.close()
