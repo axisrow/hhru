@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 
 import hhru_bot.professional_roles as professional_roles_module
 from hhru_bot.professional_roles import (
@@ -449,15 +450,90 @@ def test_open_filters_requires_hydration_before_decision(monkeypatch):
 def _page_with_trigger_and_toggle(trigger, toggle):
     """#1030: локаторы по селекторам, а не общий return_value MagicMock."""
     page = MagicMock()
+    panel = MagicMock()
+    panel.count.return_value = 0  # панель фильтров закрыта (инцидент 2026-09-19)
 
     def locator(selector):
         if selector == professional_roles_module.FILTER_TRIGGER:
             return trigger
+        if selector == professional_roles_module.FILTERS_PANEL:
+            return panel
         assert selector == professional_roles_module.FILTERS_TOGGLE
         return toggle
 
     page.locator.side_effect = locator
     return page
+
+
+def test_open_filters_returns_when_panel_already_open(monkeypatch):
+    """Инцидент 2026-09-19 (боевой импорт #1123): панель search-filters уже
+    открыта и перекрывает тоггл right-drawer-оверлеем — повторный клик
+    невозможен и не нужен; поле роли в панели дождёт вызывающий код."""
+    trigger = MagicMock()
+    trigger.count.return_value = 0
+    toggle = MagicMock()
+    panel = MagicMock()
+    panel.count.return_value = 1
+    panel.is_visible.return_value = True
+    page = MagicMock()
+
+    def locator(selector):
+        if selector == professional_roles_module.FILTER_TRIGGER:
+            return trigger
+        if selector == professional_roles_module.FILTERS_PANEL:
+            return panel
+        assert selector == professional_roles_module.FILTERS_TOGGLE
+        return toggle
+
+    page.locator.side_effect = locator
+    monkeypatch.setattr(
+        professional_roles_module,
+        "wait_for_react_hydration",
+        lambda *_a, **_k: True,
+    )
+    professional_roles_module._open_filters_if_needed(page)
+    toggle.click.assert_not_called()
+
+
+def test_open_filters_tolerates_click_overtaken_by_panel(monkeypatch):
+    """Клик по тогглу открыл панель, и оверлей перекрыл кнопку до завершения
+    click-рутины (инцидент 2026-09-19): PlaywrightError поглощается, если
+    панель теперь видима — цель достигнута; без панели перебрасывается."""
+    trigger = MagicMock()
+    trigger.count.return_value = 0
+    toggle = MagicMock()
+    toggle.count.return_value = 1
+    toggle.is_visible.return_value = True
+    panel = MagicMock()
+    panel.count.return_value = 0
+    panel.is_visible.return_value = False
+
+    def overtaking_click(*_a, **_k):
+        # Клик реально открыл панель; оверлей перекрыл кнопку до завершения
+        # click-рутины Playwright — таймаут при уже отрисованной панели.
+        panel.count.return_value = 1
+        panel.is_visible.return_value = True
+        raise PlaywrightError("timeout 30000ms exceeded")
+
+    toggle.click.side_effect = overtaking_click
+    page = MagicMock()
+
+    def locator(selector):
+        if selector == professional_roles_module.FILTER_TRIGGER:
+            return trigger
+        if selector == professional_roles_module.FILTERS_PANEL:
+            return panel
+        assert selector == professional_roles_module.FILTERS_TOGGLE
+        return toggle
+
+    page.locator.side_effect = locator
+    monkeypatch.setattr(
+        professional_roles_module,
+        "wait_for_react_hydration",
+        lambda *_a, **_k: True,
+    )
+    professional_roles_module._open_filters_if_needed(page)
+    toggle.click.assert_called_once()
 
 
 def test_open_filters_proceeds_after_hydration(monkeypatch):

@@ -163,6 +163,7 @@ def _run_import(monkeypatch, tmp_path: Path, payload: dict, *, impls: dict | Non
         languages,
         [tmp_path / f"photo_{i}.jpeg" for i in range(1, 4)],
         [],
+        None,
     )
     return result, history, calls
 

@@ -44,10 +44,14 @@ from .browser import (
     resume_identity_matches,
 )
 from .resume_photo import _MAGIC, LibraryPhoto, select_photo_on_hh
+from .resume_sections import ssr_portfolio_ids
 
 logger = logging.getLogger("hhru_bot.export_resume")
 
-EXPORT_SCHEMA = "export-resume/v1"
+EXPORT_SCHEMA = "export-resume/v2"
+# Старые экспорты (#1023) без first-class блоковых секций (#1123) продолжают
+# импортироваться: import_resume.load_export принимает оба значения.
+EXPORT_SCHEMA_V1 = "export-resume/v1"
 PHOTO_DOWNLOAD_TIMEOUT_MS = 30_000
 
 # Страница опыта сворачивает длинные описания за кнопкой «Развернуть»;
@@ -57,6 +61,13 @@ EXPERIENCE_EXPAND_MARKER = "Развернуть"
 # Блоки, разбираемые построчно в самостоятельные секции экспорта; остальные
 # resume-list-card-<block> попадают в payload как есть (generic blocks).
 EDUCATION_BLOCK = "education"
+# Блок сертификатов (#1120). Имя — singular по триггеру редактирования строки
+# resume-edit-button-certificate- (живой DOM); обёртка
+# resume-list-card-certificate живым дампом НЕ подтверждена. Read-only экспорт
+# 2026-09-19 (резюме владельца): блок-карточек на них нет вовсе — имя не
+# подтверждено и не опровергнуто; при пустом экспорте сертификатов на
+# заполненном резюме первый подозреваемый это имя.
+CERTIFICATE_BLOCK = "certificate"
 
 
 class ResumeExportIndeterminate(RuntimeError):
@@ -88,12 +99,17 @@ _COLLECT_JS = """
       const c = el.querySelector('[data-qa$="-' + suffix + '-' + id + '"]');
       return c ? norm(c.innerText) : null;
     };
+    const links = [...el.querySelectorAll('a[href]')].map((a) => ({
+      href: a.href || null,
+      text: norm(a.innerText),
+    }));
     items.push({
       block,
       id,
       title: part('title'),
       subtitle: part('subtitle'),
       description: part('description'),
+      links,
       text: norm(el.innerText),
     });
   });
@@ -167,6 +183,10 @@ def parse_contacts(rows: list[dict]) -> list[dict]:
     На живой странице контакт рендерится парой: родитель
     ``resume-contact-phone`` (или ``-value-preferred`` у ссылки) — берём самый
     короткий qa каждого типа, «preferred» фиксируем отдельным флагом.
+    Живой факт 2026-09-19 (боевой read-only экспорт владельца): предпочтительный
+    контакт рендерится семейством ``resume-contact-preferred*`` БЕЗ типа в qa —
+    тип выводится из href (tel: → phone, mailto: → email); без узнаваемого
+    href тип остаётся ``preferred``, и импорт такую строку честно отклонит.
     """
     best: dict[str, dict] = {}
     for row in rows:
@@ -176,6 +196,12 @@ def parse_contacts(rows: list[dict]) -> list[dict]:
             continue
         contact_type = name.split("-value-")[0].split("-value")[0]
         preferred = "preferred" in name
+        if contact_type == "preferred":
+            href = str(row.get("href") or "")
+            if href.startswith("tel:"):
+                contact_type = "phone"
+            elif href.startswith("mailto:"):
+                contact_type = "email"
         candidate = {
             "type": contact_type,
             "preferred": preferred,
@@ -236,6 +262,15 @@ def parse_block_items(items: list[dict]) -> list[dict]:
             "subtitle": item.get("subtitle"),
             "description": item.get("description"),
         }
+        # Ссылки элемента (#1123): ключ появляется только при непустом списке,
+        # чтобы payload строк без ссылок не менялся относительно v1.
+        links = [
+            {"href": row.get("href"), "text": row.get("text")}
+            for row in item.get("links", [])
+            if isinstance(row, dict) and row.get("href")
+        ]
+        if links:
+            entry["links"] = links
         if not any(entry[key] for key in ("title", "subtitle", "description")):
             # Структура -title/-subtitle/-description не подтвердилась —
             # сохраняем строки и сырой текст, чтобы импорт-фоллоуап не
@@ -248,14 +283,60 @@ def parse_block_items(items: list[dict]) -> list[dict]:
     return parsed
 
 
+_YEAR_RE = re.compile(r"\b(19\d{2}|20\d{2})\b")
+
+
+def parse_certificate_items(items: list[dict]) -> list[dict]:
+    """Элементы блока сертификатов в shape {name, year, url} (#1123).
+
+    Разбор best-effort, но честный: name=title либо первая строка text;
+    year — первая 4-значная дата (19xx/20xx) в subtitle/description/строках
+    text; url — первая http(s)-ссылка элемента. Строки достраиваются из
+    text — единственного всегда доступного поля элемента в живом JS-потоке
+    (review PR #1157: шейпа с lines прод не производит). Поле, которое не
+    распозналось, остаётся None — импорт отклонит такую строку с явной
+    причиной, а не выдумает значение.
+    """
+    parsed = []
+    for item in items:
+        name = item.get("title") or None
+        text_lines = [line for line in str(item.get("text") or "").split("\n") if line.strip()]
+        haystack_parts = [item.get("subtitle"), item.get("description"), *text_lines]
+        year = None
+        for part in haystack_parts:
+            if not part:
+                continue
+            match = _YEAR_RE.search(str(part))
+            if match:
+                year = match.group(1)
+                break
+        url = None
+        for link in item.get("links", []):
+            href = str(link.get("href") or "")
+            if href.startswith(("http://", "https://")):
+                url = href
+                break
+        if name is None:
+            name = text_lines[0] if text_lines else None
+        parsed.append({"name": name, "year": year, "url": url})
+    return parsed
+
+
 def build_export_payload(
-    raw: dict, *, resume_id: str, resume_url: str, slug: str
+    raw: dict,
+    *,
+    resume_id: str,
+    resume_url: str,
+    slug: str,
+    portfolio_ids: set[str] | None = None,
 ) -> tuple[dict, list[str]]:
     """Нормализовать сырую JS-оценку в payload экспорта; пропуски — в unavailable.
 
     Чистая функция: тестируется без браузера. Секция отсутствует в payload
     (None/[]) ТОЛЬКО вместе с причиной в ``unavailable`` — значения-заглушки
-    запрещены (#1023).
+    запрещены (#1023). ``portfolio_ids`` (#1123) — состав работ из SSR-ридбека
+    страницы (:func:`hhru_bot.resume_sections.ssr_portfolio_ids`): None значит
+    «SSR не читался» и фиксируется как честный пропуск, set() — «работ нет».
     """
     unavailable: list[str] = []
 
@@ -293,6 +374,7 @@ def build_export_payload(
 
     blocks: dict[str, list] = {}
     education_items: list[dict] = []
+    certificate_items: list[dict] = []
     card_blocks = {card.get("block"): card for card in raw.get("cards", []) if card.get("block")}
     items_by_block: dict[str, list[dict]] = {}
     for item in raw.get("items", []):
@@ -303,11 +385,32 @@ def build_export_payload(
             if not education_items:
                 unavailable.append("образование: карточка есть, элементы не разобраны")
             continue
+        if block == CERTIFICATE_BLOCK:
+            # Секция сертификатов (#1123): карточка есть — элементы обязаны
+            # разобраться, иначе честный пропуск вместо пустой секции.
+            certificate_items = parse_certificate_items(items_by_block.get(block, []))
+            if not certificate_items:
+                unavailable.append("сертификаты: карточка есть, элементы не разобраны")
+            continue
         blocks[block] = parse_block_items(items_by_block.get(block, []))
 
     # Языки — самостоятельная секция; их отсутствие (нет карточки) — не ошибка.
     languages = parse_block_items(items_by_block.pop("language", []))
     blocks.pop("language", None)
+    # Сертификаты вынесены в first-class секцию; отсутствие блока — не ошибка
+    # (блок часто не заполнен, как языки).
+    blocks.pop(CERTIFICATE_BLOCK, None)
+
+    # Портфолио (#1123): состав работ подтверждает только SSR-состояние
+    # страницы (DOM-карточки портфолио не несут photo_id). None = SSR не
+    # прочитан; пустое множество = работ нет (штатно, не заполнено).
+    portfolio: list[dict] = []
+    if portfolio_ids is None:
+        unavailable.append(
+            "портфолио: SSR-состояние страницы не прочитано — состав работ не экспортирован"
+        )
+    else:
+        portfolio = [{"kind": "image", "photo_id": photo_id} for photo_id in sorted(portfolio_ids)]
 
     skills = []
     for row in raw.get("skills", []):
@@ -333,6 +436,8 @@ def build_export_payload(
             "companies": companies,
         },
         "education": education_items,
+        "certificates": certificate_items,
+        "portfolio": portfolio,
         "blocks": blocks,
         "skills": skills,
         "languages": languages,
@@ -452,11 +557,22 @@ def export_resume_on_hh(
             result.reason = "identity открытой страницы не совпал с resume_id"
             return result
         raw = collect_resume_dom(page)
+        # SSR-состояние той же страницы — внешний источник состава работ
+        # портфолио (#1123); читается ДО закрытия вкладки.
+        try:
+            page_html = page.content()
+        except PlaywrightError:
+            page_html = ""
     finally:
         page.close()
 
+    portfolio_ids = ssr_portfolio_ids(page_html) if page_html else None
     payload, unavailable = build_export_payload(
-        raw, resume_id=resume.resume_id, resume_url=resume.resume_url, slug=resume.id
+        raw,
+        resume_id=resume.resume_id,
+        resume_url=resume.resume_url,
+        slug=resume.id,
+        portfolio_ids=portfolio_ids,
     )
 
     library: list[LibraryPhoto] = []
