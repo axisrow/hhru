@@ -186,7 +186,8 @@ def run(args: argparse.Namespace) -> bool | CommandExitCode:
         print(
             f"[FAIL] сервер: не удалось занять 127.0.0.1:{args.port}: {exc}; "
             "подсказка: порт держит другая live-команда (live-serve/bump-live) — "
-            "остановите её или повторите с --port <свободный>"
+            "остановите её: расширение подключается только к "
+            f"127.0.0.1:{DEFAULT_PORT}, на другом порту проверяется только п.1"
         )
         failed = True
     else:

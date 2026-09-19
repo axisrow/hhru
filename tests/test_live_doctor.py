@@ -73,10 +73,11 @@ class TestCheckAllowlist:
         assert "расширение не объявляет" in message
 
     def test_diff_in_both_directions_lists_both(self):
-        ok, message = live_doctor.check_allowlist(
-            _hello(actions=["extra_action"]) if ALLOWED_ACTIONS else _hello(actions=[])
-        )
+        ok, message = live_doctor.check_allowlist(_hello(actions=["extra_action"]))
         assert not ok
+        # Серверная часть (ALLOWED_ACTIONS непуста по построению) минус
+        # {extra_action} — «расширение не объявляет» тоже в сообщении.
+        assert "расширение не объявляет" in message
 
     def test_unreadable_actions_fail_closed(self):
         ok, _ = live_doctor.check_allowlist(_hello(actions="list_overlays"))
