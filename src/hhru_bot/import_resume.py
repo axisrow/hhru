@@ -194,11 +194,29 @@ def _codes_for(text: str | None, *label_maps: dict[str, str]) -> list[str]:
     return codes
 
 
+def payload_role(payload: dict) -> dict | None:
+    """Роль из экспорта v2 (#1167): ``{"id", "name"}`` или None.
+
+    None — ключа нет (экспорт v1/ранний v2 до #1167), ключ не словарь или
+    роль неполна (нет id/имени): во всех случаях импорт честно предупреждает
+    «роль резолвится по title» и работает по-старому.
+    """
+    role = (payload.get("position") or {}).get("role")
+    if not isinstance(role, dict):
+        return None
+    role_id = str(role.get("id") or "").strip()
+    name = str(role.get("name") or "").strip()
+    if not role_id or not name:
+        return None
+    return {"id": role_id, "name": name}
+
+
 def plan_position(payload: dict) -> tuple[PositionValues, list[str]]:
     """План секции «Позиция» из экспорта; нераспознанное — в unavailable.
 
-    Специализации (роль) экспортом не переносится — роль ставит визард
-    создания по ``title``; для точности сравнения она проверяется readback'ом.
+    Роль (#1167) в план позиции не входит: она ставится визардом создания
+    по имени листа из ``position.role`` (:func:`payload_role`), ``title``
+    остаётся заголовком позиции и заполняется editor-режимом.
     """
     unavailable: list[str] = []
     position = payload.get("position") or {}
@@ -632,6 +650,14 @@ def diff_export(source: dict, imported: dict, *, blocks_source: dict | None = No
     imp_pos = imported.get("position") or {}
     if _norm(src_pos.get("title")) != _norm(imp_pos.get("title")):
         diffs.append(f"позиция: title «{src_pos.get('title')}» != «{imp_pos.get('title')}»")
+    # Роль (#1167): сверяется только когда источник её экспортировал — в
+    # title-прокси режиме (v1/ранний v2) сравнивать нечего, сравнение с
+    # отсутствующей ролью стало бы вечным ложным расхождением.
+    src_role = payload_role(source)
+    if src_role:
+        imp_name = (payload_role(imported) or {}).get("name")
+        if _norm(src_role["name"]) != _norm(imp_name):
+            diffs.append(f"роль: «{src_role['name']}» != «{imp_name or 'нет'}»")
     src_salary, src_currency = parse_salary_text(src_pos.get("salary_text"))
     imp_salary, imp_currency = parse_salary_text(imp_pos.get("salary_text"))
     if src_salary != imp_salary:

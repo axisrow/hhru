@@ -43,6 +43,7 @@ from .browser import (
     require_authenticated_page,
     resume_identity_matches,
 )
+from .negotiations_probe import parse_initial_state
 from .resume_photo import _MAGIC, LibraryPhoto, select_photo_on_hh
 from .resume_sections import ssr_portfolio_ids
 
@@ -322,6 +323,74 @@ def parse_certificate_items(items: list[dict]) -> list[dict]:
     return parsed
 
 
+def _walk_records(node: object):
+    """Все dict-узлы дерева SSR-состояния (тот же обход, что у портфолио #1123)."""
+    if isinstance(node, dict):
+        yield node
+        for child in node.values():
+            yield from _walk_records(child)
+    elif isinstance(node, list):
+        for child in node:
+            yield from _walk_records(child)
+
+
+def _parse_role_entries(value: object) -> tuple[dict | None, int]:
+    """Список ролей SSR-записи -> (первая роль {id, name}, всего ролей).
+
+    Живой дамп 2026-09-20 (/resume/{id}, #1167): элемент списка —
+    ``{"id": <int>, "trl": "<имя листа каталога>"}``; форма ``text`` у
+    wizard-bootstrap записей (resume_state.py) тоже принимается. Строгая
+    форма: нераспознанный элемент обесценивает весь список — частичный
+    экспорт роли запрещён (значения-заглушки запрещены #1023).
+    """
+    if not isinstance(value, list) or not value:
+        return None, 0
+    parsed: list[dict] = []
+    for entry in value:
+        if not isinstance(entry, dict) or entry.get("id") is None:
+            return None, 0
+        name = entry.get("trl") or entry.get("text")
+        if not isinstance(name, str) or not name.strip():
+            return None, 0
+        parsed.append({"id": str(entry["id"]), "name": name.strip()})
+    return parsed[0], len(parsed)
+
+
+def ssr_professional_role(page_html: str, resume_id: str) -> tuple[dict | None, int]:
+    """Роль резюме из SSR HH-Lux-InitialState страницы резюме (#1167).
+
+    Запись резюме ищется по identity (id/hash/resumeId == resume_id — тот же
+    набор, что у resume_state.parse_resume_state) среди узлов дерева состояния
+    с ключом professionalRole; путь в дереве не фиксируется — дрейф обёртки не
+    даёт ни ложного пропуска, ни чужой записи (тот же принцип, что у
+    портфолио #1123). Возвращает (первая роль, всего ролей); (None, 0) — SSR
+    не прочитан, записи с ролью нет либо записи спорят друг с другом:
+    вызывающий код фиксирует честный пропуск, значение не выбирается.
+    """
+    try:
+        state = parse_initial_state(page_html)
+    except (ValueError, json.JSONDecodeError):
+        return None, 0
+    if not isinstance(state, dict) or not resume_id:
+        return None, 0
+    matched: list[tuple[dict | None, int]] = []
+    for record in _walk_records(state):
+        if not isinstance(record.get("professionalRole"), dict):
+            continue
+        identifiers = {str(record.get(key, "")) for key in ("id", "hash", "resumeId")}
+        if resume_id not in identifiers:
+            continue
+        parsed = _parse_role_entries(record["professionalRole"].get("value"))
+        if parsed != (None, 0):
+            matched.append(parsed)
+    if not matched:
+        return None, 0
+    first = matched[0]
+    if any(entry != first for entry in matched[1:]):
+        return None, 0
+    return first
+
+
 def build_export_payload(
     raw: dict,
     *,
@@ -329,6 +398,8 @@ def build_export_payload(
     resume_url: str,
     slug: str,
     portfolio_ids: set[str] | None = None,
+    role: dict | None = None,
+    role_total: int = 0,
 ) -> tuple[dict, list[str]]:
     """Нормализовать сырую JS-оценку в payload экспорта; пропуски — в unavailable.
 
@@ -337,6 +408,9 @@ def build_export_payload(
     запрещены (#1023). ``portfolio_ids`` (#1123) — состав работ из SSR-ридбека
     страницы (:func:`hhru_bot.resume_sections.ssr_portfolio_ids`): None значит
     «SSR не читался» и фиксируется как честный пропуск, set() — «работ нет».
+    ``role``/``role_total`` (#1167) — профессия из того же SSR-состояния
+    (:func:`ssr_professional_role`); None — честный пропуск, роль import
+    резолвит по title (прежнее поведение).
     """
     unavailable: list[str] = []
 
@@ -420,6 +494,17 @@ def build_export_payload(
     if not skills:
         unavailable.append("навыки: теги skill-tag не найдены на странице")
 
+    if role is None:
+        unavailable.append(
+            "профессия: роль не прочитана из SSR-состояния страницы — "
+            "в экспорт не попала, импорт резолвит роль по title"
+        )
+    elif role_total > 1:
+        unavailable.append(
+            f"профессия: в резюме {role_total} ролей, экспортирована первая "
+            f"«{role['name']}» — визард создания переносит одну роль"
+        )
+
     payload: dict = {
         "schema": EXPORT_SCHEMA,
         "resume_id": resume_id,
@@ -430,6 +515,7 @@ def build_export_payload(
             "title": title,
             "salary_text": salary,
             "fields": fields,
+            "role": role,
         },
         "contacts": parse_contacts(raw.get("contacts", [])),
         "experience": {
@@ -567,12 +653,18 @@ def export_resume_on_hh(
         page.close()
 
     portfolio_ids = ssr_portfolio_ids(page_html) if page_html else None
+    # Профессия (#1167) — из того же SSR-состояния, что и состав портфолио.
+    role, role_total = (
+        ssr_professional_role(page_html, resume.resume_id) if page_html else (None, 0)
+    )
     payload, unavailable = build_export_payload(
         raw,
         resume_id=resume.resume_id,
         resume_url=resume.resume_url,
         slug=resume.id,
         portfolio_ids=portfolio_ids,
+        role=role,
+        role_total=role_total,
     )
 
     library: list[LibraryPhoto] = []

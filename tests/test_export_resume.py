@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from hhru_bot.export_resume import (
@@ -11,6 +13,7 @@ from hhru_bot.export_resume import (
     parse_block_items,
     parse_contacts,
     parse_experience_company,
+    ssr_professional_role,
 )
 
 pytestmark = pytest.mark.unit
@@ -188,6 +191,7 @@ def test_build_export_payload_routes_known_sections() -> None:
         "title": "Инженер",
         "salary_text": "200 000 руб.",
         "fields": [{"field": "employmentForms", "text": "Тип занятости: Полная"}],
+        "role": None,
     }
     assert payload["experience"]["companies"][0]["company"] == 'ООО "Пример"'
     assert payload["education"][0]["title"] == "Университет"
@@ -246,3 +250,89 @@ def test_sniff_image_kind_and_photo_id() -> None:
     assert _sniff_image_kind(b"<html>not an image</html>") is None
     assert _photo_id_from_url("https://img.hhcdn.ru/photo/914537107.png?t=1&h=x") == "914537107"
     assert _photo_id_from_url("https://img.hhcdn.ru/other/x.png") is None
+
+
+def test_build_export_payload_exports_ssr_role() -> None:
+    payload, unavailable = build_export_payload(
+        _full_raw(),
+        resume_id="00001",
+        resume_url="https://hh.ru/resume/00001",
+        slug="test",
+        portfolio_ids=set(),
+        role={"id": "37", "name": "Руководитель группы разработки"},
+        role_total=1,
+    )
+    assert payload["position"]["role"] == {
+        "id": "37",
+        "name": "Руководитель группы разработки",
+    }
+    assert "профессия" not in "\n".join(unavailable)
+
+
+def test_build_export_payload_notes_extra_roles() -> None:
+    payload, unavailable = build_export_payload(
+        _full_raw(),
+        resume_id="00001",
+        resume_url="https://hh.ru/resume/00001",
+        slug="test",
+        role={"id": "3", "name": "SMM-менеджер, контент-менеджер"},
+        role_total=3,
+    )
+    assert payload["position"]["role"] == {
+        "id": "3",
+        "name": "SMM-менеджер, контент-менеджер",
+    }
+    joined = "\n".join(unavailable)
+    assert "экспортирована первая" in joined
+    assert "3 ролей" in joined
+
+
+def _initial_state_html(record: dict) -> str:
+    state = {"lux": {"applicants": {"items": [record]}}}
+    return (
+        '<html><body><template id="HH-Lux-InitialState">'
+        + json.dumps(state)
+        + "</template></body></html>"
+    )
+
+
+def test_ssr_professional_role_reads_live_shape() -> None:
+    # Форма снята живым дампом 2026-09-20 (#1167): запись резюме identity по
+    # hash, professionalRole — {"value": [{"id": int, "trl": имя листа}], ...}.
+    html = _initial_state_html(
+        {
+            "hash": "a" * 32,
+            "professionalRole": {
+                "value": [
+                    {"id": 37, "trl": "Руководитель группы разработки"},
+                    {"id": 3, "trl": "SMM-менеджер, контент-менеджер"},
+                ],
+                "type": "field",
+                "block": None,
+                "_attributes": None,
+            },
+        }
+    )
+    assert ssr_professional_role(html, "a" * 32) == (
+        {"id": "37", "name": "Руководитель группы разработки"},
+        2,
+    )
+
+
+def test_ssr_professional_role_requires_identity_match() -> None:
+    html = _initial_state_html(
+        {
+            "hash": "b" * 32,
+            "professionalRole": {"value": [{"id": 37, "trl": "Руководитель группы разработки"}]},
+        }
+    )
+    assert ssr_professional_role(html, "a" * 32) == (None, 0)
+
+
+def test_ssr_professional_role_strict_form_and_absence() -> None:
+    malformed = _initial_state_html(
+        {"hash": "a" * 32, "professionalRole": {"value": [{"id": 37}]}},
+    )
+    assert ssr_professional_role(malformed, "a" * 32) == (None, 0)
+    assert ssr_professional_role("<html></html>", "a" * 32) == (None, 0)
+    assert ssr_professional_role(_initial_state_html({"hash": "a" * 32}), "a" * 32) == (None, 0)
