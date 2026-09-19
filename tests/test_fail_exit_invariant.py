@@ -18,8 +18,10 @@ from types import SimpleNamespace
 
 import pytest
 
+import hhru_bot.browser
 import hhru_bot.commands.census as census_cmd
 import hhru_bot.commands.log_cmd as log_cmd
+import hhru_bot.config
 from hhru_bot.cli import main
 from hhru_bot.exit_codes import FAIL_JUDGE_WINDOW, CommandExitCode, FailWatchStream
 
@@ -149,6 +151,78 @@ def test_cli_log_command_excluded_from_invariant(monkeypatch, tmp_path):
     assert main(["log", "-n", "5"]) is None
 
 
+def test_cli_config_raw_yaml_exempt_from_invariant(monkeypatch, tmp_path):
+    """`config` (без ключа) печатает сырой YAML: [FAIL]-строка данных из
+    block-scalar (rev #1153: пример с cover_letter_default) — не вердикт,
+    чтение конфига успешно и exit-код нулевой."""
+    body = (
+        ACCOUNT_BODY.format(session=str(tmp_path / "s.json"))
+        + "cover_letter_default: |\n"
+        + "  [FAIL] строка письма, начинающаяся с вердикта\n"
+    )
+    argv = ["--config", _config(tmp_path, body), "config"]
+    assert main(argv) is None
+
+
+def test_cli_call_api_raw_body_exempt_from_invariant(monkeypatch, tmp_path):
+    """`call-api` печатает сырое тело ответа hh.ru: [FAIL] в начале тела —
+    данные, а не вердикт (rev #1153); собственные отказы call-api живут
+    в return True контракта #148 и от скана не зависят."""
+
+    class _FakeResponse:
+        ok = True
+
+        def __init__(self, body: str):
+            self._body = body
+
+        def text(self) -> str:
+            return self._body
+
+    @contextmanager
+    def launch(*args, **kwargs):
+        yield SimpleNamespace(
+            new_page=lambda: SimpleNamespace(),
+            request=SimpleNamespace(get=lambda url: _FakeResponse("[FAIL] строка внешнего тела\n")),
+        )
+
+    monkeypatch.setattr(hhru_bot.browser, "launch_context", launch)
+    monkeypatch.setattr(hhru_bot.browser, "goto_hh", lambda page, url, **kw: None)
+    monkeypatch.setattr(hhru_bot.browser, "require_authenticated_page", lambda page: None)
+    monkeypatch.setattr(
+        hhru_bot.config,
+        "load_config_or_exit",
+        lambda _: SimpleNamespace(storage_state_file=tmp_path / "s.json", user_agent=None),
+    )
+    argv = [
+        "--config",
+        _config(tmp_path, ACCOUNT_BODY.format(session="x")),
+        "call-api",
+        "/vacancies",
+    ]
+    assert main(argv) is None
+
+
+def test_cli_typed_code_wins_over_fail_scan(monkeypatch, tmp_path):
+    """Закрепляет порядок проверок (rev #1153): команда напечатала [FAIL] И
+    вернула typed-код — побеждает typed (78), а не скан (1)."""
+
+    def _fail_and_typed(args):
+        print("[FAIL] вердикт напечатан, но возвращён typed-код")
+        return CommandExitCode.SESSION_EXPIRED
+
+    monkeypatch.setattr(census_cmd, "run", _fail_and_typed)
+    argv = [
+        "--config",
+        _config(tmp_path, ACCOUNT_BODY.format(session=str(tmp_path / "s.json"))),
+        "census",
+        "--url",
+        "https://hh.ru/x",
+    ]
+    with pytest.raises(SystemExit) as excinfo:
+        main(argv)
+    assert excinfo.value.code == CommandExitCode.SESSION_EXPIRED.value
+
+
 # --- census при форме входа: typed SESSION_EXPIRED ----------------------------
 
 
@@ -163,7 +237,7 @@ def _patch_census(monkeypatch, *, login_form: bool):
     monkeypatch.setattr(census_cmd, "has_login_form", lambda page: login_form)
 
 
-def test_cli_census_login_form_exits_session_expired(monkeypatch, tmp_path):
+def test_cli_census_login_form_exits_session_expired(monkeypatch, tmp_path, capsys):
     _patch_census(monkeypatch, login_form=True)
     argv = [
         "--config",
@@ -175,9 +249,11 @@ def test_cli_census_login_form_exits_session_expired(monkeypatch, tmp_path):
     with pytest.raises(SystemExit) as excinfo:
         main(argv)
     assert excinfo.value.code == CommandExitCode.SESSION_EXPIRED.value
+    # Итоговая строка не оглашает [OK] при ненулевом exit (rev #1153).
+    assert "[OK] census" not in capsys.readouterr().out
 
 
-def test_cli_census_target_page_exits_zero(monkeypatch, tmp_path):
+def test_cli_census_target_page_exits_zero(monkeypatch, tmp_path, capsys):
     _patch_census(monkeypatch, login_form=False)
     argv = [
         "--config",
@@ -187,6 +263,7 @@ def test_cli_census_target_page_exits_zero(monkeypatch, tmp_path):
         "https://hh.ru/applicant/my_resumes",
     ]
     assert main(argv) is None
+    assert "[OK] census" in capsys.readouterr().out
 
 
 def test_census_run_returns_typed_code_for_callers(monkeypatch, tmp_path):

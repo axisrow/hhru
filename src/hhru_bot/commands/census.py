@@ -104,5 +104,10 @@ def run(args: argparse.Namespace) -> bool | CommandExitCode:
         )
     print(f"Контролов всего: {len(rows)}, видимых: {len(visible_only)}")
     print(census_table(visible_only))
-    print("[OK] census read-only; вхождения строк в HTML-дампе (JSON/i18n) — не поля")
+    # Итоговая строка не должна оглашать [OK] там, где exit будет ненулевым:
+    # при форме входа вердикт успеха сбивает грепающих по [OK] (review #1153).
+    print(
+        ("[INFO]" if login_form_detected else "[OK]")
+        + " census read-only; вхождения строк в HTML-дампе (JSON/i18n) — не поля"
+    )
     return CommandExitCode.SESSION_EXPIRED if login_form_detected else False

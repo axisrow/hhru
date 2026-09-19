@@ -102,6 +102,15 @@ BROWSER_COMMANDS = frozenset(
     }
 )
 
+# Команды, выведенные из-под инварианта «[FAIL] в stdout -> exit 1» (#1141):
+# их штатный успех печатает в stdout ЧУЖИЕ данные, и строка данных, начинающаяся
+# с [FAIL], была бы ложным вердиктом. У каждой собственные отказы завершаются
+# явно (return True контракта #148 или sys.exit), поэтому инвариант им не нужен:
+# - log       — хвост чужого лога прошлых прогонов (log_cmd);
+# - config    — сырой YAML конфига (без ключа и по ключу, config_cmd);
+# - call-api  — сырое тело ответа hh.ru API (call_api).
+FAIL_SCAN_EXEMPT_COMMANDS = frozenset({"log", "config", "call-api"})
+
 WRITE_COMMANDS = frozenset(
     {
         "apply",
@@ -464,11 +473,11 @@ def _execute(args: argparse.Namespace) -> None:
         # [FAIL] (docs/cli-spec.md §2.2), но исторически команда возвращала None
         # и диспетчер не мог отличить отказ от успеха по exit-коду. Вместо опроса
         # ~200 мест печати stdout команды наблюдается FailWatchStream'ом; после
-        # возврата из команды увиденный [FAIL] даёт exit 1 (ниже). Исключение —
-        # `log`: он печатает ЧУЖИЕ строки прошлых прогонов, [FAIL] в показанных
-        # данных — не вердикт этого запуска (stderr-вердикты не смотрятся:
-        # все они и так завершаются sys.exit/typed-кодом в самих командах).
-        watch = None if args.command == "log" else FailWatchStream(sys.stdout)
+        # возврата из команды увиденный [FAIL] даёт exit 1 (ниже). Исключения —
+        # FAIL_SCAN_EXEMPT_COMMANDS: их успех печатает чужие данные, а собственные
+        # отказы завершаются явно (stderr-вердикты не смотрятся: все они и так
+        # завершаются sys.exit/typed-кодом в самих командах).
+        watch = None if args.command in FAIL_SCAN_EXEMPT_COMMANDS else FailWatchStream(sys.stdout)
         real_stdout = sys.stdout
         if watch is not None:
             sys.stdout = watch
