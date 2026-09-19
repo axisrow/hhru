@@ -610,13 +610,19 @@ def _contacts_ready(page: Page, items: list[Contact]) -> None:
         try:
             field.wait_for(state="visible", timeout=FORM_TIMEOUT_MS)
         except PlaywrightTimeoutError as exc:
-            if field.count() == 0:
+            try:
+                attached = field.count()
+            except PlaywrightError:
+                # Страница ушла между wait и count (навигация/анти-бот) —
+                # скрытость не доказана, обычный failed/retry (review #1173).
+                attached = 0
+            if attached == 0:
                 raise  # поле вообще не отрисовалось — гидратация/анти-бот, обычный failed/retry
             raise RuntimeError(
                 f"contacts: поле {ctype} отрисовано скрытым (census #1165: на "
-                "незаполненном черновике hh.ru прячет телефон в hidden-контейнер "
-                "phone-верификации) — досдача невозможна, заполните шаг common/"
-                "опубликуйте резюме или уберите phone-строку из плана"
+                "незаполненном черновике скрытые поля недоступны для записи) — "
+                "досдача невозможна, заполните шаг common/опубликуйте резюме "
+                f"или уберите {ctype}-строку из плана"
             ) from exc
 
 
