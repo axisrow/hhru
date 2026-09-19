@@ -332,6 +332,16 @@ def test_missing_apply_button_fails_plain() -> None:
     assert "кнопка отклика не найдена" in result.reason
 
 
+def test_lookalike_host_fails_url_gate() -> None:
+    # endswith("hh.ru") пропускал бы evil-hh.ru — гейт хоста строгий
+    # (ровно hh.ru или поддомен), похожий домен не проходит до клика.
+    channel = FakeFormChannel(url=f"https://evil-hh.ru/vacancy/{VACANCY_ID}")
+    result = _run(channel)
+
+    assert (result.success, result.acted) == (False, False)
+    assert "не на странице вакансии" in result.reason
+
+
 def test_page_shape_reached_when_modal_absent() -> None:
     # Модалки нет — hh.ru открыл полную страницу /applicant/vacancy_response.
     channel = FakeFormChannel(modal_after_click=False, page_form=True)
