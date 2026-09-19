@@ -133,7 +133,11 @@ function resolveWait(waitFor) {
 }
 
 function waitConditionMet(wait) {
-  const matches = resolveTargets(wait.params).matches;
+  // A poll-time resolution failure (practically unreachable: resolveWait
+  // pre-validated this exact selector and querySelectorAll is deterministic)
+  // must degrade to "not met" — the poll loop then ends at the explicit
+  // timeout and the command always answers, never hangs silently.
+  const matches = resolveTargets(wait.params).matches || [];
   const anyVisible = matches.some((element) => isVisible(element));
   return wait.state === 'visible' ? anyVisible : !anyVisible;
 }
