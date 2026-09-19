@@ -156,7 +156,8 @@ def parse_salary_text(text: str | None) -> tuple[int | None, str | None]:
         return None, None
     # Разделитель тысяч у hh.ru — не только обычный пробел: боевой экспорт
     # несёт тонкий (U+2009) и узкий NBSP (U+202F); NBSP (U+00A0) тоже (#1166).
-    compact = re.sub(r"[\s\u00a0\u202f]", "", text)
+    # \s на str юникодный и покрывает их все — явные коды в классе не нужны.
+    compact = re.sub(r"\s", "", text)
     digit_groups = re.findall(r"\d+", compact)
     if len(digit_groups) > 1:
         # Диапазон («от 150 000 до 200 000 ₽») склейкой цифр не переносится —
