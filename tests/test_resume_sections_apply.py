@@ -15,6 +15,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 import hhru_bot.resume_sections as resume_sections
@@ -208,6 +209,10 @@ class FakeContactField:
         return self
 
     def count(self):
+        if self._qa in self._page.count_raises:
+            raise PlaywrightError(
+                "Execution context was destroyed, most likely because of a navigation"
+            )
         # ready=False моделирует негидратированную страницу: поле вообще не
         # отрисовалось (count=0), в отличие от hidden_fields — attached,
         # но скрытых полей черновика (census #1165).
@@ -290,6 +295,8 @@ class FakeContactsPage:
         self.save_wait_times_out = save_wait_times_out
         # Census #1165: поля attached, но скрытые (phone на свежем черновике).
         self.hidden_fields: set[str] = set()
+        # Review #1173: страницы, ушедшие между wait и count (навигация).
+        self.count_raises: set[str] = set()
         self.filled: dict[str, str] = {}
         self.readback_values: dict[str, str] = {}
         self.readback_raises: str = ""
@@ -568,6 +575,25 @@ def test_contacts_hidden_plan_field_refuses_before_save(contacts_page):
     assert len(errors) == 1 and "скрыт" in errors[0]
     assert [o.status for o in outcomes] == [OUTCOME_FAILED, OUTCOME_FAILED]
     assert "черновик" in outcomes[0].reason
+
+
+def test_contacts_count_race_fails_without_hidden_claim(contacts_page):
+    # Review #1173: страница ушла между wait и count — count() бросает
+    # PlaywrightError. Скрытость не доказана: классификация обязана остаться
+    # обычным failed/retry (ре-рейз таймаута), без RuntimeError-ветки
+    # «поле скрыто» и без mutate-исходов.
+    contacts_page.hidden_fields.add("resume-phone-cell_phone")
+    contacts_page.count_raises.add("resume-phone-cell_phone")
+    items = [resume_sections.Contact(type="phone", value="+66 1234")]
+    outcomes = [RowOutcome("contacts", 0, OUTCOME_PLANNED)]
+
+    errors = _apply_contacts(
+        contacts_page, "test-resume-id", items, dry_run=False, outcomes=outcomes
+    )
+
+    assert not contacts_page.saved and not contacts_page.filled
+    assert len(errors) == 1 and "скрыт" not in errors[0]
+    assert [o.status for o in outcomes] == [OUTCOME_FAILED]
 
 
 def test_apply_plan_early_exit_fails_contacts_rows(monkeypatch):
