@@ -36,7 +36,9 @@ def test_hhru_live_extension_manifest_and_detector_contract():
     assert manifest["background"]["service_worker"] == "background.js"
     # #929: policy.js обязан грузиться ДО content.js — content.js потребляет
     # его top-level биндинги (классификация) в том же isolated world.
-    assert manifest["content_scripts"][0]["js"] == ["policy.js", "content.js"]
+    # #1160: executor.js между ними — примитивы исполнителя тоже потребляют
+    # policy-ядро, а content.js диспетчеризует его функции.
+    assert manifest["content_scripts"][0]["js"] == ["policy.js", "executor.js", "content.js"]
     source = (root / "content.js").read_text()
     policy = (root / "policy.js").read_text()
     # policy.js ОПРЕДЕЛЯЕТ классификацию, content.js только потребляет.
@@ -68,9 +70,12 @@ def test_hhru_live_extension_transport_allowlist_is_exact():
     root = Path(__file__).parents[1] / "extensions" / "hhru-live"
     content = (root / "content.js").read_text()
     background = (root / "background.js").read_text()
-    allowlist = "new Set(['list_overlays', 'dismiss_overlay', 'check_element'])"
-    # Ровно три действия MVP (детект живёт сам, без команд); всё прочее —
-    # action_not_allowed. Новый дефолт вместо пустого allowlist эпохи #644.
+    allowlist = (
+        "new Set(['list_overlays', 'dismiss_overlay', 'check_element', "
+        "'click_element', 'wait_element', 'get_page_state'])"
+    )
+    # Шесть действий после #1160 (три MVP + три примитива исполнителя);
+    # всё прочее — action_not_allowed. Обе копии — дословно.
     assert allowlist in content
     assert allowlist in background, (
         "RELAY_ACTIONS в background.js должен зеркалить ACTION_ALLOWLIST "
@@ -78,6 +83,24 @@ def test_hhru_live_extension_transport_allowlist_is_exact():
     )
     assert "name !== 'hhru-agent'" in background
     assert "action_not_allowed" in background
+
+
+def test_hhru_live_executor_click_gate_order():
+    """#1160: у executor.js ровно один клик-сайт (target.click() в
+    clickElement), и он стоит ПОСЛЕ обоих fail-closed гейтов — policy_refused
+    (dangerous/apply_step/ambiguous без клика) и wait_required (клик без
+    объявленного post-click условия невозможен). DOM не удаляется."""
+    from pathlib import Path
+
+    root = Path(__file__).parents[1] / "extensions" / "hhru-live"
+    executor = (root / "executor.js").read_text()
+    assert executor.count("target.click();") == 1, (
+        "click() разрешён ровно один раз — по подтверждённой цели внутри clickElement"
+    )
+    click_at = executor.index("target.click();")
+    assert executor.index("policy_refused") < click_at
+    assert executor.index("wait_required") < click_at
+    assert "element.remove" not in executor
 
 
 def test_hhru_live_extension_danger_anchors_outrank_apply_anchors():
