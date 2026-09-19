@@ -53,12 +53,14 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
     failed = False
 
     channel = LiveChannel(port=args.port, client_timeout=CLIENT_TIMEOUT_SECONDS)
-    url = channel.start()
-    wait_s = f"{CLIENT_TIMEOUT_SECONDS:.0f}"
-    print(f"[INFO] bump-live: канал {url} — жду расширение hhru-live (до {wait_s} с)")
     try:
+        url = channel.start()
+        wait_s = f"{CLIENT_TIMEOUT_SECONDS:.0f}"
+        print(f"[INFO] bump-live: канал {url} — жду расширение hhru-live (до {wait_s} с)")
         channel.wait_client()
     except ChannelError as exc:
+        # start() может отказать только на занятом --port; close() в этом
+        # состоянии — no-op. Честный [FAIL] вместо traceback.
         print(f"[FAIL] bump-live: {exc}")
         channel.close()
         return True
