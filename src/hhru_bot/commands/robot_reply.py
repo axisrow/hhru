@@ -28,6 +28,8 @@ _DEFAULT_HYDRATION_WAIT_MS = 6000
 
 
 def register(subparsers) -> None:
+    from ..negotiations_probe import RESOLVE_TOPIC_MAX_PAGES
+
     parser = subparsers.add_parser(
         "robot-reply",
         help="Ответить роботу-анкете: кнопкой быстрых ответов (Да/Нет) или текстом",
@@ -72,7 +74,11 @@ def register(subparsers) -> None:
         "--max-pages",
         type=int,
         default=5,
-        help="Максимум страниц negotiations для SSR topic→chat mapping",
+        help=(
+            "Нижняя граница страниц negotiations для SSR topic→chat mapping: "
+            "резолв-обход ищет топик до доказуемого конца списка, малое "
+            f"значение глубину не режет (потолок {RESOLVE_TOPIC_MAX_PAGES})"
+        ),
     )
     parser.set_defaults(func=run)
 
@@ -110,7 +116,7 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
         read_chat,
         send_reply_current,
     )
-    from ..negotiations_probe import paginated_topic_refs
+    from ..negotiations_probe import RESOLVE_TOPIC_MAX_PAGES, paginated_topic_refs
     from ..responses import NotAuthenticated, ResponsesIndeterminate
     from ..throttle import LimitReached, Throttle
 
@@ -130,7 +136,12 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
     ) as context:
         page = context.new_page()
         try:
-            topic_list = paginated_topic_refs(page, max_pages=args.max_pages)
+            # Резолв-обход topic→chat (#1154): топик ищется по ВСЕМУ списку,
+            # поэтому --max-pages ниже потолка глубину не режет — конец списка
+            # доказывается нулевым окном, а не этим числом. Живой факт
+            # 2026-09-19: 485 тем = 49 страниц, дефолт 5 резал глубину.
+            max_pages = max(args.max_pages, RESOLVE_TOPIC_MAX_PAGES)
+            topic_list = paginated_topic_refs(page, max_pages=max_pages)
         except (NotAuthenticated, ResponsesIndeterminate, ValueError) as exc:
             print(f"[FAIL] не удалось прочитать SSR chat mapping: {exc}", file=sys.stderr)
             return True
@@ -138,7 +149,7 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
         if topic not in refs:
             print(
                 f"[FAIL] topic {topic} не найден в живом negotiations-списке "
-                "(переписка удалена или ушла за --max-pages)"
+                "(переписка удалена или ушла за потолок пейджинга)"
             )
             return True
         chat = read_chat(page, topic, refs)

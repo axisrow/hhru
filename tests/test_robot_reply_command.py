@@ -386,3 +386,26 @@ def test_wait_ms_zero_is_rejected_before_any_browser(capsys):
     ДО confirm_write/запуска браузера."""
     assert command.run(_args(wait_ms=0)) is True
     assert "--wait-ms" in capsys.readouterr().err
+
+
+def test_topic_walk_lifts_small_max_pages_to_resolve_ceiling(monkeypatch, tmp_path, capsys):
+    """#1154: резолв topic→chat ищет по ВСЕМУ списку — --max-pages ниже
+    RESOLVE_TOPIC_MAX_PAGES глубину не режет. Живой факт 2026-09-19: список
+    «Все» = 485 тем = 49 страниц, прежний дефолт 5 оставлял топики страниц
+    44–48 «невидимыми» ([FAIL] не найден)."""
+    from hhru_bot.negotiations_probe import RESOLVE_TOPIC_MAX_PAGES
+
+    captured: dict[str, int] = {}
+
+    def _recorder(page, *, max_pages):
+        captured["max_pages"] = max_pages
+        return [TopicRef(topic_id="100000001", chat_id="300000003", vacancy_id="200000002")]
+
+    history = _patch_common(monkeypatch, tmp_path, clicks=[])
+    monkeypatch.setattr("hhru_bot.negotiations_probe.paginated_topic_refs", _recorder)
+
+    assert command.run(_args(tmp_path, dry_run=True, max_pages=1)) is False
+
+    assert captured["max_pages"] == RESOLVE_TOPIC_MAX_PAGES
+    assert "[DRY-RUN]" in capsys.readouterr().out
+    assert history.is_robot_questionnaire("100000001") is True
