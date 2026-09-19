@@ -43,6 +43,43 @@ def test_parse_contacts_prefers_parent_row_and_marks_preferred() -> None:
     ]
 
 
+def test_parse_contacts_preferred_family_gets_type_from_href() -> None:
+    """Живой факт 2026-09-19 (экспорт владельца): предпочтительный контакт
+    рендерится семейством resume-contact-preferred* без типа в qa — тип
+    выводится из href, а не выдумывается и не становится типом 'preferred'."""
+    contacts = parse_contacts(
+        [
+            {"qa": "resume-contact-email", "text": "user@example.com", "href": None},
+            {
+                "qa": "resume-contact-preferred",
+                "text": "+7 903 144-49-87",
+                "href": "tel:+79031444987",
+            },
+        ]
+    )
+    assert contacts == [
+        {
+            "type": "email",
+            "preferred": False,
+            "value": "user@example.com",
+            "href": None,
+        },
+        {
+            "type": "phone",
+            "preferred": True,
+            "value": "+7 903 144-49-87",
+            "href": "tel:+79031444987",
+        },
+    ]
+
+
+def test_parse_contacts_preferred_without_href_stays_unknown_type() -> None:
+    """preferred-строка без узнаваемого href остаётся типом 'preferred' —
+    импорт отклонит её с явной причиной, заглушка не выдумывается."""
+    contacts = parse_contacts([{"qa": "resume-contact-preferred", "text": "что-то", "href": None}])
+    assert contacts == [{"type": "preferred", "preferred": True, "value": "что-то", "href": None}]
+
+
 def test_parse_experience_company_splits_header_and_steps() -> None:
     card = {
         "header": ['ООО "Пример"', "3 года и 1 месяц"],

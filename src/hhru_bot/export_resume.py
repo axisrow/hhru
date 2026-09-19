@@ -63,8 +63,10 @@ EXPERIENCE_EXPAND_MARKER = "Развернуть"
 EDUCATION_BLOCK = "education"
 # Блок сертификатов (#1120). Имя — singular по триггеру редактирования строки
 # resume-edit-button-certificate- (живой DOM); обёртка
-# resume-list-card-certificate живым дампом НЕ подтверждена — при пустом
-# экспорте сертификатов на заполненном резюме первый подозреваемый это имя.
+# resume-list-card-certificate живым дампом НЕ подтверждена. Read-only экспорт
+# 2026-09-19 (резюме владельца): блок-карточек на них нет вовсе — имя не
+# подтверждено и не опровергнуто; при пустом экспорте сертификатов на
+# заполненном резюме первый подозреваемый это имя.
 CERTIFICATE_BLOCK = "certificate"
 
 
@@ -181,6 +183,10 @@ def parse_contacts(rows: list[dict]) -> list[dict]:
     На живой странице контакт рендерится парой: родитель
     ``resume-contact-phone`` (или ``-value-preferred`` у ссылки) — берём самый
     короткий qa каждого типа, «preferred» фиксируем отдельным флагом.
+    Живой факт 2026-09-19 (боевой read-only экспорт владельца): предпочтительный
+    контакт рендерится семейством ``resume-contact-preferred*`` БЕЗ типа в qa —
+    тип выводится из href (tel: → phone, mailto: → email); без узнаваемого
+    href тип остаётся ``preferred``, и импорт такую строку честно отклонит.
     """
     best: dict[str, dict] = {}
     for row in rows:
@@ -190,6 +196,12 @@ def parse_contacts(rows: list[dict]) -> list[dict]:
             continue
         contact_type = name.split("-value-")[0].split("-value")[0]
         preferred = "preferred" in name
+        if contact_type == "preferred":
+            href = str(row.get("href") or "")
+            if href.startswith("tel:"):
+                contact_type = "phone"
+            elif href.startswith("mailto:"):
+                contact_type = "email"
         candidate = {
             "type": contact_type,
             "preferred": preferred,
