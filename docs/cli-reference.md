@@ -386,6 +386,10 @@ READ hh.ru: competitors collect --text QUERY [--search-in SCOPE] [--max-pages N]
 - `--status` — Дополнительно: можно ли поднять (кулдаун) и дата последнего поднятия
 - `--local` — Без похода на hh.ru: только записи config.yaml (overlay настроек)
 
+### `live-serve`
+
+- `--port PORT` — Порт на 127.0.0.1 (0 — свободный ephemeral, печатается при старте)
+
 ### `log`
 
 - `-n, --lines LINES` — Количество строк (по умолчанию 50) (по умолчанию: 50)
