@@ -491,12 +491,14 @@ def navigate_to_response_form(
             page.locator(apply_form.APPLY_SUBMIT_BUTTON).or_(post_response).filter(
                 visible=True
             ).first.wait_for(state="visible", timeout=ready_timeout_ms)
-        except PlaywrightError:
+        except PlaywrightError as second_exc:
             if dump_diagnostics:
                 _dump_navigation_diagnostics(page, "form_timeout", vacancy_id, run_id)
+            # Реальная причина отказа — провал ВТОРОГО ожидания (другой момент,
+            # другой DOM), а не первый таймаут из exc: печатаем second_exc.
             logger.warning(
                 "Форма отклика не отрисовалась и после подтверждения переезда (#1135): %s",
-                exc,
+                second_exc,
             )
             return False
         logger.info("Форма отклика отрисовалась после подтверждения переезда (#1135)")

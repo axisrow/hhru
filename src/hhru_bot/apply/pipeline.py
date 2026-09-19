@@ -387,7 +387,7 @@ def _finalize_blocker(ctx: ApplyContext, blocker: PostClickBlocker) -> ApplyResu
         return _keep_stop(
             ctx.ok(
                 f"{blocker.reason}; внешняя проверка: отклик присутствует "
-                f"в /applicant/negotiations ({verified.detail})"
+                f"в /applicant/negotiations ({verified.detail})" + _relocation_confirmed_suffix(ctx)
             )
         )
     if verified.indeterminate:

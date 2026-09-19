@@ -1961,3 +1961,55 @@ def test_apply_relocation_confirm_reconciled_success_also_marked(monkeypatch):
     assert "попап переезда подтверждён кликом" in result.reason
     assert page.relocation_clicks == [1]
     assert result.acted is True
+
+
+class _LateRejectWarningPage(FakePage):
+    """Reject-warning монтируется после первого блокер-прохода (async render).
+
+    Первый locator(REJECT_WARNING) — первый проход (post_navigation=False):
+    предупреждение ещё не смонтировано, найденный там блокер до verify не
+    доходит. Со второго вызова (проход с post_navigation=True) — видно, и
+    терминальный блокер уходит в внешнюю проверку.
+    """
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.reject_locator_calls = 0
+
+    def locator(self, selector: str):
+        from hhru_bot.selector_groups import vacancy_page
+
+        if selector == vacancy_page.VACANCY_RESPONSE_REJECT_WARNING:
+            self.reject_locator_calls += 1
+            if self.reject_locator_calls >= 2:
+                return _VisibleLocator(page=self, present=True)
+            return _FakeLocator(present=False)
+        return super().locator(selector)
+
+
+def test_apply_relocation_confirm_blocker_found_success_also_marked(monkeypatch):
+    # #1135 (review round 2): попап подтверждён кликом, затем смонтировался
+    # ДРУГОЙ терминальный блокер (post_navigation=True) — verify found даёт
+    # success в _finalize_blocker; пометка клика обязательна и здесь, иначе
+    # этот success-исход скрывает мутирующую профиль операцию.
+    from hhru_bot.apply.verify import NegotiationsVerifyResult
+
+    monkeypatch.setattr(
+        pipeline_module.apply_steps, "_dump_navigation_diagnostics", lambda *_args: None
+    )
+    page = _LateRejectWarningPage(apply_button=True, success=True, relocation_visible=True)
+
+    result = apply_to_vacancy(
+        page,
+        _vacancy(),
+        "RID",
+        "x",
+        dry_run=False,
+        allow_relocation=True,
+        verifier=lambda *_args: NegotiationsVerifyResult("found", "topic=42"),
+    )
+
+    assert result.success is True
+    assert "попап переезда подтверждён кликом" in result.reason
+    assert page.relocation_clicks == [1]
+    assert result.acted is True
