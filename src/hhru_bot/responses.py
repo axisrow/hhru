@@ -21,6 +21,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from html import unescape
 
 from playwright.sync_api import Error as PlaywrightError
@@ -411,12 +412,43 @@ def _confirmed_no_new_topics(page: Page, seen_topic_ids: set[str], *, strict: bo
         return False
 
 
+def _topics_all_before_cutoff(
+    topic_ids: set[str], modified_map: dict[str, str], cutoff: datetime
+) -> bool:
+    """True, если каждая тема страницы подтверждённо старше отсечки (#1148).
+
+    Чистая функция. Любая неполнота доказательства — тема без ``lastModified``,
+    непарсящаяся дата, наивное время без таймзоны (сравнение aware/naive —
+    TypeError, поэтому отсутствие офсета трактуем как «доказательства нет») или
+    тема свежее отсечки — возвращает False: вызывающий продолжает обход. Цена
+    ложного False — лишние GET; цена ложного True был бы потерянный свежий
+    топик, поэтому в сторону True функция не ошибается никогда.
+
+    Сравнение — по моменту времени (обе стороны aware): SSR ``lastModified``
+    несёт серверный офсет ``+03:00``, отсечка строится в локальной таймзоне.
+    """
+    for topic_id in topic_ids:
+        raw = modified_map.get(topic_id)
+        if raw is None:
+            return False
+        try:
+            modified_at = datetime.fromisoformat(raw)
+        except ValueError:
+            return False
+        if modified_at.tzinfo is None or cutoff.tzinfo is None:
+            return False
+        if modified_at >= cutoff:
+            return False
+    return True
+
+
 def fetch_responses(
     page: Page,
     max_pages: int = 5,
     *,
     strict_empty: bool = False,
     strict_scrape: bool = False,
+    stop_before: datetime | None = None,
 ) -> list[ResponseItem]:
     """Собирает ответы работодателей с /applicant/negotiations.
 
@@ -431,6 +463,20 @@ def fetch_responses(
     новые не теряются. Достижение ``max_pages`` при непустой последней
     странице поднимает :class:`ResponsesIndeterminate`: полнота списка не
     подтверждена, тихая обрезка запрещена.
+
+    ``stop_before`` (#1148) — скоупированный ранний стоп для read-only
+    просмотра с окном свежести: топики ленты отдаются новыми вперёд, поэтому
+    страница, где КАЖДАЯ тема подтверждённо (SSR ``lastModified``) старше
+    отсечки, доказывает конец списка ДЛЯ ЭТОГО ОКНА — продолжение не может
+    содержать более свежих тем. Это доказательство данными, в духе «ноль новых
+    топиков», а не fail-open: карточки уже собранной страницы возвращаются
+    (upsert освежает историю), но непрочитанный хвост старее окна — и не нужен
+    окну. Любая неполнота доказательства оставляет обход идущим (см.
+    :func:`_topics_all_before_cutoff`); страж ``max_pages`` остаётся backstop'ом.
+    Для strict-путей (``strict_empty``/``strict_scrape`` — ``--sync-applied``/
+    ``--alert-new``) ранний стоп запрещён: они обязаны доказать полноту
+    ПОЛНОГО списка, скоупированный стоп сделал бы неполный ledger/checkpoint
+    похожим на полный.
 
     Read-only по hh.ru: только goto + чтение, никаких кликов действий.
 
@@ -466,6 +512,11 @@ def fetch_responses(
 
     if max_pages <= 0:
         raise ValueError("max_pages must be positive")
+    if stop_before is not None and (strict_empty or strict_scrape):
+        # strict-путь обязан доказать полноту полного списка; скоупированный
+        # ранний стоп по окну свежести дал бы неполный ledger/checkpoint,
+        # выглядящий как полный (#1148).
+        raise ValueError("stop_before is not allowed with strict_empty/strict_scrape")
 
     for page_num in range(max_pages):
         url = NEGOTIATIONS_URL if page_num == 0 else f"{NEGOTIATIONS_URL}?page={page_num}"
@@ -560,8 +611,17 @@ def fetch_responses(
         # page's already-resolved results and risk assigning them this
         # page's SSR topics.
         page_topic_ids: set[str] = set()
+        # topic_id → SSR lastModified (ISO с таймзоной) для скоупированного
+        # раннего стопа (#1148). Пустой по умолчанию: без прочитанного SSR
+        # старость страницы недоказуема — обход продолжит.
+        page_modified: dict[str, str] = {}
         try:
-            from .negotiations_probe import chat_url, parse_initial_state, topic_refs
+            from .negotiations_probe import (
+                chat_url,
+                parse_initial_state,
+                topic_last_modified,
+                topic_refs,
+            )
 
             if not hasattr(page, "content"):
                 raise ValueError("page.content unavailable")
@@ -569,6 +629,7 @@ def fetch_responses(
             try:
                 refs = topic_refs(html)
                 page_topic_ids = {ref.topic_id for ref in refs}
+                page_modified = topic_last_modified(html)
             except AttributeError as exc:
                 # #742 round 2 (Codex review): topic_refs() runs before the
                 # raw_topics shape validation below and assumes
@@ -733,6 +794,30 @@ def fetch_responses(
         if page_num > 0 and not (page_topic_ids - seen_topic_ids):
             logger.info(
                 "Страница %d без новых топиков — достигнут конец списка откликов",
+                page_num,
+            )
+            break
+        # Скоупированный ранний стоп (#1148): топики ленты отдаются новыми
+        # вперёд, поэтому страница, где каждая тема подтверждённо старше
+        # отсечки stop_before, доказывает конец списка для окна запроса —
+        # продолжение не может содержать более свежих тем. Премиса порядка —
+        # наблюдение ишью, НЕ гарантия: её дрейф лишает страницу доказательной
+        # силы, и стоп мог бы пропустить свежие темы на хвосте (задет только
+        # информационный просмотр — strict-пути stop_before не получают).
+        # Неполнота
+        # доказательства (тема без lastModified, непарсящаяся дата, без
+        # таймзоны, свежее отсечки) оставляет обход идущим. Страница стоит
+        # ДО стража бюджета: подтверждённо устаревший хвост у потолка —
+        # конец окна, а не ResponsesIndeterminate. Карточки этой страницы
+        # уже собраны выше и возвращаются (upsert освежает историю).
+        if (
+            stop_before is not None
+            and page_topic_ids
+            and _topics_all_before_cutoff(page_topic_ids, page_modified, stop_before)
+        ):
+            logger.info(
+                "Страница %d: все темы старше отсечки окна запроса — "
+                "конец списка доказан данными (#1148)",
                 page_num,
             )
             break

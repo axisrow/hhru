@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
 import hhru_bot.responses as responses
@@ -13,6 +15,11 @@ from hhru_bot.browser import LOGIN_FORM
 from hhru_bot.selector_groups import negotiations as ns
 
 pytestmark = pytest.mark.integration
+
+# Отсечка окна запроса (#1148) и метки тем: старее отсечки / свежее отсечки.
+_CUTOFF = datetime(2026, 9, 19, 12, 0, tzinfo=UTC)
+_OLD = "2020-01-01T00:00:00+03:00"
+_FRESH = "2027-01-01T00:00:00+03:00"
 
 
 class _EmptyLocator:
@@ -96,13 +103,26 @@ class _PagerlessCardsLocator:
         return self.spec.cards[index]
 
 
-def _ssr(topics: list[tuple[int, int, str]]) -> str:
-    entries = ",".join(f'{{"id":{t},"chatId":{c},"vacancyId":"{v}"}}' for t, c, v in topics)
+def _ssr_doc(entries_src: str) -> str:
     return (
         '<template id="HH-Lux-InitialState">'
-        f'{{"applicantNegotiations":{{"topicList":[{entries}]}}}}'
+        f'{{"applicantNegotiations":{{"topicList":[{entries_src}]}}}}'
         "</template>"
     )
+
+
+def _ssr(topics: list[tuple[int, int, str]]) -> str:
+    entries = ",".join(f'{{"id":{t},"chatId":{c},"vacancyId":"{v}"}}' for t, c, v in topics)
+    return _ssr_doc(entries)
+
+
+def _ssr_ts(entries: list[tuple[int, int, str, str]]) -> str:
+    """SSR с lastModified на каждой записи (живой shape 2026-09-16: ISO с офсетом)."""
+    entries_src = ",".join(
+        f'{{"id":{t},"chatId":{c},"vacancyId":"{v}","lastModified":"{m}"}}'
+        for t, c, v, m in entries
+    )
+    return _ssr_doc(entries_src)
 
 
 def _item(card: str) -> responses.ResponseItem:
@@ -314,3 +334,118 @@ def test_pagerless_unreadable_ssr_is_indeterminate(monkeypatch):
 
     with pytest.raises(responses.ResponsesIndeterminate, match="SSR topicList"):
         responses.fetch_responses(page, max_pages=2)
+
+
+# --- скоупированный ранний стоп по окну запроса (#1148) -----------------------
+#
+# Топики ленты отдаются новыми вперёд, поэтому страница, где КАЖДАЯ тема
+# подтверждённо (SSR lastModified) старше отсечки stop_before, доказывает
+# конец списка ДЛЯ ЭТОГО ОКНА — продолжение не может содержать более свежих.
+
+
+def test_scope_stop_entire_page_older_proves_end(monkeypatch):
+    """Страница, целиком старше отсечки, — конец окна: хвост не дочитывается."""
+    url0 = _PagerlessPage.BASE
+    page = _PagerlessPage(
+        {
+            url0: _PageSpec(["1"], _ssr_ts([(1, 11, "1", _OLD)])),
+            f"{url0}?page=1": _PageSpec(["2"], _ssr_ts([(2, 22, "2", _OLD)])),
+        }
+    )
+    _run(monkeypatch, page)
+
+    items = responses.fetch_responses(page, max_pages=3, stop_before=_CUTOFF)
+
+    # Карточки устаревшей страницы возвращаются (upsert освежает историю),
+    # но хвост старее окна не читается.
+    assert [i.vacancy_id for i in items] == ["1"]
+    assert page.visited == [url0]
+
+
+def test_scope_stop_page_with_fresh_topic_keeps_walking(monkeypatch):
+    """Хотя бы одна тема свежее отсечки — доказательства конца нет, обход идёт."""
+    url0, url1 = _PagerlessPage.BASE, f"{_PagerlessPage.BASE}?page=1"
+    page = _PagerlessPage(
+        {
+            url0: _PageSpec(["1", "2"], _ssr_ts([(1, 11, "1", _OLD), (2, 22, "2", _FRESH)])),
+            url1: _PageSpec([], _ssr([])),
+        }
+    )
+    _run(monkeypatch, page)
+
+    items = responses.fetch_responses(page, max_pages=3, stop_before=_CUTOFF)
+
+    assert sorted(i.vacancy_id for i in items) == ["1", "2"]
+    assert page.visited == [url0, url1]
+
+
+def test_scope_stop_missing_lastmodified_keeps_walking(monkeypatch):
+    """SSR без lastModified (дрейф формы) не доказывает старость — обход
+    продолжается, конец подтверждается прежним способом (ноль новых топиков)."""
+    url0, url1 = _PagerlessPage.BASE, f"{_PagerlessPage.BASE}?page=1"
+    page = _PagerlessPage(
+        {
+            url0: _PageSpec(["1"], _ssr([(1, 11, "1")])),
+            url1: _PageSpec([], _ssr([])),
+        }
+    )
+    _run(monkeypatch, page)
+
+    items = responses.fetch_responses(page, max_pages=3, stop_before=_CUTOFF)
+
+    assert [i.vacancy_id for i in items] == ["1"]
+    assert page.visited == [url0, url1]
+
+
+def test_scope_stop_unreadable_or_boundary_lastmodified_keeps_walking(monkeypatch):
+    """Непарсящаяся дата, наивное время без таймзоны и тема РОВНО на отсечке
+    не дают доказательства старости страницы — обход продолжается."""
+    cases = [
+        ("непарсящаяся", "не дата"),
+        ("наивная", "2020-01-01T00:00:00"),
+        ("ровно на отсечке", "2026-09-19T12:00:00+00:00"),
+    ]
+    for name, modified in cases:
+        url0, url1 = _PagerlessPage.BASE, f"{_PagerlessPage.BASE}?page=1"
+        page = _PagerlessPage(
+            {
+                url0: _PageSpec(["1"], _ssr_ts([(1, 11, "1", modified)])),
+                url1: _PageSpec([], _ssr([])),
+            }
+        )
+        _run(monkeypatch, page)
+
+        items = responses.fetch_responses(page, max_pages=3, stop_before=_CUTOFF)
+
+        assert [i.vacancy_id for i in items] == ["1"], name
+        assert page.visited == [url0, url1], name
+
+
+def test_scope_stop_stale_page_at_budget_is_not_indeterminate(monkeypatch):
+    """Ранний стоп стоит ДО стража бюджета: устаревший хвост у потолка
+    --max-pages — доказанный конец окна, а не ResponsesIndeterminate."""
+    url0 = _PagerlessPage.BASE
+    page = _PagerlessPage({url0: _PageSpec(["1"], _ssr_ts([(1, 11, "1", _OLD)]))})
+    _run(monkeypatch, page)
+
+    items = responses.fetch_responses(page, max_pages=1, stop_before=_CUTOFF)
+
+    assert [i.vacancy_id for i in items] == ["1"]
+
+
+def test_fetch_responses_rejects_stop_before_on_strict_paths():
+    """strict-пути (--sync-applied/--alert-new) обязаны доказать полноту
+    ПОЛНОГО списка: скоупированный стоп сделал бы неполный ledger/checkpoint
+    похожим на полный. Явный ValueError вместо молчаливого игнорирования."""
+    with pytest.raises(ValueError, match="stop_before"):
+        responses.fetch_responses(object(), max_pages=1, strict_empty=True, stop_before=_CUTOFF)
+    with pytest.raises(ValueError, match="stop_before"):
+        responses.fetch_responses(object(), max_pages=1, strict_scrape=True, stop_before=_CUTOFF)
+
+
+def test_topics_all_before_cutoff_requires_aware_cutoff():
+    """Наивная отсечка несравнима с aware SSR-датами: доказательства нет
+    (fail-closed), а не TypeError посреди обхода."""
+    assert not responses._topics_all_before_cutoff({"1"}, {"1": _OLD}, datetime(2026, 9, 19, 12, 0))
+    # Контроль: та же отсечка с таймзоной доказывает старость.
+    assert responses._topics_all_before_cutoff({"1"}, {"1": _OLD}, _CUTOFF)

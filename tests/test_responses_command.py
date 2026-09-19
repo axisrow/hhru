@@ -238,7 +238,11 @@ def test_responses_alert_new_reports_invitation_and_returns_signal(capsys, tmp_p
     result = responses_cmd.run(_args(config, tmp_path / "h.db", alert_new=True))
 
     assert result is CommandExitCode.NEW_INVITATIONS
-    assert fetch_kwargs == [{"max_pages": 5, "strict_empty": False, "strict_scrape": True}]
+    # --alert-new — strict-путь: скоупированный ранний стоп запрещён
+    # (stop_before=None; checkpoint обязан доказывать полноту полного списка).
+    assert fetch_kwargs == [
+        {"max_pages": 5, "strict_empty": False, "strict_scrape": True, "stop_before": None}
+    ]
     out = capsys.readouterr().out
     assert out == ("[INFO] Новых приглашений: 1\nВакансия: v-invitation | Работодатель: ACME\n")
     history = History(tmp_path / "h.db")
@@ -505,7 +509,74 @@ def test_sync_applied_with_zero_since_hours_still_uses_browser(capsys, tmp_path,
         lambda *args, **kwargs: seen.append(kwargs) or [card],
     )
     responses_cmd.run(_args(config, tmp_path / "h.db", since_hours=0.0, sync_applied=True))
-    assert seen == [{"max_pages": 5, "strict_empty": True, "strict_scrape": False}]
+    # --sync-applied — strict-путь: скоупированный ранний стоп запрещён
+    # (stop_before=None; ledger обязан доказывать полноту полного списка).
+    assert seen == [
+        {"max_pages": 5, "strict_empty": True, "strict_scrape": False, "stop_before": None}
+    ]
+    assert "добавлено 1" in capsys.readouterr().out
+
+
+def test_effective_max_pages_explicit_wins_none_is_adaptive():
+    """#1148: None (адаптивный дефолт) резолвится в backstop; явное значение — как есть."""
+    from hhru_bot.commands.responses import (
+        RESPONSES_ADAPTIVE_MAX_PAGES,
+        _effective_max_pages,
+    )
+
+    assert _effective_max_pages(None) == RESPONSES_ADAPTIVE_MAX_PAGES
+    assert _effective_max_pages(3) == 3
+
+
+def test_plain_view_passes_aware_stop_before_and_adaptive_default(capsys, tmp_path, monkeypatch):
+    """#1148: обычный просмотр передаёт aware-отсечку окна запроса; --max-pages
+    None резолвится в адаптивный backstop; sync-путь отсечки не получает."""
+    import contextlib
+    from datetime import datetime, timedelta
+
+    from hhru_bot.commands.responses import RESPONSES_ADAPTIVE_MAX_PAGES
+    from hhru_bot.responses import ResponseItem, ResponseStatus
+
+    config = _write_config(tmp_path, _minimal_config())
+    seen = []
+
+    class _FakeContext:
+        def new_page(self):
+            return object()
+
+    @contextlib.contextmanager
+    def _fake_launch_context(*_args, **_kwargs):
+        yield _FakeContext()
+
+    card = ResponseItem(vacancy_id="v1", status=ResponseStatus.READ, topic="t1", resume_id="r1")
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
+    monkeypatch.setattr(
+        "hhru_bot.responses.fetch_responses", lambda *a, **k: seen.append(k) or [card]
+    )
+
+    started = datetime.now().astimezone()
+    responses_cmd.run(_args(config, tmp_path / "h.db", since_hours=24.0, max_pages=None))
+    kwargs = seen[0]
+    assert kwargs["max_pages"] == RESPONSES_ADAPTIVE_MAX_PAGES
+    assert kwargs["strict_empty"] is False
+    assert kwargs["strict_scrape"] is False
+    stop_before = kwargs["stop_before"]
+    assert stop_before is not None and stop_before.tzinfo is not None
+    expected = started - timedelta(hours=24)
+    # Отсечка строится из момента старта команды; допуск — минуты тестового прогона.
+    assert abs((stop_before - expected).total_seconds()) < 120
+    capsys.readouterr()
+
+    # Явный --max-pages всегда выигрывает.
+    seen.clear()
+    responses_cmd.run(_args(config, tmp_path / "h.db", since_hours=24.0, max_pages=5))
+    assert seen[0]["max_pages"] == 5
+    capsys.readouterr()
+
+    # sync с окном свежести: stop_before=None (иначе strict-путь отказал бы).
+    seen.clear()
+    responses_cmd.run(_args(config, tmp_path / "h.db", since_hours=24.0, sync_applied=True))
+    assert seen[0]["stop_before"] is None
     assert "добавлено 1" in capsys.readouterr().out
 
 

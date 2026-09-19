@@ -706,6 +706,15 @@ def test_responses_has_resume_max_pages_since_hours():
     assert "--limit" not in opts
 
 
+def test_responses_max_pages_default_is_adaptive():
+    """#1148: --max-pages responses по умолчанию адаптивный (None), конец
+    списка доказывается данными, а не фиксированный бюджет из 5 страниц."""
+    parser = _build()
+    sub = _subparser_actions(parser).choices["responses"]
+    max_pages = next(a for a in sub._actions if "--max-pages" in a.option_strings)
+    assert max_pages.default is None
+
+
 def test_responses_has_alert_new_flag():
     opts = _opts_for("responses")
     assert "--alert-new" in opts
