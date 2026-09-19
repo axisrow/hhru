@@ -19,12 +19,28 @@ import sys
 
 from ..exit_codes import CommandExitCode
 
+# Backstop адаптивного --max-pages read-only пути (#1148). Конец списка
+# доказывается данными (страница без новых SSR-топиков, #1066/#1074; для окна
+# --since-hours — страница, целиком старше отсечки), поэтому дефолт — не
+# фиксированный бюджет, а высокий потолок на патологию (сервер, который и не
+# повторяет окна, и не отдаёт конец). 50 страниц ~500 тем — на порядок выше
+# самой длинной наблюдавшейся истории (15+ страниц, #1148) и всё ещё ограничение:
+# непрерывный список у потолка поднимает тот же ResponsesIndeterminate #1074,
+# только дальше. Бюджет clear-negotiations (необратимая команда, инвариант
+# «отказ до любого клика», PR #196) этим не затрагивается — у него свой argparse.
+RESPONSES_ADAPTIVE_MAX_PAGES = 50
+
 
 def _positive_int(value: str) -> int:
     parsed = int(value)
     if parsed < 1:
         raise argparse.ArgumentTypeError("должно быть положительным целым числом")
     return parsed
+
+
+def _effective_max_pages(max_pages: int | None) -> int:
+    """None (адаптивный дефолт) → backstop-константа; явный --max-pages выигрывает."""
+    return RESPONSES_ADAPTIVE_MAX_PAGES if max_pages is None else max_pages
 
 
 def register(subparsers) -> None:
@@ -36,8 +52,10 @@ def register(subparsers) -> None:
     p.add_argument(
         "--max-pages",
         type=_positive_int,
-        default=5,
-        help="Максимум страниц списка откликов (по умолчанию 5)",
+        default=None,
+        help="Максимум страниц списка откликов (по умолчанию — адаптивный: конец "
+        f"списка доказывается данными, backstop {RESPONSES_ADAPTIVE_MAX_PAGES}; "
+        "у потолка при непустой странице — отказ, а не тихая обрезка, #1074)",
     )
     p.add_argument(
         "--since-hours",
@@ -226,14 +244,25 @@ def run(args: argparse.Namespace) -> CommandExitCode | None:
             file=sys.stderr,
         )
         sys.exit(2)
-    if args.max_pages < 1:
+    if args.max_pages is not None and args.max_pages < 1:
         print("Ошибка: --max-pages должен быть положительным", file=sys.stderr)
         sys.exit(2)
+    # Явный --max-pages всегда выигрывает; None — адаптивный режим (#1148):
+    # конец списка доказывается данными, backstop — только потолок патологии.
+    max_pages = _effective_max_pages(args.max_pages)
     fresh_only = (
         args.since_hours <= 0 and not remindable_only and not sync_applied and not alert_new
     )
     scan_started_at = datetime.now()
     since_fetch = scan_started_at - timedelta(hours=args.since_hours)
+    # Скоупированный ранний стоп (#1148): только обычный read-only просмотр с
+    # окном свежести. strict-пути (--sync-applied/--alert-new) обязаны доказать
+    # полноту ПОЛНОГО списка (fetch_responses отклоняет stop_before на них);
+    # --remindable/--detect-external-tests окна свежести не имеют. Отсечка
+    # aware: SSR lastModified несёт таймзону, сравнение — по моменту времени.
+    stop_before = None
+    if not (remindable_only or sync_applied or alert_new or detect_external_tests):
+        stop_before = scan_started_at.astimezone() - timedelta(hours=args.since_hours)
     # Для сводки «что нового»: в режиме history-only берём вообще всё (min), иначе —
     # окно since-fetch. datetime.min — «любая status_changed_at подходит».
     since_summary = datetime.min if fresh_only else since_fetch
@@ -277,7 +306,7 @@ def run(args: argparse.Namespace) -> CommandExitCode | None:
                 if remindable_only:
                     from ..negotiations_probe import paginated_remindable_topic_refs
 
-                    refs = paginated_remindable_topic_refs(page, max_pages=args.max_pages)
+                    refs = paginated_remindable_topic_refs(page, max_pages=max_pages)
                     print(f"Переписки с разрешённым напоминанием: {len(refs)}")
                     for ref in refs:
                         print(
@@ -288,9 +317,10 @@ def run(args: argparse.Namespace) -> CommandExitCode | None:
                     return
                 cards = fetch_responses(
                     page,
-                    max_pages=args.max_pages,
+                    max_pages=max_pages,
                     strict_empty=sync_applied,
                     strict_scrape=alert_new,
+                    stop_before=stop_before,
                 )
                 if alert_new and any(
                     card.topic_ambiguous and card.status == ResponseStatus.INVITATION
@@ -339,7 +369,7 @@ def run(args: argparse.Namespace) -> CommandExitCode | None:
 
                 refs = {
                     ref.topic_id: ref.chat_id
-                    for ref in paginated_topic_refs(page, max_pages=args.max_pages)
+                    for ref in paginated_topic_refs(page, max_pages=max_pages)
                 }
                 detected = 0
                 for card in cards:

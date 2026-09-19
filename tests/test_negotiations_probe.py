@@ -7,6 +7,7 @@ from hhru_bot.negotiations_probe import (
     paginated_topic_and_remindable_refs,
     paginated_topic_refs,
     parse_initial_state,
+    topic_last_modified,
     topic_refs,
 )
 from hhru_bot.responses import NotAuthenticated, ResponsesIndeterminate
@@ -59,6 +60,36 @@ def test_topic_refs_keep_mapping_when_resume_id_absent():
     ref = topic_refs(html)[0]
     assert ref.resume_id is None
     assert (ref.topic_id, ref.chat_id) == ("123", "456")
+
+
+def test_topic_last_modified_reads_ssr_timestamps():
+    """#1148: topic_id → lastModified (ISO с таймзоной) для скоупированного
+    раннего стопа. Живой shape записи: числовой id, строковый lastModified
+    с офсетом (дамп negotiations 2026-09-16)."""
+    html = """
+    <template id="HH-Lux-InitialState">
+      {"applicantNegotiations":{"topicList":[
+        {"id":5503507503,"chatId":5552659058,"vacancyId":135481754,
+         "lastModified":"2026-09-16T12:05:51.816+03:00"}
+      ]}}
+    </template>
+    """
+    assert topic_last_modified(html) == {"5503507503": "2026-09-16T12:05:51.816+03:00"}
+
+
+def test_topic_last_modified_fail_open_on_missing_fields():
+    """Записи без id/lastModified пропускаются: вызывающий не сможет доказать
+    их старость и продолжит обход, маппинг остального не роняет."""
+    html = """
+    <template id="HH-Lux-InitialState">
+      {"applicantNegotiations":{"topicList":[
+        {"chatId":456,"vacancyId":789},
+        {"id":2,"chatId":456,"vacancyId":789,"lastModified":null},
+        {"id":3,"chatId":456,"vacancyId":789,"lastModified":"2026-09-16T12:05:51.816+03:00"}
+      ]}}
+    </template>
+    """
+    assert topic_last_modified(html) == {"3": "2026-09-16T12:05:51.816+03:00"}
 
 
 def test_topic_refs_read_vacancy_name_from_ssr():

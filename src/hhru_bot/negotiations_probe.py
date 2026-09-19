@@ -100,6 +100,33 @@ def topic_refs(html: str) -> list[TopicRef]:
     return refs
 
 
+def topic_last_modified(html: str) -> dict[str, str]:
+    """Map SSR topic id → ``lastModified`` (ISO-строка с таймзоной), где поле есть.
+
+    #1148: источник отсечки «страница целиком старше окна запроса» для
+    скоупированного раннего стопа read-only обхода. Форма записи
+    ``topicList[].lastModified`` подтверждена живым дампом
+    /applicant/negotiations 2026-09-16 (дампы verify_indeterminate в
+    ``data/logs/``): каждая запись несёт ``lastModified``/``creationTime``
+    ISO с офсетом ``+03:00`` (напр. ``2026-09-16T12:05:51.816+03:00``).
+
+    Fail-open по ЗАПИСЯМ, не по списку: запись без ``id``/``lastModified``
+    пропускается — вызывающий не сможет доказать её старость и продолжит
+    обход (цена — лишние GET, не потерянные данные). Ошибка формы SSR
+    поднимается как у ``topic_refs`` (ValueError из ``parse_initial_state``).
+    """
+    refs: dict[str, str] = {}
+    for topic in parse_initial_state(html).get("applicantNegotiations", {}).get("topicList", []):
+        if not isinstance(topic, dict):
+            continue
+        topic_id = topic.get("id")
+        modified = topic.get("lastModified")
+        if topic_id is None or modified is None:
+            continue
+        refs[str(topic_id)] = str(modified)
+    return refs
+
+
 def remindable_topic_refs(html: str) -> list[RemindableTopicRef]:
     """Return only SSR topics with ``responseReminderState.allowed == True``.
 
