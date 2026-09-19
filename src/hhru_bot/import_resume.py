@@ -618,16 +618,18 @@ def _contact_key(contact: dict) -> str:
     return f"{contact.get('type')}:{value.casefold()}"
 
 
-def diff_export(source: dict, imported: dict, *, include_blocks: bool = False) -> list[str]:
+def diff_export(source: dict, imported: dict, *, blocks_source: dict | None = None) -> list[str]:
     """Сверка экспорт↔импорт по секциям; список расхождений, [] = совпало.
 
     Чистая функция над двумя payload'ами (источник и повторное чтение
     созданного резюме тем же read-путём, что и экспорт) — расхождение роли
     фиксируется вызывающим кодом по ``placeholder_role``/readback, здесь
     сравниваются только переносимые текстовые секции. Блоковые секции
-    (#1123) сверяются только при ``include_blocks`` — импорт v1 их не
-    переносит, и сверять тогда нечего (source contacts остались бы вечным
-    ложным расхождением).
+    (#1123) сверяются только при заданном ``blocks_source`` — секциях,
+    которые ПЛАН реально переносил: план честно пропускает часть строк
+    источника (RU-телефон, link-строки, неполные записи), и сверка с сырым
+    source превратила бы каждый такой пропуск в вечное ложное расхождение
+    (cycle-review PR #1157).
     """
     diffs: list[str] = []
     src_pos = source.get("position") or {}
@@ -688,9 +690,9 @@ def diff_export(source: dict, imported: dict, *, include_blocks: bool = False) -
     )
     if src_lang != imp_lang:
         diffs.append(f"языки: {src_lang} != {imp_lang}")
-    if include_blocks:
+    if blocks_source is not None:
         src_certs = sorted(
-            {_norm(c.get("name")).casefold() for c in source.get("certificates", [])} - {""}
+            {_norm(c.get("name")).casefold() for c in blocks_source.get("certificates", [])} - {""}
         )
         imp_certs = sorted(
             {_norm(c.get("name")).casefold() for c in imported.get("certificates", [])} - {""}
@@ -698,14 +700,16 @@ def diff_export(source: dict, imported: dict, *, include_blocks: bool = False) -
         if src_certs != imp_certs:
             diffs.append(f"сертификаты: {src_certs} != {imp_certs}")
         src_contacts = sorted(
-            {_contact_key(c) for c in source.get("contacts", []) if _norm(c.get("value"))}
+            {_contact_key(c) for c in blocks_source.get("contacts", []) if _norm(c.get("value"))}
         )
         imp_contacts = sorted(
             {_contact_key(c) for c in imported.get("contacts", []) if _norm(c.get("value"))}
         )
         if src_contacts != imp_contacts:
             diffs.append(f"контакты: {src_contacts} != {imp_contacts}")
-        src_portfolio = len([p for p in source.get("portfolio", []) if p.get("kind") == "image"])
+        src_portfolio = len(
+            [p for p in blocks_source.get("portfolio", []) if p.get("kind") == "image"]
+        )
         imp_portfolio = len([p for p in imported.get("portfolio", []) if p.get("kind") == "image"])
         if src_portfolio != imp_portfolio:
             # photo_id между аккаунтами заведомо разные (фото загружаются

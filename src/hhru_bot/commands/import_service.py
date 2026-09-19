@@ -285,8 +285,20 @@ def _save_blocks(page, new_id: str, params: ImportRunParams) -> SectionOutcome: 
                 print(f"{prefix} {block} #{outcome.index}: {outcome.reason}")
             else:
                 done[outcome.status] = done.get(outcome.status, 0) + 1
+    blocks_in_run = {
+        block
+        for block, rows in (
+            ("certificates", plan.certificates),
+            ("contacts", plan.contacts),
+            ("portfolio", plan.portfolio),
+        )
+        if rows
+    }
     for outcome in blocks.outcomes:
-        if outcome.status == OUTCOME_DUPLICATE:
+        # duplicate — исход строки ПЛАНА: печатается только для блоков,
+        # реально участвовавших в прогоне. Секция, снятая с плана
+        # (--no-photos), своих дубликатов не печатает (cycle-review PR #1157).
+        if outcome.status == OUTCOME_DUPLICATE and outcome.block in blocks_in_run:
             print(f"[INFO] {outcome.block} #{outcome.index}: duplicate — {outcome.reason}")
     counts = " + ".join(f"{name}={count}" for name, count in sorted(done.items()))
     message = counts or "переносимых строк нет"
@@ -375,6 +387,27 @@ def _upload_photos(page, resume, params, attempt, *, problems) -> None:  # noqa:
         )
 
 
+def _blocks_source(params: ImportRunParams) -> dict | None:
+    """Секции, которые ПЛАН блоков реально переносит (#1123).
+
+    План честно пропускает часть строк источника (RU-телефон, link-строки,
+    неполные записи) — сверка финального ридбека идёт с планом, а не с сырым
+    экспортом, иначе каждый пропуск стал бы вечным ложным расхождением
+    (cycle-review PR #1157). None — блоковые секции не переносились (v1 или
+    нет плана).
+    """
+    blocks = params.blocks
+    if blocks is None or blocks.legacy_export:
+        return None
+    return {
+        "certificates": [
+            {"name": c.name, "year": c.year, "url": c.url} for c in blocks.plan.certificates
+        ],
+        "contacts": [{"type": c.type, "value": c.value} for c in blocks.plan.contacts],
+        "portfolio": [{"kind": p.kind, "photo_id": p.photo_id} for p in blocks.plan.portfolio],
+    }
+
+
 def _final_verification(context, resume, params, discrepancies) -> bool:  # noqa: ANN001
     """Финальная сверка: повторное чтение созданного резюме тем же read-путём,
     что и экспорт (read-only, без фото)."""
@@ -385,11 +418,8 @@ def _final_verification(context, resume, params, discrepancies) -> bool:  # noqa
     if not verification.success:
         print(f"[FAIL] сверка: контрольное чтение не удалось ({verification.reason})")
         return False
-    # Блоковые секции (#1123) сверяются только когда переносились: v1-импорт
-    # оставил бы исходные контакты вечным ложным расхождением.
-    include_blocks = params.blocks is not None and not params.blocks.legacy_export
     discrepancies += diff_export(
-        params.payload, verification.payload, include_blocks=include_blocks
+        params.payload, verification.payload, blocks_source=_blocks_source(params)
     )
     if discrepancies:
         for line in discrepancies:

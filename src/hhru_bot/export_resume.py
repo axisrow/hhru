@@ -278,15 +278,19 @@ def parse_certificate_items(items: list[dict]) -> list[dict]:
     """Элементы блока сертификатов в shape {name, year, url} (#1123).
 
     Разбор best-effort, но честный: name=title либо первая строка текста;
-    year — первая 4-значная дата (19xx/20xx) в subtitle/description/lines;
-    url — первая http(s)-ссылка элемента. Поле, которое не распозналось,
-    остаётся None — импорт отклонит такую строку с явной причиной, а не
-    выдумает значение.
+    year — первая 4-значная дата (19xx/20xx) в subtitle/description/строках
+    текста; url — первая http(s)-ссылка элемента. Поле, которое не
+    распозналось, остаётся None — импорт отклонит такую строку с явной
+    причиной, а не выдумает значение.
     """
     parsed = []
     for item in items:
         name = item.get("title") or None
-        haystack_parts = [item.get("subtitle"), item.get("description"), *(item.get("lines") or [])]
+        # lines — шейп parse_block_items; в живом JS-потоке его нет, строки
+        # достраиваются из text, который _COLLECT_JS отдаёт всегда.
+        text_lines = [line for line in str(item.get("text") or "").split("\n") if line.strip()]
+        lines = item.get("lines") or text_lines
+        haystack_parts = [item.get("subtitle"), item.get("description"), *lines]
         year = None
         for part in haystack_parts:
             if not part:
@@ -302,7 +306,6 @@ def parse_certificate_items(items: list[dict]) -> list[dict]:
                 url = href
                 break
         if name is None:
-            lines = item.get("lines") or []
             name = lines[0] if lines else None
         parsed.append({"name": name, "year": year, "url": url})
     return parsed

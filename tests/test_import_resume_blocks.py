@@ -131,6 +131,38 @@ def test_parse_certificate_items_falls_back_to_lines() -> None:
     assert items == [{"name": "Скрипты и диаграммы 2019", "year": "2019", "url": None}]
 
 
+def test_parse_certificate_items_falls_back_to_raw_text() -> None:
+    """Живой JS-поток lines не отдаёт — строки достраиваются из text."""
+    items = parse_certificate_items(
+        [
+            {
+                "id": "3",
+                "title": None,
+                "subtitle": None,
+                "description": None,
+                "text": "Скрипты и диаграммы\n2019",
+            }
+        ]
+    )
+    assert items == [{"name": "Скрипты и диаграммы", "year": "2019", "url": None}]
+
+
+def test_parse_certificate_items_year_from_text_when_parts_empty() -> None:
+    """Части -subtitle/-description пусты, год живёт в text элемента."""
+    items = parse_certificate_items(
+        [
+            {
+                "id": "4",
+                "title": "Аналитик данных",
+                "subtitle": None,
+                "description": None,
+                "text": "Аналитик данных\n2022",
+            }
+        ]
+    )
+    assert items == [{"name": "Аналитик данных", "year": "2022", "url": None}]
+
+
 def test_build_export_payload_certificate_block_becomes_section() -> None:
     raw = {
         "title": {"count": 1, "text": "Инженер"},
@@ -466,57 +498,78 @@ def test_blocks_outcome_map_excludes_duplicates_and_aligns_plan() -> None:
 
 # --- Сверка diff_export по блокам (#1123 п.3) ----------------------------------
 
+# Секции, которые план переносит (строит _blocks_source в import_service):
+# пропущенные планом строки источника в сверке не участвуют.
+PLAN_SOURCE = {
+    "certificates": [{"name": "Сертификат A", "year": "2020", "url": ""}],
+    "contacts": [{"type": "email", "value": "user@example.com"}],
+    "portfolio": [{"kind": "image", "photo_id": "111"}],
+}
+
 
 def test_diff_export_blocks_match_when_transferred() -> None:
-    source = _payload(
-        certificates=[{"name": "Сертификат A", "year": "2020", "url": ""}],
-        contacts=[{"type": "email", "preferred": True, "value": "user@example.com", "href": None}],
-        portfolio=[{"kind": "image", "photo_id": "111"}],
-    )
     imported = _payload(
         certificates=[{"name": "сертификат a", "year": "2020", "url": ""}],
         contacts=[{"type": "email", "preferred": True, "value": "User@example.com", "href": None}],
         # photo_id между аккаунтами другие — сверяется число работ.
         portfolio=[{"kind": "image", "photo_id": "999"}],
     )
-    assert diff_export(source, imported, include_blocks=True) == []
+    assert diff_export(_payload(), imported, blocks_source=PLAN_SOURCE) == []
 
 
 def test_diff_export_blocks_reports_discrepancies() -> None:
-    source = _payload(
-        certificates=[{"name": "A", "year": "2020", "url": ""}],
-        contacts=[{"type": "email", "preferred": False, "value": "a@example.com", "href": None}],
-        portfolio=[{"kind": "image", "photo_id": "111"}, {"kind": "image", "photo_id": "222"}],
-    )
     imported = _payload(
         certificates=[],
         contacts=[],
-        portfolio=[{"kind": "image", "photo_id": "333"}],
+        portfolio=[],
     )
-    diffs = diff_export(source, imported, include_blocks=True)
+    diffs = diff_export(_payload(), imported, blocks_source=PLAN_SOURCE)
     assert any(d.startswith("сертификаты:") for d in diffs)
     assert any(d.startswith("контакты:") for d in diffs)
-    assert any(d.startswith("портфолио: работ 2 != 1") for d in diffs)
+    assert any(d == "портфолио: работ 1 != 0" for d in diffs)
 
 
-def test_diff_export_without_blocks_flag_keeps_legacy_behaviour() -> None:
+def test_diff_export_skipped_plan_rows_do_not_report() -> None:
+    """Строки, которые план честно пропустил (RU-телефон), не дают ложного
+    расхождения: сверка идёт с планом, не с сырым экспортом."""
+    source = _payload(
+        contacts=[
+            {"type": "email", "preferred": False, "value": "a@example.com", "href": None},
+            {"type": "phone", "preferred": False, "value": "+7 916 123-45-67", "href": None},
+        ],
+        portfolio=[{"kind": "link", "title": "Behance", "url": "https://behance.net/x"}],
+    )
+    blocks_source = {
+        "certificates": [],
+        "contacts": [{"type": "email", "value": "a@example.com"}],
+        "portfolio": [],
+    }
+    imported = _payload(
+        contacts=[{"type": "email", "preferred": False, "value": "a@example.com", "href": None}],
+    )
+    assert diff_export(source, imported, blocks_source=blocks_source) == []
+
+
+def test_diff_export_without_blocks_source_keeps_legacy_behaviour() -> None:
     """v1-импорт: блоковые секции не сверяются — старое поведение без шума."""
     source = _payload(
         contacts=[{"type": "email", "preferred": False, "value": "a@example.com", "href": None}],
         certificates=[{"name": "A", "year": "2020", "url": ""}],
     )
     imported = _payload()
-    assert diff_export(source, imported, include_blocks=False) == []
+    assert diff_export(source, imported) == []
 
 
 def test_diff_export_phone_mask_normalization() -> None:
     """Телефон сверяется по национальным цифрам: маска hh.ru переформатирует."""
-    source = _payload(
-        contacts=[{"type": "phone", "preferred": False, "value": "+66 123 456 789", "href": None}]
-    )
+    blocks_source = {
+        "certificates": [],
+        "contacts": [{"type": "phone", "value": "+66 123 456 789"}],
+        "portfolio": [],
+    }
     imported = _payload(
         contacts=[
             {"type": "phone", "preferred": False, "value": "+66 (123) 456-78-9", "href": None}
         ]
     )
-    assert diff_export(source, imported, include_blocks=True) == []
+    assert diff_export(_payload(), imported, blocks_source=blocks_source) == []
