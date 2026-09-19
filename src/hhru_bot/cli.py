@@ -28,7 +28,7 @@ from .browser import (
     ResumeUnavailable,
     ThrottledChannelDetected,
 )
-from .exit_codes import CommandExitCode
+from .exit_codes import CommandExitCode, FailWatchStream
 from .logging_setup import setup_logging
 from .write_lock import WriteLockBusy, acquire_write_lock
 
@@ -101,6 +101,15 @@ BROWSER_COMMANDS = frozenset(
         "wizard-next",
     }
 )
+
+# Команды, выведенные из-под инварианта «[FAIL] в stdout -> exit 1» (#1141):
+# их штатный успех печатает в stdout ЧУЖИЕ данные, и строка данных, начинающаяся
+# с [FAIL], была бы ложным вердиктом. У каждой собственные отказы завершаются
+# явно (return True контракта #148 или sys.exit), поэтому инвариант им не нужен:
+# - log       — хвост чужого лога прошлых прогонов (log_cmd);
+# - config    — сырой YAML конфига (без ключа и по ключу, config_cmd);
+# - call-api  — сырое тело ответа hh.ru API (call_api).
+FAIL_SCAN_EXEMPT_COMMANDS = frozenset({"log", "config", "call-api"})
 
 WRITE_COMMANDS = frozenset(
     {
@@ -460,7 +469,23 @@ def _execute(args: argparse.Namespace) -> None:
             None,
         )
         begin_drift_session(f"{args.command} {sub}".strip() if sub else args.command)
-        failed = args.func(args)
+        # Общий инвариант exit-кодов (#1141): отказ команды печатается префиксом
+        # [FAIL] (docs/cli-spec.md §2.2), но исторически команда возвращала None
+        # и диспетчер не мог отличить отказ от успеха по exit-коду. Вместо опроса
+        # ~200 мест печати stdout команды наблюдается FailWatchStream'ом; после
+        # возврата из команды увиденный [FAIL] даёт exit 1 (ниже). Исключения —
+        # FAIL_SCAN_EXEMPT_COMMANDS: их успех печатает чужие данные, а собственные
+        # отказы завершаются явно (stderr-вердикты не смотрятся: все они и так
+        # завершаются sys.exit/typed-кодом в самих командах).
+        watch = None if args.command in FAIL_SCAN_EXEMPT_COMMANDS else FailWatchStream(sys.stdout)
+        real_stdout = sys.stdout
+        if watch is not None:
+            sys.stdout = watch
+        try:
+            failed = args.func(args)
+        finally:
+            if watch is not None:
+                sys.stdout = real_stdout
         # A command may return the conventional SIGINT status explicitly after
         # rendering a partial report (rather than raising KeyboardInterrupt).
         # Keep this separate from the bool-based fail-closed command contract.
@@ -471,6 +496,12 @@ def _execute(args: argparse.Namespace) -> None:
         # Commands returning other truthy values (e.g. clear-skipped's int
         # deleted-row count) or None must not be mistaken for a failure.
         if failed is True:
+            sys.exit(1)
+        # #1141: команда напечатала [FAIL]-вердикт, но не вернула ни bool-флаг
+        # (#148), ни typed-статус — отказ всё равно не должен выглядеть успехом.
+        # Typed-статус при этом сильнее (проверен выше): SESSION_EXPIRED (78) и
+        # NEW_INVITATIONS (10) внешние вызывальщики различают по коду.
+        if watch is not None and watch.saw_fail_line:
             sys.exit(1)
     except BrowserLaunchError as exc:
         print(f"[ENVIRONMENT] {exc}", file=sys.stderr)

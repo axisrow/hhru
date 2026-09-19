@@ -21,6 +21,7 @@ import hhru_bot.commands.delete_resume as delete_cmd
 import hhru_bot.delete_resume
 from hhru_bot.browser import LOGIN_FORM, NotAuthenticated
 from hhru_bot.cli import main
+from hhru_bot.exit_codes import CommandExitCode
 
 pytestmark = pytest.mark.integration
 
@@ -143,7 +144,11 @@ def _patch_census(monkeypatch, *, login_form: bool):
 
 def test_census_annotates_login_form(monkeypatch, tmp_path, capsys):
     _patch_census(monkeypatch, login_form=True)
-    assert census_cmd.run(_census_args(tmp_path, as_json=False)) is False
+    # #1141: вывод остаётся данными (read-only, «ничего не фейлит»), но
+    # подтверждённая страница входа — typed SESSION_EXPIRED для вызывальщика.
+    assert census_cmd.run(_census_args(tmp_path, as_json=False)) is (
+        CommandExitCode.SESSION_EXPIRED
+    )
     out = capsys.readouterr().out
     assert "форма входа" in out
     assert "login" in out
@@ -153,7 +158,7 @@ def test_census_json_reports_login_form(monkeypatch, tmp_path, capsys):
     import json
 
     _patch_census(monkeypatch, login_form=True)
-    assert census_cmd.run(_census_args(tmp_path, as_json=True)) is False
+    assert census_cmd.run(_census_args(tmp_path, as_json=True)) is (CommandExitCode.SESSION_EXPIRED)
     out = capsys.readouterr().out
     payload = json.loads(out.split("MACHINE_READABLE_JSON:\n", 1)[1])
     assert payload["login_form"] is True

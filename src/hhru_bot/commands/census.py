@@ -19,6 +19,7 @@ from ..browser import (
     launch_context,
     rendered_controls_census,
 )
+from ..exit_codes import CommandExitCode
 
 
 def register(subparsers: Any) -> None:
@@ -46,7 +47,7 @@ def register(subparsers: Any) -> None:
     parser.set_defaults(func=run)
 
 
-def run(args: argparse.Namespace) -> bool:
+def run(args: argparse.Namespace) -> bool | CommandExitCode:
     from ..config import load_config
 
     config = load_config(args.config)
@@ -74,7 +75,10 @@ def run(args: argparse.Namespace) -> bool:
         # #1129: read-only census — «глаза» агента, и он НЕ должен принять
         # страницу входа за целевую (живой кейс: census my_resumes при
         # истёкшей сессии молча отрисовал форму login). Явная пометка и в
-        # текстовом, и в JSON-выводе; read-only команда ничего не «фейлит».
+        # текстовом, и в JSON-выводе; сам вывод остаётся данными («ничего
+        # не фейлит»), но вызывальщику отказ различается по exit-коду:
+        # подтверждённая неаутентифицированная страница — SESSION_EXPIRED
+        # (78), тот же код, что у supervised-команд (#1141).
         login_form_detected = has_login_form(page)
 
     visible_only = [r for r in rows if r.get("visible")]
@@ -89,7 +93,7 @@ def run(args: argparse.Namespace) -> bool:
                 indent=2,
             )
         )
-        return False
+        return CommandExitCode.SESSION_EXPIRED if login_form_detected else False
 
     print(f"URL: {args.url}")
     if login_form_detected:
@@ -100,5 +104,10 @@ def run(args: argparse.Namespace) -> bool:
         )
     print(f"Контролов всего: {len(rows)}, видимых: {len(visible_only)}")
     print(census_table(visible_only))
-    print("[OK] census read-only; вхождения строк в HTML-дампе (JSON/i18n) — не поля")
-    return False
+    # Итоговая строка не должна оглашать [OK] там, где exit будет ненулевым:
+    # при форме входа вердикт успеха сбивает грепающих по [OK] (review #1153).
+    print(
+        ("[INFO]" if login_form_detected else "[OK]")
+        + " census read-only; вхождения строк в HTML-дампе (JSON/i18n) — не поля"
+    )
+    return CommandExitCode.SESSION_EXPIRED if login_form_detected else False
