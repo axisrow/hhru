@@ -56,10 +56,11 @@ class ImportRunParams:
     photos: list[Path]
     unavailable: list[str]
     no_photos: bool
-    storage_state_file: str
+    storage_state_file: Path
     headless: bool
     user_agent: str | None
     output: Path
+    blocks: Any = None  # BlocksImportPlan | None (#1123)
 
 
 def _report(name: str, ok: bool, message: str, *, uncertain: bool, problems: list[str]) -> None:
@@ -191,6 +192,125 @@ def _rows_outcome(rows, *, empty_message: str) -> SectionOutcome:  # noqa: ANN00
     )
 
 
+def _upload_gallery_photo(page, payload: dict, photo_id: str) -> str | None:  # noqa: ANN001
+    """Загрузить фото исходного ``photo_id`` в галерею целевого аккаунта (#1123).
+
+    Файл ищется в скачанных записях ``payload["photos"]`` экспорта. Возвращает
+    новый photo_id галереи или None (причина напечатана) — тогда apply_plan не
+    найдёт фото в галерее и честно пометит строку портфолио, молчаливого
+    пропуска нет.
+    """
+    from ..portfolio_upload import upload_portfolio_image
+    from ..resume_photo import validate_photo
+
+    record = next(
+        (
+            row
+            for row in payload.get("photos", [])
+            if isinstance(row, dict) and str(row.get("photo_id")) == photo_id
+        ),
+        None,
+    )
+    raw_path = record.get("file") if record else None
+    if not record or record.get("status") != "downloaded" or not raw_path:
+        print(
+            f"[FAIL] портфолио-фото {photo_id}: файла в экспорте нет "
+            "(не скачан) — загрузите в галерею вручную и повторите импорт"
+        )
+        return None
+    path = Path(raw_path)
+    if not path.is_file():
+        print(f"[FAIL] портфолио-фото {photo_id}: файла нет на диске ({raw_path})")
+        return None
+    try:
+        photo_file = validate_photo(path)
+    except ValueError as exc:
+        print(f"[FAIL] портфолио-фото {photo_id}: {exc}")
+        return None
+    uploaded = upload_portfolio_image(page, photo_file.path, dry_run=False)
+    if not uploaded.success:
+        print(f"[FAIL] портфолио-фото {photo_id}: не загружено ({uploaded.reason})")
+        return None
+    print(f"[OK] портфолио-фото: {photo_id} загружено в галерею как {uploaded.photo_id}")
+    return uploaded.photo_id
+
+
+def _save_blocks(page, new_id: str, params: ImportRunParams) -> SectionOutcome:  # noqa: ANN001
+    """Блоковые секции (#1123) — боевой путь resume-sections (apply_plan).
+
+    Фото портфолио, отсутствующие в галерее целевого аккаунта, загружаются
+    из файлов экспорта ДО привязки: upload_portfolio_image отдаёт новый
+    photo_id, и план переписывается на него. Durable-маркера у секции нет —
+    тот же статус, что у позиция/о себе/опыт (см. докстринг модуля).
+    """
+    from ..import_resume import blocks_outcome_map
+    from ..resume_sections import (
+        OUTCOME_DUPLICATE,
+        OUTCOME_FAILED,
+        OUTCOME_UNCERTAIN,
+        PortfolioItem,
+        apply_plan,
+        verify_portfolio_photos,
+    )
+
+    blocks = params.blocks
+    plan = blocks.plan
+    if plan.portfolio:
+        needed = {item.photo_id for item in plan.portfolio if item.kind == "image"}
+        mapping: dict[str, str] = {}
+        if needed:
+            missing = verify_portfolio_photos(page, needed)
+            for photo_id in sorted(missing):
+                new_photo_id = _upload_gallery_photo(page, params.payload, photo_id)
+                if new_photo_id is not None:
+                    mapping[photo_id] = new_photo_id
+        if mapping:
+            plan.portfolio = [
+                item
+                if item.kind != "image" or item.photo_id not in mapping
+                else PortfolioItem(kind="image", photo_id=mapping[item.photo_id])
+                for item in plan.portfolio
+            ]
+    outcome_map = blocks_outcome_map(blocks)
+    errors = apply_plan(page, new_id, plan, dry_run=False, outcomes=outcome_map)
+    for error in errors:
+        print(f"[FAIL] {error}")
+    done: dict[str, int] = {}
+    failed = 0
+    for block in ("certificates", "contacts", "portfolio"):
+        for outcome in outcome_map[block]:
+            if outcome.status in (OUTCOME_FAILED, OUTCOME_UNCERTAIN):
+                failed += 1
+                prefix = "[FAIL] (uncertain)" if outcome.status == OUTCOME_UNCERTAIN else "[FAIL]"
+                print(f"{prefix} {block} #{outcome.index}: {outcome.reason}")
+            else:
+                done[outcome.status] = done.get(outcome.status, 0) + 1
+    for outcome in blocks.outcomes:
+        if outcome.status == OUTCOME_DUPLICATE:
+            print(f"[INFO] {outcome.block} #{outcome.index}: duplicate — {outcome.reason}")
+    counts = " + ".join(f"{name}={count}" for name, count in sorted(done.items()))
+    message = counts or "переносимых строк нет"
+    uncertain = any(
+        outcome.status == OUTCOME_UNCERTAIN for rows in outcome_map.values() for outcome in rows
+    )
+    return SectionOutcome(
+        failed == 0 and not errors and not uncertain,
+        message,
+        uncertain=uncertain,
+        ledger=outcome_map,
+    )
+
+
+def _has_blocks_rows(params: ImportRunParams) -> bool:
+    """Есть ли в плане блоков хоть одна переносимая строка."""
+    blocks = params.blocks
+    return (
+        blocks is not None
+        and not blocks.legacy_export
+        and bool(blocks.plan.contacts or blocks.plan.certificates or blocks.plan.portfolio)
+    )
+
+
 def _upload_photos(page, resume, params, attempt, *, problems) -> None:  # noqa: ANN001
     """Фото: лимит галереи проверяется ДО первой загрузки.
 
@@ -265,7 +385,12 @@ def _final_verification(context, resume, params, discrepancies) -> bool:  # noqa
     if not verification.success:
         print(f"[FAIL] сверка: контрольное чтение не удалось ({verification.reason})")
         return False
-    discrepancies += diff_export(params.payload, verification.payload)
+    # Блоковые секции (#1123) сверяются только когда переносились: v1-импорт
+    # оставил бы исходные контакты вечным ложным расхождением.
+    include_blocks = params.blocks is not None and not params.blocks.legacy_export
+    discrepancies += diff_export(
+        params.payload, verification.payload, include_blocks=include_blocks
+    )
     if discrepancies:
         for line in discrepancies:
             print(f"[WARN] расхождение: {line}")
@@ -441,6 +566,21 @@ def run_import(progress, history, params: ImportRunParams) -> bool:  # noqa: ANN
                 _upload_photos(page, resume, params, attempt, problems=problems)
             elif params.payload.get("photos") and not params.no_photos:
                 print("[WARN] фото: переносимых файлов нет — пропущено")
+
+            # Блоки (#1123) после фото: image-строки портфолио ссылаются на
+            # галерею, а _save_blocks сам дозагружает недостающие файлы.
+            if _has_blocks_rows(params):
+                _run_section(
+                    "блоки (контакты/сертификаты/портфолио)",
+                    new_id,
+                    "edit_resume_blocks",
+                    lambda: _save_blocks(page, new_id, params),
+                    history=history,
+                    progress=progress,
+                    problems=problems,
+                )
+            elif params.blocks is not None and not params.blocks.legacy_export:
+                print("[WARN] блоки: переносимых строк нет — пропущено")
 
             if not _final_verification(context, resume, params, discrepancies):
                 problems.append("сверка: контрольное чтение не удалось")

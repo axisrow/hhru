@@ -38,8 +38,12 @@ def register(subparsers: Any) -> None:
             "Читает JSON-файл команды export-resume и в ТЕКУЩЕМ аккаунте "
             "(--account) создаёт резюме: каркас через визард создания, роль — "
             "по title экспорта, затем секции — позиция (editor-режим), опыт, "
-            "образование, навыки, языки, о себе, фото. Секция, которую "
-            "невозможно перенести без выдумывания значения, честно пропускается. "
+            "образование, навыки, языки, о себе, фото, а также блоки из "
+            "экспорта v2: контакты, сертификаты и портфолио (per-row исходы; "
+            "фото портфолио загружаются в галерею аккаунта, ссылки-строки "
+            "портфолио не поддержаны). Секция, которую невозможно перенести "
+            "без выдумывания значения, честно пропускается. Экспорт схемы v1 "
+            "импортируется как раньше — блоковые секции не переносятся. "
             "Финальный отчёт сверяет экспорт и импорт по секциям. "
             "WRITE-команда: по умолчанию только dry-run; боевой запуск требует "
             "--force. Никаких удалений."
@@ -49,7 +53,7 @@ def register(subparsers: Any) -> None:
         "--file",
         type=Path,
         required=True,
-        help="Путь к JSON-файлу экспорта (schema export-resume/v1)",
+        help="Путь к JSON-файлу экспорта (schema export-resume/v1 или /v2)",
     )
     parser.add_argument(
         "--output",
@@ -80,6 +84,7 @@ def _print_plan(
     languages: list,
     photos: list[Path],
     unavailable: list[str],
+    blocks,  # noqa: ANN001 - BlocksImportPlan (#1123)
 ) -> None:
     from ..import_resume import parse_salary_text
 
@@ -100,9 +105,28 @@ def _print_plan(
     print(f"[INFO] Навыки: {len(skills)} (уровень {IMPORT_SKILL_LEVEL} — конвенция импорта)")
     print(f"[INFO] Языки: {len(languages)}")
     print(f"[INFO] Фото: {len(photos)} файлов (галерея аккаунта, лимит {GALLERY_LIMIT})")
-    print(
-        "[WARN] контакты: форма контактов hh.ru не подтверждена селекторами — секция не переносится"
-    )
+    if blocks.legacy_export:
+        # Схема v1 (#1123): блоковые секции файлом не переносились — старый
+        # экспорт импортируется как раньше, предупреждение остаётся честным.
+        print(
+            "[WARN] контакты: экспорт схемы v1 блоки (контакты/сертификаты/"
+            "портфолио) не переносит — пересоздайте экспорт (export-resume v2)"
+        )
+    else:
+        for contact in blocks.plan.contacts:
+            preferred = ", preferred" if contact.preferred else ""
+            comment = f", comment={contact.comment!r}" if contact.comment else ""
+            print(f"[INFO] Контакт: {contact.type}={contact.value!r}{comment}{preferred}")
+        print(f"[INFO] Сертификаты: {len(blocks.plan.certificates)}")
+        print(f"[INFO] Портфолио: {len(blocks.plan.portfolio)} работ (image)")
+        raw_blocks = sorted(payload.get("blocks") or {})
+        if raw_blocks:
+            print(
+                f"[WARN] блоки {', '.join(raw_blocks)}: экспортированы сырыми — "
+                "импорт не поддержан (ссылки — ишью #1122, форма не исследована)"
+            )
+    for note in blocks.unavailable:
+        print(f"[WARN] не переносится: {note}")
     for note in unavailable:
         print(f"[WARN] не переносится: {note}")
 
@@ -113,6 +137,7 @@ def run(args: argparse.Namespace):
     from ..import_resume import (
         export_photos_on_disk,
         load_export,
+        plan_blocks,
         plan_education,
         plan_experience,
         plan_languages,
@@ -136,6 +161,7 @@ def run(args: argparse.Namespace):
         unavailable += notes
         photos, notes = export_photos_on_disk(payload)
         unavailable += notes
+        blocks = plan_blocks(payload)
     except ImportPlanError as exc:
         print(f"[FAIL] {exc}")
         return True
@@ -165,6 +191,18 @@ def run(args: argparse.Namespace):
     if args.no_photos and photos:
         print("[WARN] --no-photos: фото из экспорта пропущены")
         photos = []
+    # Портфолио (#1123) требует загрузки фото в галерею — при --no-photos
+    # строки не планируются вовсе (не failed: пользователь сам отменил перенос).
+    if args.no_photos and blocks.plan.portfolio:
+        print(
+            f"[WARN] --no-photos: портфолио ({len(blocks.plan.portfolio)} работ) "
+            "не переносится — требует загрузки фото в галерею"
+        )
+        blocks.unavailable.append(
+            f"портфолио: {len(blocks.plan.portfolio)} работ не переносится (--no-photos)"
+        )
+        blocks.plan.portfolio = []
+        blocks.outcomes = [o for o in blocks.outcomes if o.block != "portfolio"]
 
     if dry_run:
         print("[DRY-RUN] План импорта (боевой запуск требует --force):")
@@ -177,6 +215,7 @@ def run(args: argparse.Namespace):
             languages,
             photos,
             unavailable,
+            blocks,
         )
         return False
     return _run_live(
@@ -191,6 +230,7 @@ def run(args: argparse.Namespace):
         languages,
         photos,
         unavailable,
+        blocks,
     )
 
 
@@ -206,6 +246,7 @@ def _run_live(
     languages,
     photos,
     unavailable,
+    blocks,
 ):
     """Боевой импорт — делегируется сервису (``commands/import_service.py``, #1049)."""
     from ._common import run_supervised_command
@@ -225,6 +266,7 @@ def _run_live(
         headless=args.headless,
         user_agent=config.user_agent,
         output=args.output,
+        blocks=blocks,
     )
     return run_supervised_command(
         command=getattr(args, "command", "import-resume"),

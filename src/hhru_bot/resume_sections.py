@@ -1016,6 +1016,11 @@ def _ssr_portfolio_ids(html: str) -> set[str] | None:
     return _walk_portfolio_ids(state)
 
 
+# Публичное имя того же ридбека: export-resume (#1123) читает состав работ
+# из SSR уже открытой страницы — переиспользование, не второй парсер.
+ssr_portfolio_ids = _ssr_portfolio_ids
+
+
 def _apply_portfolio(
     page: Page,
     items: list[PortfolioItem],

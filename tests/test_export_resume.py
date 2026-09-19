@@ -139,9 +139,13 @@ def _full_raw() -> dict:
 
 def test_build_export_payload_routes_known_sections() -> None:
     payload, unavailable = build_export_payload(
-        _full_raw(), resume_id="00001", resume_url="https://hh.ru/resume/00001", slug="test"
+        _full_raw(),
+        resume_id="00001",
+        resume_url="https://hh.ru/resume/00001",
+        slug="test",
+        portfolio_ids=set(),
     )
-    assert payload["schema"] == "export-resume/v1"
+    assert payload["schema"] == "export-resume/v2"
     assert payload["resume_id"] == "00001"
     assert payload["position"] == {
         "title": "Инженер",
@@ -154,10 +158,14 @@ def test_build_export_payload_routes_known_sections() -> None:
     assert payload["skills"] == [{"id": "674", "name": "JavaScript"}]
     assert payload["languages"] == []
     assert payload["about"] == "О себе: пример"
-    # Честные пропуски: языков/портфолио на странице не было.
+    # Честные пропуски: языков/портфолио/сертификатов на странице не было
+    # (пустые множества/секции, без unavailable-строк).
     joined = "\n".join(unavailable)
     assert "языки" not in joined
     assert "портфолио" not in joined
+    assert "сертификаты" not in joined
+    assert payload["certificates"] == []
+    assert payload["portfolio"] == []
 
 
 def test_build_export_payload_honest_skips_without_invented_values() -> None:

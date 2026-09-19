@@ -25,10 +25,11 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .experience import ExperienceEntry, ExperiencePlan
-from .export_resume import EXPORT_SCHEMA
+from .export_resume import EXPORT_SCHEMA, EXPORT_SCHEMA_V1
 from .languages import CEFR_LEVELS, Language
 from .resume_education import EducationPlan, EducationRecord
 from .resume_position import (
@@ -39,7 +40,26 @@ from .resume_position import (
     WORK_LABELS,
     PositionValues,
 )
+from .resume_sections import (
+    OUTCOME_DUPLICATE,
+    OUTCOME_FAILED,
+    OUTCOME_PLANNED,
+    Certificate,
+    Contact,
+    ManualRow,
+    PortfolioItem,
+    ResumeSectionsPlan,
+    RowOutcome,
+    _dedupe,
+    contact_from_manual,
+    contacts_from_manual_rows,
+    validate_portfolio_item,
+)
 from .skills import Skill
+
+# Поддержанные схемы экспорта (#1123): v2 переносит блоковые секции
+# (контакты/сертификаты/портфолио), v1 — исторический формат без них.
+SUPPORTED_EXPORT_SCHEMAS = (EXPORT_SCHEMA, EXPORT_SCHEMA_V1)
 
 # Уровень навыка не входит в экспорт (DOM страницы резюме его не отдаёт).
 # Единая детерминированная конвенция вместо выдумывания per-skill значений:
@@ -83,6 +103,16 @@ class ImportPlanError(ValueError):
     """Экспорт не может быть импортирован (схема/содержимое), до браузера."""
 
 
+def is_legacy_export(payload: dict) -> bool:
+    """Экспорт схемы v1: first-class блоковых секций в файле нет (#1123).
+
+    Такой файл импортируется как раньше — блоковые секции (контакты/
+    сертификаты/портфолио) не переносятся, команда печатает прежнее
+    предупреждение; ошибкой это не является.
+    """
+    return payload.get("schema") == EXPORT_SCHEMA_V1
+
+
 def load_export(path: Path) -> dict:
     """Прочитать и валидировать JSON экспорта; чужая схема — отказ."""
     try:
@@ -91,9 +121,12 @@ def load_export(path: Path) -> dict:
         raise ImportPlanError(f"файл экспорта не читается: {exc}") from None
     except json.JSONDecodeError as exc:
         raise ImportPlanError(f"файл экспорта не JSON: {exc}") from None
-    if not isinstance(payload, dict) or payload.get("schema") != EXPORT_SCHEMA:
+    if not isinstance(payload, dict) or payload.get("schema") not in SUPPORTED_EXPORT_SCHEMAS:
         got = payload.get("schema") if isinstance(payload, dict) else type(payload).__name__
-        raise ImportPlanError(f"неожиданная схема файла: ожидался {EXPORT_SCHEMA}, получено {got}")
+        raise ImportPlanError(
+            f"неожиданная схема файла: ожидалась одна из "
+            f"{', '.join(SUPPORTED_EXPORT_SCHEMAS)}, получено {got}"
+        )
     if not payload.get("resume_id") or not payload.get("resume_url"):
         raise ImportPlanError("в экспорте нет resume_id/resume_url исходного резюме")
     return payload
@@ -409,13 +442,192 @@ def _norm(text: str | None) -> str:
     return " ".join(str(text or "").split())
 
 
-def diff_export(source: dict, imported: dict) -> list[str]:
+# --- Блоковые секции round-trip (#1123) --------------------------------------
+
+
+@dataclass
+class BlocksImportPlan:
+    """Блоковые секции импорта: план + per-row исходы фундамента #1118.
+
+    ``plan`` — ResumeSectionsPlan с заполненными contacts/certificates/
+    portfolio; ``outcomes`` — RowOutcome по строкам каждого блока (включая
+    duplicate — в боевой проход они не попадут, но видны в отчёте).
+    ``legacy_export`` — экспорт v1: блоковые секции файлом не переносятся,
+    план пуст, команда печатает прежнее предупреждение.
+    """
+
+    plan: ResumeSectionsPlan = field(default_factory=ResumeSectionsPlan)
+    outcomes: list[RowOutcome] = field(default_factory=list)
+    unavailable: list[str] = field(default_factory=list)
+    legacy_export: bool = False
+
+
+def plan_contacts(payload: dict) -> tuple[list[Contact], list[RowOutcome], list[str]]:
+    """План блока контактов из экспорта (#1123).
+
+    Переиспользует строгую валидацию #1119 (``contact_from_manual``): RU-телефон
+    (SMS-подтверждение hh.ru), незнакомый тип, preferred вне true/false —
+    строка пропускается с причиной в unavailable, остальные переносятся.
+    Конфликт схемы формы (два значения одного поля, два preferred) не
+    переносит блок целиком — поле формы одно, «победил бы» невидимый выбор.
+    """
+    unavailable: list[str] = []
+    rows: list[ManualRow] = []
+    for index, row in enumerate(payload.get("contacts") or []):
+        if not isinstance(row, dict):
+            unavailable.append(f"контакты: строка {index} не объект — пропущена")
+            continue
+        fields = {
+            "type": str(row.get("type") or ""),
+            "value": str(row.get("value") or ""),
+            "comment": str(row.get("comment") or ""),
+            "preferred": "true" if row.get("preferred") else "",
+        }
+        try:
+            contact_from_manual(fields)
+        except ValueError as exc:
+            unavailable.append(f"контакты: строка {index}: {exc}")
+            continue
+        rows.append(ManualRow(block="contact", fields=fields))
+    kept, outcomes = _dedupe("contacts", rows, lambda row: tuple(sorted(row.fields.items())))
+    contacts: list[Contact] = []
+    if kept:
+        try:
+            contacts = contacts_from_manual_rows(kept)
+        except ValueError as exc:
+            unavailable.append(f"контакты: секция не переносится: {exc}")
+            outcomes = [
+                RowOutcome("contacts", outcome.index, OUTCOME_FAILED, str(exc))
+                if outcome.status == OUTCOME_PLANNED
+                else outcome
+                for outcome in outcomes
+            ]
+            return [], outcomes, unavailable
+    return contacts, outcomes, unavailable
+
+
+def plan_certificates(payload: dict) -> tuple[list[Certificate], list[RowOutcome], list[str]]:
+    """План блока сертификатов из first-class секции экспорта (#1123).
+
+    name обязателен; непустой year обязан быть 4-значным годом, url —
+    http(s)-ссылкой: нераспознанное поле не выдумывается, строка пропускается
+    с явной причиной. Повтор полного набора полей внутри блока — duplicate
+    (фундамент #1118), вторая запись не планируется.
+    """
+    unavailable: list[str] = []
+    items: list[Certificate] = []
+    for index, row in enumerate(payload.get("certificates") or []):
+        if not isinstance(row, dict):
+            unavailable.append(f"сертификаты: строка {index} не объект — пропущена")
+            continue
+        name = str(row.get("name") or "").strip()
+        year = str(row.get("year") or "").strip()
+        url = str(row.get("url") or "").strip()
+        if not name:
+            unavailable.append(f"сертификаты: строка {index} без названия — пропущена")
+            continue
+        if year and not re.fullmatch(r"(19|20)\d{2}", year):
+            unavailable.append(
+                f"сертификаты: «{name}» — год {year!r} не распознан, строка пропущена"
+            )
+            continue
+        if url and not url.startswith(("http://", "https://")):
+            unavailable.append(f"сертификаты: «{name}» — url не http(s), строка пропущена")
+            continue
+        items.append(Certificate(name=name, year=year, url=url))
+    kept, outcomes = _dedupe("certificates", items, lambda item: tuple(item.__dict__.values()))
+    return kept, outcomes, unavailable
+
+
+def plan_portfolio(payload: dict) -> tuple[list[PortfolioItem], list[RowOutcome], list[str]]:
+    """План блока портфолио из first-class секции экспорта (#1123).
+
+    Экспорт содержит только image-строки (состав работ подтверждает SSR —
+    DOM-карточки портфолио не несут photo_id); link-строки (portfolioUrls)
+    UI hh.ru не имеет (#1121) и остаются честно неподдержанными. Валидация —
+    ``validate_portfolio_item`` (#1121).
+    """
+    unavailable: list[str] = []
+    items: list[PortfolioItem] = []
+    for index, row in enumerate(payload.get("portfolio") or []):
+        if not isinstance(row, dict):
+            unavailable.append(f"портфолио: строка {index} не объект — пропущена")
+            continue
+        kind = str(row.get("kind") or "")
+        photo_id = str(row.get("photo_id") or "")
+        if kind != "image":
+            unavailable.append(
+                f"портфолио: строка {index} (тип {kind or 'не указан'}) — поддержаны "
+                "только image-строки (состав работ из SSR); строка не переносится"
+            )
+            continue
+        item = PortfolioItem(kind="image", photo_id=photo_id)
+        reason = validate_portfolio_item(item.kind, item.photo_id, item.title, item.url)
+        if reason:
+            unavailable.append(f"портфолио: строка {index}: {reason}")
+            continue
+        items.append(item)
+    kept, outcomes = _dedupe("portfolio", items, lambda item: tuple(item.__dict__.values()))
+    return kept, outcomes, unavailable
+
+
+def plan_blocks(payload: dict) -> BlocksImportPlan:
+    """План блоковых секций round-trip (#1123); экспорт v1 — пустой план."""
+    if is_legacy_export(payload):
+        return BlocksImportPlan(legacy_export=True)
+    plan = ResumeSectionsPlan()
+    outcomes: list[RowOutcome] = []
+    unavailable: list[str] = []
+    plan.contacts, contact_outcomes, notes = plan_contacts(payload)
+    outcomes += contact_outcomes
+    unavailable += notes
+    plan.certificates, certificate_outcomes, notes = plan_certificates(payload)
+    outcomes += certificate_outcomes
+    unavailable += notes
+    plan.portfolio, portfolio_outcomes, notes = plan_portfolio(payload)
+    outcomes += portfolio_outcomes
+    unavailable += notes
+    return BlocksImportPlan(
+        plan=plan, outcomes=outcomes, unavailable=unavailable, legacy_export=False
+    )
+
+
+def blocks_outcome_map(blocks: BlocksImportPlan) -> dict[str, list[RowOutcome]]:
+    """Карта исходов для apply_plan: не-дубликаты, выровненные по строкам плана.
+
+    Дубликаты в карту не попадают — тот же контракт, что у команды
+    resume-sections: _apply_* проверяют len(outcomes) == len(items) плана.
+    """
+    return {
+        block: [
+            outcome
+            for outcome in blocks.outcomes
+            if outcome.block == block and outcome.status != OUTCOME_DUPLICATE
+        ]
+        for block in ("attestations", "recommendations", "certificates", "contacts", "portfolio")
+    }
+
+
+def _contact_key(contact: dict) -> str:
+    """Ключ контакта для сверки: телефон — по национальным цифрам (маска
+    hh.ru переформатирует строку), остальное — по нормализованному значению."""
+    value = _norm(contact.get("value"))
+    if contact.get("type") == "phone":
+        digits = re.sub(r"\D", "", value)[-10:]
+        return f"phone:{digits}"
+    return f"{contact.get('type')}:{value.casefold()}"
+
+
+def diff_export(source: dict, imported: dict, *, include_blocks: bool = False) -> list[str]:
     """Сверка экспорт↔импорт по секциям; список расхождений, [] = совпало.
 
     Чистая функция над двумя payload'ами (источник и повторное чтение
     созданного резюме тем же read-путём, что и экспорт) — расхождение роли
     фиксируется вызывающим кодом по ``placeholder_role``/readback, здесь
-    сравниваются только переносимые текстовые секции.
+    сравниваются только переносимые текстовые секции. Блоковые секции
+    (#1123) сверяются только при ``include_blocks`` — импорт v1 их не
+    переносит, и сверять тогда нечего (source contacts остались бы вечным
+    ложным расхождением).
     """
     diffs: list[str] = []
     src_pos = source.get("position") or {}
@@ -476,4 +688,27 @@ def diff_export(source: dict, imported: dict) -> list[str]:
     )
     if src_lang != imp_lang:
         diffs.append(f"языки: {src_lang} != {imp_lang}")
+    if include_blocks:
+        src_certs = sorted(
+            {_norm(c.get("name")).casefold() for c in source.get("certificates", [])} - {""}
+        )
+        imp_certs = sorted(
+            {_norm(c.get("name")).casefold() for c in imported.get("certificates", [])} - {""}
+        )
+        if src_certs != imp_certs:
+            diffs.append(f"сертификаты: {src_certs} != {imp_certs}")
+        src_contacts = sorted(
+            {_contact_key(c) for c in source.get("contacts", []) if _norm(c.get("value"))}
+        )
+        imp_contacts = sorted(
+            {_contact_key(c) for c in imported.get("contacts", []) if _norm(c.get("value"))}
+        )
+        if src_contacts != imp_contacts:
+            diffs.append(f"контакты: {src_contacts} != {imp_contacts}")
+        src_portfolio = len([p for p in source.get("portfolio", []) if p.get("kind") == "image"])
+        imp_portfolio = len([p for p in imported.get("portfolio", []) if p.get("kind") == "image"])
+        if src_portfolio != imp_portfolio:
+            # photo_id между аккаунтами заведомо разные (фото загружаются
+            # заново) — сверяется число работ, не идентификаторы.
+            diffs.append(f"портфолио: работ {src_portfolio} != {imp_portfolio}")
     return diffs
