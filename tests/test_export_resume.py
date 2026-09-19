@@ -329,6 +329,23 @@ def test_ssr_professional_role_requires_identity_match() -> None:
     assert ssr_professional_role(html, "a" * 32) == (None, 0)
 
 
+def test_ssr_professional_role_reads_draft_shape() -> None:
+    # Свежий черновик (живой дамп 2026-09-20, боевой прогон #1174):
+    # professionalRole — плоский список [{"id", "text", "string"}], identity
+    # записи — в _attributes (боевой round-trip: без этой формы верификация
+    # давала ложное «роль != нет»).
+    html = _initial_state_html(
+        {
+            "_attributes": {"hash": "a" * 32, "status": "not_finished"},
+            "professionalRole": [{"string": 3, "id": 3, "text": "SMM-менеджер, контент-менеджер"}],
+        }
+    )
+    assert ssr_professional_role(html, "a" * 32) == (
+        {"id": "3", "name": "SMM-менеджер, контент-менеджер"},
+        1,
+    )
+
+
 def test_ssr_professional_role_strict_form_and_absence() -> None:
     malformed = _initial_state_html(
         {"hash": "a" * 32, "professionalRole": {"value": [{"id": 37}]}},

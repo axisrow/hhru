@@ -337,11 +337,11 @@ def _walk_records(node: object):
 def _parse_role_entries(value: object) -> tuple[dict | None, int]:
     """Список ролей SSR-записи -> (первая роль {id, name}, всего ролей).
 
-    Живой дамп 2026-09-20 (/resume/{id}, #1167): элемент списка —
-    ``{"id": <int>, "trl": "<имя листа каталога>"}``; форма ``text`` у
-    wizard-bootstrap записей (resume_state.py) тоже принимается. Строгая
-    форма: нераспознанный элемент обесценивает весь список — частичный
-    экспорт роли запрещён (значения-заглушки запрещены #1023).
+    Элементы обеих живых форм 2026-09-20 (#1167): published-страница несёт
+    ``{"id": <int>, "trl": "<имя листа>"}``, черновик — ``{"id", "text",
+    "string"}`` (форма wizard-bootstrap, resume_state.py). Строгая форма:
+    нераспознанный элемент обесценивает весь список — частичный экспорт
+    роли запрещён (значения-заглушки запрещены #1023).
     """
     if not isinstance(value, list) or not value:
         return None, 0
@@ -359,11 +359,14 @@ def _parse_role_entries(value: object) -> tuple[dict | None, int]:
 def ssr_professional_role(page_html: str, resume_id: str) -> tuple[dict | None, int]:
     """Роль резюме из SSR HH-Lux-InitialState страницы резюме (#1167).
 
-    Запись резюме ищется по identity (id/hash/resumeId == resume_id — тот же
-    набор, что у resume_state.parse_resume_state) среди узлов дерева состояния
-    с ключом professionalRole; путь в дереве не фиксируется — дрейф обёртки не
-    даёт ни ложного пропуска, ни чужой записи (тот же принцип, что у
-    портфолио #1123). Возвращает (первая роль, всего ролей); (None, 0) — SSR
+    Запись резюме ищется по identity (id/hash/resumeId, при dict-``_attributes``
+    — в нём: те же правила, что у resume_state.parse_resume_state) среди узлов
+    дерева состояния с ключом professionalRole; путь в дереве не фиксируется —
+    дрейф обёртки не даёт ни ложного пропуска, ни чужой записи (тот же принцип,
+    что у портфолио #1123). Поле professionalRole принимается в ОБОИХ живых
+    формах 2026-09-20: published-страница — ``{"value": [{"id", "trl"}]}``,
+    черновик — плоский список ``[{"id", "text", "string"}]`` при identity в
+    ``_attributes``. Возвращает (первая роль, всего ролей); (None, 0) — SSR
     не прочитан, записи с ролью нет либо записи спорят друг с другом:
     вызывающий код фиксирует честный пропуск, значение не выбирается.
     """
@@ -375,12 +378,20 @@ def ssr_professional_role(page_html: str, resume_id: str) -> tuple[dict | None, 
         return None, 0
     matched: list[tuple[dict | None, int]] = []
     for record in _walk_records(state):
-        if not isinstance(record.get("professionalRole"), dict):
+        raw = record.get("professionalRole")
+        if isinstance(raw, dict):
+            entries = raw.get("value")
+        elif isinstance(raw, list):
+            entries = raw
+        else:
             continue
-        identifiers = {str(record.get(key, "")) for key in ("id", "hash", "resumeId")}
+        identity_record = record.get("_attributes")
+        if not isinstance(identity_record, dict):
+            identity_record = record
+        identifiers = {str(identity_record.get(key, "")) for key in ("id", "hash", "resumeId")}
         if resume_id not in identifiers:
             continue
-        parsed = _parse_role_entries(record["professionalRole"].get("value"))
+        parsed = _parse_role_entries(entries)
         if parsed != (None, 0):
             matched.append(parsed)
     if not matched:
