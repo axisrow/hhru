@@ -1,8 +1,10 @@
 """Команда robot-mark: вердикт пользователя «робот или человек».
 
-Контракты: ровно одно действие (--robot/--human/--clear); --robot заводит
-строку robot-очереди идемпотентно; --human резолвит висящую строку (чат
-возвращается в план ответов); --clear снимает вердикт, не трогая очередь.
+Контракты: ровно одно действие (--robot/--human/--clear/--unreachable);
+--robot заводит строку robot-очереди идемпотентно; --human резолвит висящую
+строку (чат возвращается в план ответов); --clear снимает вердикт, не трогая
+очередь; --unreachable (#1154) резолвит строку без вердикта — чат недостижим,
+robot_verdicts не пишется.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ def _args(tmp_path, **overrides):
         robot=False,
         human=False,
         clear=False,
+        unreachable=False,
         history=str(tmp_path / "h.db"),
     )
     values.update(overrides)
@@ -100,6 +103,49 @@ def test_clear_removes_verdict_without_touching_queue(tmp_path, capsys):
     assert "вердикт снят" in capsys.readouterr().out
 
 
+def test_unreachable_resolves_row_without_verdict(tmp_path, capsys):
+    """#1154: чат недостижим (топик исчез из negotiations — вакансия стала
+    недоступна). Строка очереди снимается резолвом, но вердикта «человек/робот»
+    нет и быть не должно: robot_verdicts остаётся пустым, reason не
+    перезаписывается."""
+    history = History(tmp_path / "h.db")
+    history.mark_robot_questionnaire(
+        "100000001", vacancy_id="200000002", reason="robot_questionnaire"
+    )
+
+    command.run(_args(tmp_path, unreachable=True))
+
+    assert history.robot_verdict("100000001") is None
+    assert history.is_robot_questionnaire("100000001") is False
+    row = history.robot_questionnaire_row("100000001")
+    assert row["resolved_at"] is not None
+    assert row["reason"] == "robot_questionnaire"
+    assert row["answer"] == command.UNREACHABLE_ANSWER
+    assert "снята без вердикта" in capsys.readouterr().out
+
+
+def test_unreachable_is_idempotent_on_resolved_row(tmp_path, capsys):
+    history = History(tmp_path / "h.db")
+    history.mark_robot_questionnaire(
+        "100000001", vacancy_id="200000002", reason="robot_questionnaire"
+    )
+    history.resolve_robot_questionnaire("100000001", answer="Нет")
+
+    command.run(_args(tmp_path, unreachable=True))
+
+    # Повторный --unreachable не перезаписывает ответ robot-reply.
+    row = history.robot_questionnaire_row("100000001")
+    assert row["answer"] == "Нет"
+    assert "уже резолвнута" in capsys.readouterr().out
+
+
+def test_unreachable_without_queue_row_is_plain_ok(tmp_path, capsys):
+    history = History(tmp_path / "h.db")
+    command.run(_args(tmp_path, unreachable=True))
+    assert history.robot_verdict("100000001") is None
+    assert "robot-очередь для topic пуста" in capsys.readouterr().out
+
+
 def test_topic_is_required(tmp_path):
     with pytest.raises(SystemExit) as exc:
         command.run(_args(tmp_path, topic="", robot=True))
@@ -117,4 +163,12 @@ def test_two_action_flags_fail_closed_on_direct_call(tmp_path):
     флагами обязан отказать, а не молча выбрать первый."""
     with pytest.raises(SystemExit) as exc:
         command.run(_args(tmp_path, robot=True, human=True))
+    assert exc.value.code == 1
+
+
+def test_unreachable_with_verdict_flag_fails_closed(tmp_path):
+    """--unreachable не сочетается с вердиктами: резолв без вердикта и
+    вердикт — взаимоисключающие действия."""
+    with pytest.raises(SystemExit) as exc:
+        command.run(_args(tmp_path, human=True, unreachable=True))
     assert exc.value.code == 1
