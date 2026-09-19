@@ -98,3 +98,71 @@ def test_probe_passes_resume_id_not_config_slug(monkeypatch, tmp_path):
 
     assert captured["resume_id"] == real_resume_id
     assert captured["resume_id"] != "python"
+
+
+def test_negotiations_topic_walk_lifts_small_max_pages_to_resolve_ceiling(monkeypatch):
+    """#1154: probe --negotiations --topic резолвит ОДИН топик по всему списку
+    negotiations — --max-pages ниже RESOLVE_TOPIC_MAX_PAGES глубину не режет
+    (живой факт 2026-09-19: 485 тем = 49 страниц, дефолт 5 и разведочный кап 20
+    делали тихие топики «несуществующими»). Без --topic дамп остаётся на
+    пользовательском значении: глубину дампа задаёт вызывающий явно."""
+
+    from types import SimpleNamespace
+
+    from hhru_bot.commands import probe as probe_cmd
+    from hhru_bot.negotiations_probe import RESOLVE_TOPIC_MAX_PAGES
+
+    captured: dict[str, int] = {}
+
+    class _StopWalk(Exception):
+        pass
+
+    class _FakeLocator:
+        def count(self):
+            return 0
+
+        @property
+        def first(self):
+            return self
+
+        def wait_for(self, *, state=None, timeout=None):
+            return None
+
+    class _FakePage:
+        def locator(self, _selector):
+            return _FakeLocator()
+
+    class _NullContext:
+        def __enter__(self):
+            return SimpleNamespace(new_page=lambda: _FakePage())
+
+        def __exit__(self, *_exc):
+            return False
+
+    def _recorder(_page, *, max_pages):
+        captured["max_pages"] = max_pages
+        raise _StopWalk()
+
+    monkeypatch.setattr(
+        "hhru_bot.config.load_config_or_exit",
+        lambda _p: SimpleNamespace(storage_state_file="unused", user_agent=None),
+    )
+    monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *_a, **_k: _NullContext())
+    monkeypatch.setattr(probe_cmd, "goto_hh", lambda *_a: None)
+    monkeypatch.setattr("hhru_bot.negotiations_probe.paginated_topic_refs", _recorder)
+
+    args = SimpleNamespace(
+        config="unused",
+        headless=True,
+        topic="100000001",
+        max_pages=5,
+    )
+    with pytest.raises(_StopWalk):
+        probe_cmd.run_negotiations(args)
+    assert captured["max_pages"] == RESOLVE_TOPIC_MAX_PAGES
+
+    captured.clear()
+    args.topic = None
+    with pytest.raises(_StopWalk):
+        probe_cmd.run_negotiations(args)
+    assert captured["max_pages"] == 5

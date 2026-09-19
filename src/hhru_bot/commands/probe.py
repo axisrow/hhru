@@ -1098,13 +1098,23 @@ def run_negotiations(args: argparse.Namespace) -> bool:
     from ..config import load_config_or_exit
     from ..negotiations_chat import CHAT_MESSAGE_META_JS as chat_meta_js
     from ..negotiations_chat import author_markers as chat_author_markers
-    from ..negotiations_probe import chat_url, paginated_topic_refs
+    from ..negotiations_probe import (
+        RESOLVE_TOPIC_MAX_PAGES,
+        chat_url,
+        paginated_topic_refs,
+    )
     from ..report import _ascii_table
     from ..responses import NotAuthenticated, ResponsesIndeterminate
     from ..selector_groups import negotiations
 
     config = load_config_or_exit(args.config)
     list_url = "https://hh.ru/applicant/negotiations"
+    # Резолв-обход (#1154): с --topic ищем ОДИН топик по всему списку, поэтому
+    # малый --max-pages (дефолт 5, разведка #1154 упиралась в 20) лифтится до
+    # потолка RESOLVE_TOPIC_MAX_PAGES — конец списка всё равно доказывается
+    # нулевым окном, потолок не рабочий лимит. Без --topic дамп остаётся
+    # коротким по умолчанию: глубину дампа задаёт пользователь явно.
+    max_pages = max(getattr(args, "max_pages", 5), RESOLVE_TOPIC_MAX_PAGES if args.topic else 0)
     print("[INFO] negotiations: read-only probe (goto + чтение, без кликов)")
     with launch_context(config.storage_state_file, headless=args.headless) as context:
         page = context.new_page()
@@ -1117,7 +1127,7 @@ def run_negotiations(args: argparse.Namespace) -> bool:
         # `items` only after pagination finishes. Wait AFTER pagination so the
         # 10s bounded wait covers the page actually rendered at dump time.
         try:
-            refs = paginated_topic_refs(page, max_pages=getattr(args, "max_pages", 5))
+            refs = paginated_topic_refs(page, max_pages=max_pages)
         except (TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
             print(f"[FAIL] не удалось прочитать SSR state: {exc}")
             return True
