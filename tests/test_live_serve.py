@@ -467,6 +467,9 @@ def test_send_failure_drops_client_and_frees_slot():
     harness = ServerHarness()
     client = ExtensionClientStub(harness.server.port)
     try:
+        # Клиентская сторона handshake завершается раньше серверного accept'а:
+        # под нагрузкой (xdist) select-цикл ещё не занял слот, и _client None.
+        harness.wait_for_line(lambda line: "подключ" in line)
         # Симуляция частичной записи: send_text падает, битый клиент не
         # должен остаться в слоте (следующая команда ушла бы в мусор).
         def _broken_send(text, timeout=10.0):
