@@ -14,7 +14,7 @@ function isTrustedSender(sender) {
 // content.js rejects anything else anyway (fail-closed), this set only
 // stops commands from reaching the tab. A guard test asserts the two
 // literals match.
-const RELAY_ACTIONS = new Set(['list_overlays', 'dismiss_overlay', 'check_element', 'click_element', 'wait_element', 'get_page_state']);
+const RELAY_ACTIONS = new Set(['list_overlays', 'dismiss_overlay', 'check_element', 'click_element', 'wait_element', 'get_page_state', 'fill_element']);
 
 // --- Agent bridge over the loopback WebSocket (stage 2, #1160). The server
 // side is the CLI `live-serve` command (issue #1159); this is the extension
@@ -29,7 +29,8 @@ const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 // Scalar payload fields copied onto the content-script command; anything
 // else in a payload is dropped — the bridge never forwards unlisted shapes.
-const COMMAND_FIELDS = ['id', 'selector', 'dataQa', 'label', 'state', 'timeoutMs'];
+// text/allowApply — примитивы сценария отклика S4 (#1162).
+const COMMAND_FIELDS = ['id', 'selector', 'dataQa', 'label', 'state', 'timeoutMs', 'text', 'allowApply'];
 const WAIT_FIELDS = ['selector', 'dataQa', 'label', 'state', 'timeoutMs'];
 
 let bridgeSocket = null;

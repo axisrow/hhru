@@ -79,17 +79,19 @@ class FakeChannel:
         self.calls.append((ACTION_CHECK, {"selector": selector}))
         return {"found": self.login_found, "visible": self.login_found}
 
-    def click(self, selector: str) -> dict:
-        self.calls.append((ACTION_CLICK, {"selector": selector}))
+    def click(self, selector: str, wait_for: dict | None = None, allow_apply: bool = False) -> dict:
+        self.calls.append(
+            (ACTION_CLICK, {"selector": selector, "waitFor": wait_for, "allowApply": allow_apply})
+        )
         if self.click_error is not None:
             raise self.click_error
         self._clicked = True
         self.hint_present, self.button_present = self.post_click
-        return {"clicked": True}
+        return {"clicked": True, "wait": {"met": bool(wait_for)}}
 
     def wait(self, selector: str, state: str, timeout_ms: int) -> bool:
         self.calls.append(
-            (ACTION_WAIT, {"selector": selector, "state": state, "timeout_ms": timeout_ms})
+            (ACTION_WAIT, {"selector": selector, "state": state, "timeoutMs": timeout_ms})
         )
         if self.wait_error is not None and self._clicked:
             raise self.wait_error
@@ -121,8 +123,9 @@ def _actions(channel: FakeChannel) -> list[str]:
 def test_action_names_match_s2_contract() -> None:
     # Страж единой точки маппинга: при расхождении имён с реальным S2 правится
     # и таблица в scenarios.py, и этот тест (одним коммитом на перебазировке).
+    # get_page_state — имя действия этапа 1 (#930) в ACTION_ALLOWLIST расширения.
     assert (ACTION_GET_STATE, ACTION_CHECK, ACTION_CLICK, ACTION_WAIT) == (
-        "get_state",
+        "get_page_state",
         "check_element",
         "click_element",
         "wait_element",
@@ -157,7 +160,7 @@ def test_success_path_maps_to_primitives_in_battle_order() -> None:
         ACTION_CLICK,
         ACTION_WAIT,
     ]
-    assert waits[-1]["timeout_ms"] == MARKER_TIMEOUT_MS
+    assert waits[-1]["timeoutMs"] == MARKER_TIMEOUT_MS
     assert "resume-update-button" in channel.calls[-2][1]["selector"]
     assert "resume-card-link-abc123" in channel.calls[-2][1]["selector"]
 

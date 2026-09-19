@@ -61,9 +61,10 @@ policy-ядро, опасные цели отказываются без кли�
 
 ## Команды (allowlist)
 
-Шесть действий, всё прочее — `action_not_allowed` (fail-closed). Allowlist
+Семь действий, всё прочее — `action_not_allowed` (fail-closed). Allowlist
 живёт дословно в двух копиях — `ACTION_ALLOWLIST` (content.js) и
-`RELAY_ACTIONS` (background.js); гвард-тест требует совпадения литералов:
+`RELAY_ACTIONS` (background.js); гвард-тест требует совпадения литералов
+(и зеркала в `src/hhru_bot/live/allowlist.py`):
 
 - `list_overlays` — видимые overlay с `{id, type, disposition, closeControls, text}`;
 - `dismiss_overlay {id, selector?}` — закрыть `safe`-overlay кликом по
@@ -74,11 +75,16 @@ policy-ядро, опасные цели отказываются без кли�
   текст ≤200 символов, без сырого HTML) + obstruction-проба через
   `elementFromPoint` (там, где API доступен; иначе честно
   `obstructionChecked: false`);
-- `click_element {dataQa|label|selector, waitFor}` — клик по цели через
-  policy-ядро (см. «Исполнитель» ниже);
+- `click_element {dataQa|label|selector, waitFor, allowApply?}` — клик по цели
+  через policy-ядро (см. «Исполнитель» ниже);
 - `wait_element {dataQa|label|selector, state, timeoutMs}` — ждать появления
   (`state: "visible"`) или исчезновения (`state: "hidden"`) с ЯВНЫМ таймаутом;
-- `get_page_state` — текущий URL, title, readyState.
+- `get_page_state` — текущий URL, title, readyState;
+- `fill_element {dataQa|label|selector, text}` (#1162) — записать текст в
+  поле через native value setter + input/change (React-совместимый путь);
+  гейт опасности (captcha-якоря по тексту И атрибутам — пустой input смысл
+  несёт в data-qa/id, не в textContent); значение читается обратно,
+  расхождение — `ok:false`, а не молчаливая полузаполненная форма.
 
 ## Исполнитель (executor.js, #1160)
 
@@ -94,12 +100,16 @@ policy-ядро, опасные цели отказываются без кли�
    невидимая цель — `element_not_visible`. Никаких «кликнем первый молча».
 2. **Policy-гейт до клика** (ядро #929 переиспользуется, якоря не
    расширяются): якоря опасности по тексту поддерева цели + aria-label
-   (`dangerous`), apply-сигналы (`apply_step` — сценарий отклика не входит в
-   примитивы, это S3/S4 #1161/#1162), затем disposition ближайшего overlay-
+   (`dangerous`), apply-сигналы (`apply_step` — только БЕЗ явной авторизации,
+   см. ниже), затем disposition ближайшего overlay-
    ПРЕДКА цели (`ambiguous` — тоже отказ). Отказ = `policy_refused` со
    структурированным вердиктом и НУЛЁМ кликов. Предок ищется строго выше
    цели: hh.ru кладёт подстроки «cookie»/«modal» и в data-qa листовых
    контролов, цель классифицируется по содержимому, а не по удаче подстрок.
+   **allowApply (#1162)**: явная команда сценария отклика понижает ТОЛЬКО
+   apply_step-отказ самой цели (context `apply_flow`) — это решение агента,
+   как явное имя цели; `dangerous` и ambiguous-предок отказывают и с
+   allowApply. Без флага (этап 1, авто-режимы) поведение не изменилось.
 3. **Объявлённое post-click условие обязательно** (`visible != гидратирован`,
    CLAUDE.md): клик без `waitFor {state, timeoutMs, dataQa|label|selector}`
    отказывается (`wait_required`) ДО клика — исход клика, запускающего
