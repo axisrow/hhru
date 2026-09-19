@@ -1,12 +1,13 @@
 """Pre-flight auth-гейт команды apply (#1140).
 
 apply (боевой и --dry-run) при подтверждённо невалидной сессии отказывает
-до поиска и цикла откликов — в стиле гейта list-resumes (#1129), — а не
-молча работает анонимом. Решение «отказ, не предупреждение» зафиксировано
-в PR #1140: план откликов опирается на персональные данные (identity #1144,
-one-click SSR #1099, верификатор negotiations), которые анониму недоступны,
-поэтому анонимный dry-run — не валидный сценарий просмотра, а недостоверная
-репетиция (инвариант #5).
+до поиска и цикла откликов, а не молча работает анонимом. Решение «отказ,
+не предупреждение» зафиксировано в PR #1140: план откликов опирается на
+персональные данные (identity #1144, one-click SSR #1099, верификатор
+negotiations), которые анониму недоступны, поэтому анонимный dry-run —
+не валидный сценарий просмотра, а недостоверная репетиция (инвариант #5).
+Отказ поднимается как NotAuthenticated до run_supervised_command —
+тот же класс исхода, что и поздний детект pipeline (#739).
 """
 
 from __future__ import annotations
@@ -92,9 +93,14 @@ def _run_command(monkeypatch, tmp_path, args, *, resume_count: int = 1):
 
 
 @pytest.mark.parametrize("dry_run", [True, False], ids=["dry-run", "live"])
-def test_invalid_session_fails_before_search_and_cycle(monkeypatch, tmp_path, capsys, dry_run):
-    """Невалидная сессия: [FAIL] в стиле #1129, ни поиск, ни цикл откликов.
+def test_invalid_session_fails_before_search_and_cycle(monkeypatch, tmp_path, dry_run):
+    """Невалидная сессия: NotAuthenticated поднимается до супервизора, цикл не стартует.
 
+    Ловить исключение в _run нельзя (review PR #1152): run_supervised_command
+    конвертирует его в [FAIL] с ремедиацией (login/refresh-token), detail
+    в durable-леджере и CommandExitCode.SESSION_EXPIRED (78) для шедулеров —
+    тот же класс исхода, что и поздний детект в pipeline (#739); голый True
+    давал бы generic exit 1 и, в `run`, старт bump-стадии с мёртвой сессией.
     Два резюме в конфиге — гейт стоит ДО per-resume цикла: при мёртвой сессии
     run_apply_for_resume не вызывается ни разу, а не фейлится по вакансии.
     """
@@ -104,14 +110,8 @@ def test_invalid_session_fails_before_search_and_cycle(monkeypatch, tmp_path, ca
             "cookie hhtoken не найден — сессия истекла (запустите `login`, затем повторите)"
         ),
     )
-    failed, recorded = _run_command(monkeypatch, tmp_path, _args(dry_run=dry_run), resume_count=2)
-
-    assert failed is True
-    assert recorded["run_for_resume_calls"] == 0
-    out = capsys.readouterr().out
-    assert "[FAIL] Сессия недействительна" in out
-    assert "login" in out
-    assert "[DRY-RUN]" not in out
+    with pytest.raises(NotAuthenticated):
+        _run_command(monkeypatch, tmp_path, _args(dry_run=dry_run), resume_count=2)
 
 
 @pytest.mark.parametrize("dry_run", [True, False], ids=["dry-run", "live"])
@@ -122,3 +122,20 @@ def test_valid_session_does_not_block_run(monkeypatch, tmp_path, dry_run):
 
     assert failed is False
     assert recorded["run_for_resume_calls"] == 1
+
+
+def test_run_does_not_start_bump_after_session_expired(monkeypatch):
+    """Побочный эффект гейта в `run` (review PR #1152): apply-стадия возвращает
+    CommandExitCode.SESSION_EXPIRED → run.py обязан остановиться до bump —
+    иначе bump стартовал бы гарантированно мёртвой сессией."""
+    from hhru_bot.commands import run as run_command
+    from hhru_bot.exit_codes import CommandExitCode
+
+    monkeypatch.setattr(run_command.apply_cmd, "run", lambda _args: CommandExitCode.SESSION_EXPIRED)
+    monkeypatch.setattr(
+        run_command.bump_cmd,
+        "run",
+        lambda _args: pytest.fail("bump must not run after SESSION_EXPIRED apply"),
+    )
+
+    assert run_command.run(argparse.Namespace()) is CommandExitCode.SESSION_EXPIRED

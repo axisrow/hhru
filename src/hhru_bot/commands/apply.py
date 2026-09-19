@@ -45,7 +45,7 @@ def register(subparsers) -> None:
 
 
 def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> bool:
-    from ..browser import NotAuthenticated, launch_context, require_authenticated_session
+    from ..browser import launch_context, require_authenticated_session
     from ..throttle import LimitReached, Throttle
 
     if getattr(args, "approved", None) is not None and args.dry_run:
@@ -108,12 +108,12 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
         # search/census/probe), а репетиция мутации по персональным данным —
         # identity-гейт #1144, one-click SSR #1099, пост-клик верификатор
         # negotiations; анониму они недоступны, план по анонимной выдаче
-        # недостоверен (инвариант #5). Отказ в стиле гейта #1129 (list-resumes).
-        try:
-            require_authenticated_session(page)
-        except NotAuthenticated as exc:
-            print(f"[FAIL] Сессия недействительна: {exc}")
-            return True
+        # недостоверен (инвариант #5). Отказ — тот же класс исхода, что и
+        # поздний детект в pipeline (#739): NotAuthenticated поднимается до
+        # run_supervised_command → [FAIL] с ремедиацией, detail в леджере,
+        # CommandExitCode.SESSION_EXPIRED; в `run` это останавливает и
+        # bump-стадию (run.py не запускает её после CommandExitCode).
+        require_authenticated_session(page)
         if len(resumes) > 1:
             from ..apply.antibot import raise_for_antibot
             from ..apply.router import merge_vacancies, route_vacancies
