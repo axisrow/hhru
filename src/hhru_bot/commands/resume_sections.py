@@ -7,10 +7,12 @@ import sys
 from typing import TYPE_CHECKING, cast
 
 from ..resume_sections import (
+    OUTCOME_FAILED,
     Attestation,
     Certificate,
     PortfolioItem,
     Recommendation,
+    RowOutcome,
     validate_portfolio_item,
 )
 from .copy_resume import confirm_write
@@ -320,14 +322,38 @@ def _sync_row_outcomes(outcomes, outcome_map) -> None:
             outcomes[index] = source
 
 
+def _fail_unsupported_outcomes(
+    outcomes: list[RowOutcome] | None,
+) -> list[RowOutcome] | None:
+    """Живой проход: у блока без реализованной формы нет «штатных» исходов.
+
+    #1138: planned И duplicate одинаково означают «на hh.ru не записано» —
+    apply_plan до unsupported-блоков не доходит, а duplicate ссылается на
+    строку, которая сама не была записана. Переписываются ВСЕ строки блока.
+    None (LLM-путь без outcomes) проходит насквозь.
+    """
+    if outcomes is None:
+        return None
+    unsupported = {b for b in _MANUAL_FLAGS.values()} - {"contact", "contacts"}
+    return [
+        RowOutcome(
+            o.block,
+            o.index,
+            OUTCOME_FAILED,
+            "блок не реализован текущей формой (census — блоковые ишью "
+            "#1119-1122); запись не выполнялась",
+        )
+        if o.block in unsupported
+        else o
+        for o in outcomes
+    ]
+
+
 def run(args: argparse.Namespace) -> None:
     from ..browser import launch_context
     from ..config import ConfigError, load_config_or_exit
     from ..resume_sections import (
         OUTCOME_DUPLICATE,
-        OUTCOME_FAILED,
-        OUTCOME_PLANNED,
-        RowOutcome,
         _portfolio_row,
         apply_plan,
         generate_plan,
@@ -385,20 +411,7 @@ def run(args: argparse.Namespace) -> None:
     # частичный успех одного блока не выдаётся за успех всего (#1118 п.3).
     # contact реализован census-схемой #1119 и в список unsupported не входит.
     if not args.dry_run:
-        unsupported = [
-            RowOutcome(
-                o.block,
-                o.index,
-                OUTCOME_FAILED,
-                "блок не реализован текущей формой (census — блоковые ишью "
-                "#1119-1122); запись не выполнялась",
-            )
-            if o.status == OUTCOME_PLANNED
-            and o.block in {b for b in _MANUAL_FLAGS.values()} - {"contact", "contacts"}
-            else o
-            for o in (outcomes or [])
-        ]
-        outcomes = unsupported if outcomes is not None else None
+        outcomes = _fail_unsupported_outcomes(outcomes)
     print(
         f"[{'DRY-RUN' if args.dry_run else 'INFO'}] "
         f"Аттестаций: {len(plan.attestations)}, рекомендаций: {len(plan.recommendations)}, "
