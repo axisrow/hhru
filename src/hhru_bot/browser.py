@@ -249,6 +249,24 @@ def require_authenticated_page(
         )
 
 
+def require_authenticated_session(
+    page: Page,
+    *,
+    probe_url: str = RESUMES_FULL_LIST_URL,
+) -> None:
+    """Pre-flight auth-гейт: навигация на auth-only поверхность + require_authenticated_page.
+
+    Для команд, которым нельзя работать анонимом (#1140: apply). Страницы поиска
+    и вакансии hh.ru отдаёт анониму без формы входа, поэтому проверка маркеров на
+    них ничего не решает; отвергнутая сессия доказывается только на auth-only
+    поверхности — аноним получает серверную форму входа (тот же детект, что у
+    гейта list-resumes #1129). Навигация обязательна: до неё has_auth_cookie
+    подтверждает лишь наличие cookie в jar, а не то, что сервер принял сессию.
+    """
+    goto_hh(page, probe_url)
+    require_authenticated_page(page)
+
+
 def open_confirmed_resume(page: Page, resume_id: str) -> None:
     """Navigate to and strictly confirm the requested resume identity."""
     if not resume_id:

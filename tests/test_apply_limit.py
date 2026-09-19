@@ -187,6 +187,11 @@ def test_limit_is_applied_across_all_resumes_per_run(tmp_path, monkeypatch):
         return ApplyResult(card, True, "dry-run")
 
     monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **k: _Context())
+    # #1140: pre-flight auth-гейт apply — в этих тестах фейковая страница,
+    # авторизация не предмет теста, гейт проходит моком.
+    monkeypatch.setattr(
+        "hhru_bot.browser.require_authenticated_session", lambda page, **kwargs: None
+    )
     monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
     monkeypatch.setattr("hhru_bot.search.search_vacancies", search)
     monkeypatch.setattr(apply_service, "search_vacancies", search)
@@ -285,6 +290,11 @@ def test_indeterminate_search_excludes_resume_from_multi_resume_apply(tmp_path, 
         return ApplyResult(card, True, "success")
 
     monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **k: _Context())
+    # #1140: pre-flight auth-гейт apply — в этих тестах фейковая страница,
+    # авторизация не предмет теста, гейт проходит моком.
+    monkeypatch.setattr(
+        "hhru_bot.browser.require_authenticated_session", lambda page, **kwargs: None
+    )
     monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
     monkeypatch.setattr("hhru_bot.search.search_vacancies", search)
     monkeypatch.setattr(apply_service, "search_vacancies", search)
@@ -343,6 +353,11 @@ def test_apply_does_not_print_per_vacancy_run_progress_line(tmp_path, monkeypatc
         return results[len(calls) - 1]
 
     monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **k: _Context())
+    # #1140: pre-flight auth-гейт apply — в этих тестах фейковая страница,
+    # авторизация не предмет теста, гейт проходит моком.
+    monkeypatch.setattr(
+        "hhru_bot.browser.require_authenticated_session", lambda page, **kwargs: None
+    )
     monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
     monkeypatch.setattr(apply_service, "search_vacancies", lambda *a, **k: cards)
     monkeypatch.setattr(apply_service, "resolve_numeric_resume_ids", lambda _page: None)
