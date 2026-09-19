@@ -101,7 +101,12 @@ def run(args: argparse.Namespace) -> None:
             # failed в actions, dry-run-триггер (dry доходит до попапа на
             # form-вакансиях) пишет только кэш отсева — skipped не разделяет
             # dry/live. durable-журнал боевых исходов — actions, а skipped —
-            # кэш: clear-skipped сбрасывает счётчик.
+            # кэш: clear-skipped сбрасывает счётчик. Периодный срез означает
+            # «вакансии, чья relocation-строка ВПЕРВЫЕ записана в период»:
+            # record_skip идемпотентен (INSERT OR IGNORE не обновляет
+            # created_at), поэтому повторное срабатывание по вакансии из
+            # прошлого периода периодный счётчик не увеличит (точен дефолтный
+            # --period all).
             relocation_blocked = history.count_skipped(
                 reason=SKIP_REASONS.RELOCATION_NOT_ALLOWED,
                 resume_id=resume_id,
