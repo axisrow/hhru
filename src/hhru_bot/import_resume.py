@@ -42,8 +42,6 @@ from .resume_position import (
 )
 from .resume_sections import (
     OUTCOME_DUPLICATE,
-    OUTCOME_FAILED,
-    OUTCOME_PLANNED,
     Certificate,
     Contact,
     ManualRow,
@@ -495,14 +493,12 @@ def plan_contacts(payload: dict) -> tuple[list[Contact], list[RowOutcome], list[
         try:
             contacts = contacts_from_manual_rows(kept)
         except ValueError as exc:
+            # Секция целиком не переносится — исходов плана нет: непустая
+            # карта при пустом плане уронила бы _apply_contacts гвардом
+            # выравнивания посреди боевого прохода (review PR #1157).
+            # Причина остаётся в unavailable, который печатается и в бою.
             unavailable.append(f"контакты: секция не переносится: {exc}")
-            outcomes = [
-                RowOutcome("contacts", outcome.index, OUTCOME_FAILED, str(exc))
-                if outcome.status == OUTCOME_PLANNED
-                else outcome
-                for outcome in outcomes
-            ]
-            return [], outcomes, unavailable
+            return [], [], unavailable
     return contacts, outcomes, unavailable
 
 

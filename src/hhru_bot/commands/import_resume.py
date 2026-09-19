@@ -125,8 +125,8 @@ def _print_plan(
                 f"[WARN] блоки {', '.join(raw_blocks)}: экспортированы сырыми — "
                 "импорт не поддержан (ссылки — ишью #1122, форма не исследована)"
             )
-    for note in blocks.unavailable:
-        print(f"[WARN] не переносится: {note}")
+    # blocks.unavailable уже слиты в общий unavailable (после plan_blocks) —
+    # печатаются общим циклом ниже, в dry-run и бою одинаково.
     for note in unavailable:
         print(f"[WARN] не переносится: {note}")
 
@@ -162,6 +162,11 @@ def run(args: argparse.Namespace):
         photos, notes = export_photos_on_disk(payload)
         unavailable += notes
         blocks = plan_blocks(payload)
+        # Причины пропуска строк блоков (RU-телефон, link-строки, ...) — в
+        # общий список: он печатается и в dry-run, и в конце боевого прогона
+        # сервисом (review PR #1157); отдельный цикл в _print_plan убран,
+        # чтобы не дублировать.
+        unavailable += blocks.unavailable
     except ImportPlanError as exc:
         print(f"[FAIL] {exc}")
         return True
@@ -198,7 +203,7 @@ def run(args: argparse.Namespace):
             f"[WARN] --no-photos: портфолио ({len(blocks.plan.portfolio)} работ) "
             "не переносится — требует загрузки фото в галерею"
         )
-        blocks.unavailable.append(
+        unavailable.append(
             f"портфолио: {len(blocks.plan.portfolio)} работ не переносится (--no-photos)"
         )
         blocks.plan.portfolio = []

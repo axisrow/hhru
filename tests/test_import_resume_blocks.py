@@ -34,7 +34,6 @@ from hhru_bot.import_resume import (
 )
 from hhru_bot.resume_sections import (
     OUTCOME_DUPLICATE,
-    OUTCOME_FAILED,
     OUTCOME_PLANNED,
     Certificate,
     PortfolioItem,
@@ -288,7 +287,11 @@ def test_plan_contacts_skips_ru_phone_with_reason() -> None:
 
 
 def test_plan_contacts_conflicting_preferred_fails_whole_block() -> None:
-    """Два preferred — конфликт формы (radio одна): блок целиком не переносится."""
+    """Два preferred — конфликт формы (radio одна): блок целиком не переносится.
+
+    Исходов у плана нет (план пуст) — иначе карта исходов не совпала бы с
+    планом и _apply_contacts упал гвардом выравнивания посреди боя.
+    """
     contacts, outcomes, unavailable = plan_contacts(
         _payload(
             contacts=[
@@ -298,7 +301,7 @@ def test_plan_contacts_conflicting_preferred_fails_whole_block() -> None:
         )
     )
     assert contacts == []
-    assert [o.status for o in outcomes] == [OUTCOME_FAILED, OUTCOME_FAILED]
+    assert outcomes == []
     assert any("preferred" in note for note in unavailable)
 
 
@@ -313,8 +316,26 @@ def test_plan_contacts_conflicting_same_type_fails_whole_block() -> None:
         )
     )
     assert contacts == []
-    assert [o.status for o in outcomes] == [OUTCOME_FAILED, OUTCOME_FAILED]
+    assert outcomes == []
     assert any("повторная строка type=phone" in note for note in unavailable)
+
+
+def test_blocks_outcome_map_aligns_with_empty_plan_on_contact_conflict() -> None:
+    """Интеграция выравнивания: при конфликте план пуст, карта исходов тоже
+    должна быть пуста — иначе боевой проход умрёт ValueError-ом гварда
+    `_apply_contacts` (review PR #1157)."""
+    blocks = plan_blocks(
+        _payload(
+            contacts=[
+                {"type": "email", "preferred": True, "value": "a@example.com", "href": None},
+                {"type": "phone", "preferred": True, "value": "+66 123 456 789", "href": None},
+            ]
+        )
+    )
+    assert blocks.plan.contacts == []
+    assert blocks_outcome_map(blocks)["contacts"] == []
+    # Причина не потеряна: печатается и в dry-run, и в боевом отчёте.
+    assert any("секция не переносится" in note for note in blocks.unavailable)
 
 
 def test_plan_contacts_marks_identical_repeat_duplicate() -> None:

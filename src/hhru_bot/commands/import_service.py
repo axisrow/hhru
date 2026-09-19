@@ -63,6 +63,20 @@ class ImportRunParams:
     blocks: Any = None  # BlocksImportPlan | None (#1123)
 
 
+@dataclass
+class BlocksLedger:
+    """Классифицируемый ledger секции блоков (``SectionOutcome.ledger``).
+
+    Контракт ledger — bool / список строк / объект с ``success``/
+    ``uncertain``/``acted``: getattr-классификация ``ApplyProgress.finish``
+    читает именно эти флаги, иначе полный успех блоков записался бы как
+    failed (review PR #1157).
+    """
+
+    success: bool
+    uncertain: bool = False
+
+
 def _report(name: str, ok: bool, message: str, *, uncertain: bool, problems: list[str]) -> None:
     if ok:
         print(f"[OK] {name}: {message}")
@@ -305,11 +319,16 @@ def _save_blocks(page, new_id: str, params: ImportRunParams) -> SectionOutcome: 
     uncertain = any(
         outcome.status == OUTCOME_UNCERTAIN for rows in outcome_map.values() for outcome in rows
     )
+    ok = failed == 0 and not errors and not uncertain
     return SectionOutcome(
-        failed == 0 and not errors and not uncertain,
+        ok,
         message,
         uncertain=uncertain,
-        ledger=outcome_map,
+        # Контракт ledger — классифицируемый результат (bool/список/объект с
+        # success/uncertain/acted): dict им не является, getattr-классификация
+        # прочитала бы success=False и записала failed даже при полном успехе
+        # (review PR #1157).
+        ledger=BlocksLedger(success=ok, uncertain=uncertain),
     )
 
 
