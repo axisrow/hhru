@@ -12,6 +12,7 @@ search не пересматривает уже отклонённые (экон
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -196,3 +197,33 @@ def test_list_skipped_filters_reason(tmp_path):
     assert [(row["vacancy_id"], row["reason"]) for row in rows] == [
         ("v2", SKIP_REASONS.HAS_QUESTIONS)
     ]
+
+
+# --- count_skipped: фильтры resume_id/period (#1132) -------------------------
+
+
+def test_count_skipped_filters_reason_resume(tmp_path):
+    h = History(tmp_path / "h.db")
+    h.record_skip("r1", "v1", SKIP_REASONS.RELOCATION_NOT_ALLOWED)
+    h.record_skip("r2", "v2", SKIP_REASONS.RELOCATION_NOT_ALLOWED)
+    h.record_skip("r1", "v3", SKIP_REASONS.BLACKLIST)
+
+    assert h.count_skipped() == 3
+    assert h.count_skipped(SKIP_REASONS.RELOCATION_NOT_ALLOWED) == 2
+    assert h.count_skipped(SKIP_REASONS.RELOCATION_NOT_ALLOWED, resume_id="r1") == 1
+    assert h.count_skipped(SKIP_REASONS.RELOCATION_NOT_ALLOWED, resume_id="missing") == 0
+
+
+def test_count_skipped_period_cutoff(tmp_path):
+    # period="today" отсекает по created_at: свежая запись считается,
+    # старая (сдвинутая на вчерашний день) — нет.
+    h = History(tmp_path / "h.db")
+    h.record_skip("r1", "v1", SKIP_REASONS.RELOCATION_NOT_ALLOWED)
+    with h._connect() as conn:
+        conn.execute(
+            "UPDATE skipped SET created_at = ? WHERE vacancy_id = 'v1'",
+            ((datetime.now() - timedelta(days=1)).isoformat(),),
+        )
+
+    assert h.count_skipped(SKIP_REASONS.RELOCATION_NOT_ALLOWED, period="today") == 0
+    assert h.count_skipped(SKIP_REASONS.RELOCATION_NOT_ALLOWED, period="all") == 1
