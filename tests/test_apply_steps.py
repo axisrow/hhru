@@ -19,6 +19,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from hhru_bot.apply import steps
 from hhru_bot.apply.blockers import PostClickBlocker
+from hhru_bot.history import SKIP_REASONS
 from hhru_bot.selector_groups import apply_form, vacancy_page
 
 pytestmark = pytest.mark.integration
@@ -181,6 +182,12 @@ class _FakeLocator:
             matches = [i for i in self._live_option_ids() if i == self._option_resume_id]
             return len(matches)
         return 1 if self._state.visible else 0
+
+    def is_visible(self) -> bool:
+        # #1135: blockers._visible читает видимость через is_visible(); базовый
+        # локатор раньше её не реализовывал (AttributeError → «не видно»), что
+        # делало relocation-проверки на navigate-уровне недостижимыми в тестах.
+        return self._state.visible
 
     def or_(self, other: _FakeLocator) -> _FakeLocator:
         # #226 cycle-review: wait_apply_button() объединяет apply-button и
@@ -1498,3 +1505,92 @@ def test_navigate_without_refusal_text_keeps_one_click_marker():
     result = steps.navigate_to_response_form(page)
 
     assert isinstance(result, steps.OneClickResponded)
+
+
+# --- #1135: попап переезда монтируется позже блокер-проходов (form-timeout) ---
+
+
+class _LateRelocationPage(FakeStepsPage):
+    """Попап переезда появляется «в момент таймаута» ожидания формы.
+
+    Первый locator(APPLY_SUBMIT_BUTTON) — начало первого ожидания формы: попап
+    ещё не смонтирован (обоих блокер-проходов не было бы видно — как в боевом
+    дампе 2026-09-16). Второй вызов — повторное ожидание после клика
+    подтверждения в позднем проходе: форма «отрисовалась».
+    form_never_renders=True оставляет форму невидимой и во втором ожидании —
+    клик подтверждения не спасает мёртвую страницу, вердикт остаётся
+    form_timeout.
+    """
+
+    def __init__(self, *, form_never_renders: bool = False) -> None:
+        super().__init__()
+        self.submit_locator_calls = 0
+        self.form_never_renders = form_never_renders
+
+    def locator(self, selector: str):
+        if selector == apply_form.APPLY_SUBMIT_BUTTON:
+            self.submit_locator_calls += 1
+            if self.submit_locator_calls == 1:
+                self.set_visible(vacancy_page.VACANCY_RELOCATION_CONFIRM, True)
+            else:
+                self.set_visible(vacancy_page.VACANCY_RELOCATION_CONFIRM, False)
+                if not self.form_never_renders:
+                    self.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+        return super().locator(selector)
+
+
+def test_navigate_late_relocation_popup_without_flag_is_blocker_not_form_timeout():
+    # Боевой кейс 09-16 (флаг был выключен): попап, смонтировавшийся после
+    # обоих блокер-проходов, раньше сжигал вакансию в form_timeout →
+    # verify → uncertain (блокирует повтор). Теперь поздний проход даёт
+    # честный relocation-блокер; клика подтверждения нет.
+    page = _LateRelocationPage()
+    page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
+
+    result = steps.navigate_to_response_form(page, dump_diagnostics=False)
+
+    assert isinstance(result, PostClickBlocker)
+    assert result.skip_reason == SKIP_REASONS.RELOCATION_NOT_ALLOWED
+    assert result.post_navigation is True
+    assert page._state(vacancy_page.VACANCY_RELOCATION_CONFIRM).clicks == 0
+
+
+def test_navigate_late_relocation_popup_with_flag_confirms_and_rewaits_form():
+    page = _LateRelocationPage()
+    page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
+    confirmed: list[bool] = []
+
+    result = steps.navigate_to_response_form(
+        page,
+        dump_diagnostics=False,
+        allow_relocation=True,
+        on_relocation_confirmed=lambda: confirmed.append(True),
+    )
+
+    assert result is True
+    assert confirmed == [True]
+    assert page._state(vacancy_page.VACANCY_RELOCATION_CONFIRM).clicks == 1
+    assert page.submit_locator_calls == 2
+
+
+def test_navigate_late_relocation_confirmed_but_form_still_missing_is_form_timeout():
+    # Клик подтверждения отработал, но форма так и не пришла — честный
+    # form_timeout (дамп + False), а не мнимый успех.
+    page = _LateRelocationPage(form_never_renders=True)
+    page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
+
+    result = steps.navigate_to_response_form(page, dump_diagnostics=False, allow_relocation=True)
+
+    assert result is False
+    assert page._state(vacancy_page.VACANCY_RELOCATION_CONFIRM).clicks == 1
+
+
+def test_navigate_form_timeout_without_late_popup_keeps_old_verdict():
+    # Регрессия: штатный form_timeout без попапа не должен получить второй
+    # бюджет ожидания (латентность только там, где был попап).
+    page = FakeStepsPage()
+    page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
+
+    result = steps.navigate_to_response_form(page, dump_diagnostics=False)
+
+    assert result is False

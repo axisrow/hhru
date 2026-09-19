@@ -10,6 +10,7 @@ from hhru_bot.apply.blockers import (
     PostSubmitLimitExceeded,
     handle_post_click_blockers,
     raise_if_post_submit_limit,
+    relocation_popup_visible,
 )
 from hhru_bot.history import SKIP_REASONS
 from hhru_bot.selector_groups import vacancy_page
@@ -117,6 +118,52 @@ def test_relocation_can_be_confirmed_only_by_explicit_policy():
 
     assert result is None
     assert page.clicked == [vacancy_page.VACANCY_RELOCATION_CONFIRM]
+
+
+def test_relocation_confirm_click_reports_outcome():
+    # #1135: клик подтверждения мутирует профиль — срабатывание попапа не должно
+    # остаться невидимым; колбэк вызывается ровно на клике подтверждения.
+    page = _Page((vacancy_page.VACANCY_RELOCATION_CONFIRM, "Готовы к переезду?"))
+    reported: list[bool] = []
+
+    result = handle_post_click_blockers(
+        page,
+        allow_relocation=True,
+        on_relocation_confirmed=lambda: reported.append(True),
+    )
+
+    assert result is None
+    assert page.clicked == [vacancy_page.VACANCY_RELOCATION_CONFIRM]
+    assert reported == [True]
+
+
+def test_relocation_skip_reports_no_confirm():
+    # #1135: без флага клика нет — колбэк молчит, вердикт прежний fail-closed.
+    page = _Page((vacancy_page.VACANCY_RELOCATION_CONFIRM, "Готовы к переезду?"))
+    reported: list[bool] = []
+
+    result = handle_post_click_blockers(
+        page,
+        allow_relocation=False,
+        on_relocation_confirmed=lambda: reported.append(True),
+    )
+
+    assert result is not None
+    assert result.skip_reason == SKIP_REASONS.RELOCATION_NOT_ALLOWED
+    assert reported == []
+    assert page.clicked == []
+
+
+def test_relocation_popup_visible_reads_state_without_side_effects():
+    # #1135: точечная перепроверка для form-timeout пути — только чтение,
+    # в отличие от handle_post_click_blockers, где проверка кликает.
+    invisible = _Page()
+    assert relocation_popup_visible(invisible) is False
+    assert invisible.clicked == []
+
+    visible = _Page((vacancy_page.VACANCY_RELOCATION_CONFIRM, "Готовы к переезду?"))
+    assert relocation_popup_visible(visible) is True
+    assert visible.clicked == []
 
 
 def test_similar_popup_is_closed_without_becoming_terminal():

@@ -149,6 +149,12 @@ class ApplyContext:
     run_id: str | None = None
     force: bool = False
     allow_relocation: bool = False
+    # #1135: попап запроса подтверждения переезда закрыт кликом в ЭТОМ отклике
+    # (allow_relocation=true, боевой путь; в dry-run флаг гейтится). Маркер
+    # для outcome-фиксации: успех после клика несёт пометку в reason — без неё
+    # срабатывания попапа при включённом флаге невидимы (stats-счётчик #1149
+    # видит только skip-строки выключенного флага).
+    relocation_confirmed: bool = False
     vacancy_body_cache: VacancyBodyCache = field(default_factory=VacancyBodyCache)
 
     def fail(self, reason: str) -> ApplyResult:
@@ -302,6 +308,20 @@ def _record_questionnaire_answers(
     except sqlite3.Error as exc:
         logger.warning("[FAIL] %s — не удалось записать аудит анкеты: %s", ctx.vacancy.title, exc)
         return False
+
+
+def _relocation_confirmed_suffix(ctx: ApplyContext) -> str:
+    """#1135: пометка «попап переезда подтверждён кликом» для reason успеха.
+
+    Клик подтверждения мутирует профиль (hh.ru меняет сигнал «готов к
+    переезду») — такие success-исходы обязаны отличимыми быть в actions.reason,
+    иначе срабатывания попапа при включённом флаге невидимы: stats-счётчик
+    (#1149) видит только skip-строки выключенного флага.
+    """
+
+    if ctx.relocation_confirmed:
+        return "; попап переезда подтверждён кликом (#1135)"
+    return ""
 
 
 def _finalize_blocker(ctx: ApplyContext, blocker: PostClickBlocker) -> ApplyResult:
@@ -549,13 +569,23 @@ def _run(ctx: ApplyContext) -> ApplyResult:
             ctx.before_submit()
             ctx.audit_reserved = True
 
+    def on_relocation_confirmed() -> None:
+        # #1135: попап переезда закрыт кликом в этом отклике — маркер дойдёт до
+        # reason success-исхода (форма и one-click, см. суффикс ниже).
+        ctx.relocation_confirmed = True
+
     # #207: с клика по кнопке отклика начинается «серая зона» — дальнейшие
     # fail-исходы финализируются через _finalize_post_click_failure (внешняя
     # проверка /applicant/negotiations), а не сразу ctx.fail.
     navigation_result = apply_steps.navigate_to_response_form(
         ctx.page,
         ctx.vacancy.vacancy_id,
-        allow_relocation=ctx.allow_relocation,
+        # #1135: подтверждение переезда — мутация профиля (hh.ru сам меняет
+        # сигнал «готов к переезду», боевой факт 2026-09-19). Dry-run мутаций
+        # не совершает: сухой прогон получает честный relocation-блокер со
+        # skip-строкой, которую считает stats-счётчик (#1149). Боевой путь
+        # без флага не меняется.
+        allow_relocation=ctx.allow_relocation and not ctx.dry_run,
         run_id=ctx.run_id,
         # #1099: в one-click shape клик по кнопке отклика = submit (#1093).
         # Dry-run кликает кнопку только для предпросмотра вопросов (#373) —
@@ -566,6 +596,7 @@ def _run(ctx: ApplyContext) -> ApplyResult:
         expected_resume_id=ctx.resume_id,
         account_resume_hashes=ctx.account_resume_hashes,
         before_click=reserve_audit,
+        on_relocation_confirmed=on_relocation_confirmed,
     )
     _halt_if_antibot(ctx)
     if isinstance(navigation_result, apply_steps.OneClickStopBeforeClick):
@@ -630,7 +661,8 @@ def _run(ctx: ApplyContext) -> ApplyResult:
             ctx.vacancy.title,
         )
         return ctx.ok(
-            f"{apply_steps.OneClickResponded.reason}; внешняя проверка подтвердила резюме",
+            f"{apply_steps.OneClickResponded.reason}; внешняя проверка подтвердила резюме"
+            + _relocation_confirmed_suffix(ctx),
             outcome_code="one_click_success",
         )
     if not navigation_result:
@@ -846,7 +878,7 @@ def _run(ctx: ApplyContext) -> ApplyResult:
         )
 
     logger.info("Отклик отправлен: %s", ctx.vacancy.title)
-    return ctx.ok("success")
+    return ctx.ok("success" + _relocation_confirmed_suffix(ctx))
 
 
 def _halt_if_antibot(ctx: ApplyContext) -> None:
