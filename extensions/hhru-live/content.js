@@ -152,7 +152,7 @@ function checkElement(selector) {
   // matchCount (#1006): a found [0]-th element of an ambiguous selector must
   // not silently read as "the" element — the agent sees only this report.
   if (!selector || typeof selector !== 'string') {
-    return { found: false, visible: false, obstructionChecked: false, matchCount: 0 };
+    return { found: false, visible: false, obstructionChecked: false, matchCount: 0, text: null };
   }
   const matches = document.querySelectorAll(selector);
   const element = matches[0] || null;
