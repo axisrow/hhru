@@ -256,12 +256,18 @@ def run(args: argparse.Namespace) -> CommandExitCode | None:
     scan_started_at = datetime.now()
     since_fetch = scan_started_at - timedelta(hours=args.since_hours)
     # Скоупированный ранний стоп (#1148): только обычный read-only просмотр с
-    # окном свежести. strict-пути (--sync-applied/--alert-new) обязаны доказать
-    # полноту ПОЛНОГО списка (fetch_responses отклоняет stop_before на них);
-    # --remindable/--detect-external-tests окна свежести не имеют. Отсечка
-    # aware: SSR lastModified несёт таймзону, сравнение — по моменту времени.
+    # НЕПУСТЫМ окном свежести. strict-пути (--sync-applied/--alert-new) обязаны
+    # доказать полноту ПОЛНОГО списка (fetch_responses отклоняет stop_before на
+    # них); --remindable/--detect-external-tests окна свежести не имеют.
+    # Гейт since_hours > 0 механический: при 0 окно пустое, и stop_before =
+    # момент старта обрезал бы обход после первой страницы (сегодня путь 0 —
+    # history-only без обхода, но если семантика 0 когда-нибудь начнёт ходить,
+    # тихая обрезка класса #1074 не должна вернуться через этот параметр).
+    # Отсечка aware: SSR lastModified несёт таймзону, сравнение — по моменту.
     stop_before = None
-    if not (remindable_only or sync_applied or alert_new or detect_external_tests):
+    if args.since_hours > 0 and not (
+        remindable_only or sync_applied or alert_new or detect_external_tests
+    ):
         stop_before = scan_started_at.astimezone() - timedelta(hours=args.since_hours)
     # Для сводки «что нового»: в режиме history-only берём вообще всё (min), иначе —
     # окно since-fetch. datetime.min — «любая status_changed_at подходит».
