@@ -128,7 +128,9 @@ def run(args: argparse.Namespace) -> None:
     # Лимит откликов account-wide: не сужаем счётчик по --resume, иначе
     # summary может показать запас, хотя следующий отклик уже заблокирован
     # throttle после откликов другого резюме.
-    applied_today = history.count_today("", "apply")
+    # #1142: счётчик — то же скользящее окно 24ч, которое энфорсит гейт:
+    # отчёт и гейт показывают ровно одну величину и не могут разойтись.
+    applied_24h = history.count_last_24h("", "apply")
     apply_limit = config.throttle.daily_apply_limit
 
     # Responses — account-scope (#12): страница /applicant/negotiations общая,
@@ -144,7 +146,7 @@ def run(args: argparse.Namespace) -> None:
 
     rows = [
         ["Резюме", resume_label],
-        ["Откликов сегодня", f"{applied_today} / {apply_limit}"],
+        ["Откликов за 24ч", f"{applied_24h} / {apply_limit}"],
         ["Новых ответов 24ч", str(new_responses)],
         ["Приглашений", str(invitations)],
         ["Тестов ожидает", str(pending_tests)],

@@ -69,13 +69,16 @@ python3 -m playwright install chromium
    `(resume_id, vacancy_id)` для `action='apply'` со статусом `success`/`dry_run` —
    `has_applied()` опирается на него. **Важно:** `dry_run`-отклики тоже пишутся в историю
    и считаются «уже откликались», поэтому повторный `--dry-run` по той же вакансии её
-   отсеет. `count_today()`/`last_action_at()` для лимитов считают `status='success'` и
+   отсеет. `count_last_24h()`/`last_action_at()` для лимитов считают `status='success'` и
    `status='uncertain'` (#176: действие могло выполниться при упавшем посреди клика
    Playwright — fail-closed, `uncertain` тоже дедуплицируется `has_applied()`).
 
 3. **Двухуровневый троттлинг** в `throttle.py`:
    - Дневные лимиты (`daily_apply_limit`, `daily_bump_limit`) — проверяются перед каждым
-     действием, при `dry_run` не применяются.
+     действием, при `dry_run` не применяются. Счётчик — скользящее окно 24ч
+     (`count_last_24h`, #1142), как реальный лимит hh.ru: календарный сброс в полночь
+     позволял CLI обгонять отказ hh.ru в день сброса; окно `[now-24h, now]` — надмножество
+     календарного, так что rolling строго консервативнее.
    - Кулдаун поднятия резюме: жёстко `BUMP_COOLDOWN = 4 часа` (`can_bump_now()`), сверх
      дневного лимита.
    - `throttle.wait()` — случайная пауза `min_delay..max_delay` секунд после каждого

@@ -86,7 +86,7 @@ def test_run_success_records_success_in_history(env, capsys, tmp_path):
     out = capsys.readouterr().out
     assert "[OK] Резюме python опубликовано" in out
     h = History(tmp_path / "h.db")
-    assert h.count_today(RESUME_ID, "publish_resume") == 1
+    assert h.count_last_24h(RESUME_ID, "publish_resume") == 1
     run = h.command_runs()[-1]
     assert (run["command"], run["status"], run["attempted"], run["success"], run["failed"]) == (
         "publish-resume",
@@ -107,7 +107,7 @@ def test_run_uncertain_result_records_uncertain_and_fails(env, capsys, tmp_path)
     assert "uncertain" in out
     # uncertain расходует дневной лимит/кулдаун — как success (#176/#207).
     h = History(tmp_path / "h.db")
-    assert h.count_today(RESUME_ID, "publish_resume") == 1
+    assert h.count_last_24h(RESUME_ID, "publish_resume") == 1
 
 
 def test_run_refuses_retry_after_unresolved_uncertain_without_touching_browser(
@@ -189,7 +189,7 @@ def test_run_plain_failure_is_not_recorded_or_counted(env, capsys, tmp_path):
     env.result = PublishResumeResult("python", False, "кнопка не найдена")
     assert cmd.run(_args(tmp_path, force=True)) is True
     h = History(tmp_path / "h.db")
-    assert h.count_today(RESUME_ID, "publish_resume") == 0
+    assert h.count_last_24h(RESUME_ID, "publish_resume") == 0
     with h._connect() as conn:
         assert conn.execute("SELECT COUNT(*) FROM actions").fetchone()[0] == 0
 
@@ -270,7 +270,7 @@ def test_run_dry_run_writes_nothing_to_history(env, capsys, tmp_path):
     out = capsys.readouterr().out
     assert "[DRY-RUN]" in out
     h = History(tmp_path / "h.db")
-    assert h.count_today(RESUME_ID, "publish_resume") == 0
+    assert h.count_last_24h(RESUME_ID, "publish_resume") == 0
 
 
 def test_run_without_force_exits_before_browser(tmp_path, monkeypatch, capsys):

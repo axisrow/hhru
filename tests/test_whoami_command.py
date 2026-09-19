@@ -219,7 +219,7 @@ def test_summary_counts_from_history(tmp_path, capsys):
     cfg = _write_config(tmp_path, _config_body(str(session)))
 
     h = History(tmp_path / "h.db")
-    # 2 успешных отклика сегодня под resume_id "12345", 1 провал — не считается
+    # 2 успешных отклика сейчас под resume_id "12345" (внутри окна 24ч), 1 провал — не считается
     h.record_action("12345", "v1", "apply", "success")
     h.record_action("12345", "v2", "apply", "success")
     h.record_action("12345", "v3", "apply", "failed", "captcha")
@@ -234,7 +234,7 @@ def test_summary_counts_from_history(tmp_path, capsys):
 
     # Резюме: оба slug'а
     assert "python" in out and "data" in out
-    # Откликов сегодня: 3 успеха (2 + 1), формат "3 / 40"
+    # Откликов за 24ч: 3 успеха (2 + 1), формат "3 / 40"
     assert "3 / 40" in out
     # Приглашений: 1; Новых ответов 24ч: ≥2 (invitation + read).
     assert "Приглашений" in out
@@ -249,7 +249,7 @@ def test_summary_table_has_header_and_borders(tmp_path, capsys):
     assert "Поле" in out and "Значение" in out  # шапка таблицы
     assert "+" in out  # ASCII-рамка _ascii_table
     assert "Резюме" in out
-    assert "Откликов сегодня" in out
+    assert "Откликов за 24ч" in out
 
 
 def test_empty_history_shows_zero_counts(tmp_path, capsys):

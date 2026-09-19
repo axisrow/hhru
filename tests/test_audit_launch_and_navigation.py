@@ -105,7 +105,7 @@ def test_apply_daily_limit_is_account_wide_across_resumes():
             self.account_count = account_count
             self.asked: list[tuple[str, str]] = []
 
-        def count_today(self, resume_id: str, action: str) -> int:
+        def count_last_24h(self, resume_id: str, action: str) -> int:
             self.asked.append((resume_id, action))
             return self.account_count if resume_id == "" else 0
 
@@ -138,7 +138,7 @@ def test_apply_daily_limit_is_account_wide_across_resumes():
 
     # И он действительно срабатывает, когда аккаунтный счётчик достигает лимита.
     class _AtLimit(_History):
-        def count_today(self, resume_id: str, action: str) -> int:
+        def count_last_24h(self, resume_id: str, action: str) -> int:
             return limit
 
     with pytest.raises(LimitReached):

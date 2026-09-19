@@ -132,7 +132,7 @@ Crashpad/Mach-port сбоя, если среда не была распозна�
 | `search`    | поиск вакансий по фильтрам (без откликов)    | READ / WRITE-hh-ru (`--save --force`) | `[candidate]`/`[skip]`/`[DRY-RUN]` |
 | `areas`     | резолвер названия города/региона в area-id каталога | READ    | `[OK]` / ASCII-таблица + `[FAIL]` |
 | `apply`     | отклик с письмом                             | WRITE-hh-ru    | `[OK]`/`[FAIL]`/`[DRY-RUN]`    |
-| `bump`      | поднятие резюме (кулдаун 4ч, дневной лимит)  | WRITE-hh-ru    | `[OK]`/`[FAIL]`                |
+| `bump`      | поднятие резюме (кулдаун 4ч, лимит за 24ч)   | WRITE-hh-ru    | `[OK]`/`[FAIL]`                |
 | `run`       | полный цикл `apply` + `bump`                 | WRITE-hh-ru    | наследует                      |
 | `probe`     | дамп формы отклика без отправки (#8)         | READ           | `[OK]`/`[FAIL]`                |
 | `fill-form` | заполнение внешней формы без отправки (#276) | WRITE-local    | `[DRY-RUN]`/`[FAIL]`          |
@@ -186,7 +186,8 @@ default_account: "marketing"
 `test_multi_account_isolation.py` и `test_account_write_lock_isolation.py`:
 
 - **Изоляция состояния.** У каждого аккаунта своя `history.db` (история,
-  дневные лимиты `throttle.daily_apply_limit`/`daily_bump_limit`) и своя
+  лимиты за 24ч `throttle.daily_apply_limit`/`daily_bump_limit` — скользящее
+  окно, как реальный лимит hh.ru, #1142) и своя
   сессия (`storage_state_file` резолвится относительно директории конфига
   аккаунта, `config.py`). Лимиты одного аккаунта не суммируются и не
   переносятся на другой.

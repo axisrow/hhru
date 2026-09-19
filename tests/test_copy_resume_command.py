@@ -500,7 +500,7 @@ def test_run_success_prints_ok_and_yaml_snippet(env, capsys, tmp_path):
     assert f"https://hh.ru/resume/{NEW_ID}" in out
     # Аудит в actions.
     h = History(tmp_path / "h.db")
-    assert h.count_today(OLD_ID, "copy_resume") == 1
+    assert h.count_last_24h(OLD_ID, "copy_resume") == 1
     run = h.command_runs()[-1]
     assert (run["command"], run["status"], run["attempted"], run["success"], run["failed"]) == (
         "copy-resume",
@@ -606,9 +606,9 @@ def test_run_dry_run_needs_no_confirmation(env, capsys, tmp_path, monkeypatch):
     assert OLD_ID in out
     assert "[INFO] Ничего не отправлено." in out
     assert env.calls == [("backend", True)]
-    # dry_run не считается успехом в count_today (только status='success').
+    # dry_run не считается успехом в count_last_24h (только status='success').
     h = History(tmp_path / "h.db")
-    assert h.count_today(OLD_ID, "copy_resume") == 0
+    assert h.count_last_24h(OLD_ID, "copy_resume") == 0
 
 
 def test_run_browser_failure_exits_1(env, capsys, tmp_path):
@@ -619,7 +619,7 @@ def test_run_browser_failure_exits_1(env, capsys, tmp_path):
     assert "[FAIL]" in out
     assert reason in out
     h = History(tmp_path / "h.db")
-    assert h.count_today(OLD_ID, "copy_resume") == 0  # failed != success
+    assert h.count_last_24h(OLD_ID, "copy_resume") == 0  # failed != success
     with h._connect() as conn:
         row = conn.execute(
             "SELECT status, reason FROM actions WHERE resume_id = ? AND action = 'copy_resume'",
@@ -645,12 +645,12 @@ def test_run_unknown_resume_exits_1(env, capsys, tmp_path):
     assert env.calls == []
 
 
-def test_run_repeat_today_warns(env, capsys, tmp_path):
+def test_run_repeat_within_24h_warns(env, capsys, tmp_path):
     h = History(tmp_path / "h.db")
     h.record_action(OLD_ID, OLD_ID, "copy_resume", "success", "new_resume_id=x")
     cmd.run(_args(tmp_path, force=True))
     out = capsys.readouterr().out
-    assert "[INFO] Уже копировали backend сегодня" in out
+    assert "[INFO] backend уже копировали за последние 24ч" in out
 
 
 def test_run_browser_exception_still_records_audit_then_reraises(env, tmp_path, monkeypatch):
@@ -669,7 +669,7 @@ def test_run_browser_exception_still_records_audit_then_reraises(env, tmp_path, 
         cmd.run(_args(tmp_path, force=True))
 
     h = History(tmp_path / "h.db")
-    assert h.count_today(OLD_ID, "copy_resume") == 1  # uncertain расходует лимит fail-closed
+    assert h.count_last_24h(OLD_ID, "copy_resume") == 1  # uncertain расходует лимит fail-closed
     with h._connect() as conn:
         row = conn.execute(
             "SELECT status, reason FROM actions WHERE resume_id = ? AND action = 'copy_resume'",
@@ -850,7 +850,7 @@ def test_run_duplicate_title_fails_before_clone(env, capsys, tmp_path, monkeypat
     assert "уже существует" in out
     # Копия не создавалась и в аудит не попала.
     assert env.calls == []
-    assert History(tmp_path / "h.db").count_today(OLD_ID, "copy_resume") == 0
+    assert History(tmp_path / "h.db").count_last_24h(OLD_ID, "copy_resume") == 0
 
 
 def test_run_without_title_skips_duplicate_guard(env, capsys, tmp_path, monkeypatch):

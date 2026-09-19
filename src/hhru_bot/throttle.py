@@ -21,9 +21,9 @@ class LimitReached(Exception):
     limit: int
 
     def __str__(self) -> str:
-        return (
-            f"Достигнут дневной лимит '{self.action}' для резюме '{self.resume_id}': {self.limit}"
-        )
+        # «за 24ч», а не «дневной»: лимит hh.ru — скользящее окно 24ч, счётчик
+        # считает так же (#1142), сообщение не должно обещать сброс в полночь.
+        return f"Достигнут лимит '{self.action}' за 24ч для резюме '{self.resume_id}': {self.limit}"
 
 
 class Throttle:
@@ -45,14 +45,17 @@ class Throttle:
         # The limit protects the whole account.  Apply may iterate over every
         # configured resume, so checking each resume independently multiplies
         # the configured allowance by the number of resumes.
-        done = self.history.count_today("", "apply")
+        # #1142: счётчик — скользящее окно 24ч (как реальный лимит hh.ru).
+        done = self.history.count_last_24h("", "apply")
         if done >= self.config.daily_apply_limit:
             raise LimitReached("account", "apply", self.config.daily_apply_limit)
 
     def check_bump_limit(self, resume_id: str, dry_run: bool) -> None:
         if dry_run:
             return
-        done = self.history.count_today(resume_id, "bump")
+        # #1142: rolling-24ч согласован с BUMP_COOLDOWN (тоже скользящий,
+        # time_since_last) — второй предохранитель считает ту же семантику.
+        done = self.history.count_last_24h(resume_id, "bump")
         if done >= self.config.daily_bump_limit:
             raise LimitReached(resume_id, "bump", self.config.daily_bump_limit)
 
@@ -60,7 +63,7 @@ class Throttle:
         """Apply the configured daily action limit to account-wide replies."""
         if dry_run:
             return
-        done = self.history.count_today("", "reply")
+        done = self.history.count_last_24h("", "reply")
         if done >= self.config.daily_apply_limit:
             raise LimitReached("account", "reply", self.config.daily_apply_limit)
 
