@@ -711,6 +711,29 @@ def test_non_duplicate_outcomes_align_with_plan_rows() -> None:
     assert len(apply_map) == len(plan.attestations) == 1
 
 
+def test_live_pass_fails_all_rows_of_unsupported_block() -> None:
+    """#1138: в бою у блока без формы нет «штатных» исходов — duplicate
+    ссылается на строку, которая сама не была записана, поэтому planned и
+    duplicate одинаково переписываются в failed. Реализованный блок (contacts)
+    не трогается; None (LLM-путь) проходит насквозь."""
+    from hhru_bot.commands.resume_sections import _fail_unsupported_outcomes
+
+    args = _manual_args(
+        contact=['{"type": "phone", "value": "+66"}'],
+        link=['{"name": "GitHub", "url": "https://github.com/x"}'] * 2,
+    )
+    _, outcomes = _parse_manual_sections(args)
+    live = _fail_unsupported_outcomes(outcomes)
+    assert live is not None
+    assert [(o.block, o.status) for o in live] == [
+        ("contacts", OUTCOME_PLANNED),
+        ("link", OUTCOME_FAILED),
+        ("link", OUTCOME_FAILED),
+    ]
+    assert "запись не выполнялась" in live[2].reason
+    assert _fail_unsupported_outcomes(None) is None
+
+
 def test_no_manual_flags_is_an_error() -> None:
     with pytest.raises(ValueError, match="хотя бы один ручной флаг"):
         _parse_manual_sections(_manual_args())
