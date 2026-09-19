@@ -60,10 +60,15 @@ MARKER_GONE_TIMEOUT_MS = 3_000
 # не примет, клик честно откажется (PrimitiveError, не наш клик), не промахнётся.
 RESUME_CARD_SCOPE_TEMPLATE = "[data-qa='resume']:has(a[data-qa='resume-card-link-{resume_id}'])"
 
-# --- Бюджет сценария apply (#1162): ожидание кнопки отклика. Верхняя ---
-# граница — response_timeout сервера #1159 (30 с): wait умещается в ответ
-# канала целиком. Бюджеты post-click шагов приходят вторым PR стека.
-FORM_WAIT_TIMEOUT_MS = 15_000
+# --- Бюджеты сценария apply (#1162). Верхняя граница — response_timeout ---
+# сервера #1159 (30 с): каждый wait-бюджет умещается в ответ канала целиком.
+FORM_WAIT_TIMEOUT_MS = 15_000  # модалка отклика после клика по кнопке (гонка монтажа)
+PAGE_FORM_WAIT_TIMEOUT_MS = 10_000  # второй shape: textarea полной страницы
+PANEL_WAIT_TIMEOUT_MS = 5_000  # панель выбора резюме открылась/закрылась
+LETTER_WAIT_TIMEOUT_MS = 5_000  # textarea после клика по letter-toggle
+SUBMIT_WAIT_TIMEOUT_MS = 20_000  # success-маркеры после submit-клика
+# Маркер shape «модалка» (надёжный маркер — id формы, не letter-toggle, #1006).
+APPLY_MODAL_FORM = "form#RESPONSE_MODAL_FORM_ID"
 
 
 class ApplyLiveResult:
@@ -109,15 +114,30 @@ def apply_via_live(
 ):
     """Отклик на вакансию через живую вкладку (#1162): зеркало боевого пути.
 
-    ПРЕД-КЛИКОВАЯ часть (первый PR стека): гейты до любого мутирующего шага.
-    Боевой submit, серая зона #207 и запись исходов добавляются вторым PR
-    стека; до него боевой режим честно отказывает, dry-run полностью рабочий
-    (клик по кнопке отклика в dry-run невозможен: one-click shape через канал
-    недоказуем — SSR не читается, клик мог бы отправить отклик, #1099).
+    Каждый шаг pipeline.py (#207/#1099/#176) превращён в примитив канала,
+    вердикты те же. Анкеты не отвечаются (вопросы — в очередь, вакансия skip);
+    relocation-попап не подтверждается (форма не отрисуется → серая зона →
+    честный not_found). ``verify`` — внешний источник серой зоны #207:
+    found → success, not_found → вердикт сайта, не прочитан → uncertain+acted;
+    отказ канала при submit — uncertain+acted (#176). Dry-run останавливается
+    ДО клика по кнопке отклика: one-click shape через канал недоказуем
+    (stop-before-click fail-closed, #1099).
     """
     from ..browser import LOGIN_FORM
     from ..config import is_resume_url_placeholder
     from ..history import SKIP_REASONS
+    from ..selector_groups.apply_form import (
+        APPLY_COVER_LETTER_TEXTAREA,
+        APPLY_COVER_LETTER_TEXTAREA_FORM,
+        APPLY_COVER_LETTER_TOGGLE,
+        APPLY_COVER_LETTER_TOGGLE_POPUP,
+        APPLY_QUESTION_BODY,
+        APPLY_QUESTION_TEXT,
+        APPLY_RESUME_DROPDOWN,
+        APPLY_RESUME_OPTION,
+        APPLY_RESUME_SELECT,
+        APPLY_SUBMIT_BUTTON,
+    )
     from ..selector_groups.vacancy_page import (
         VACANCY_ALREADY_RESPONDED_AGAIN,
         VACANCY_ALREADY_RESPONDED_CHAT,
@@ -152,13 +172,17 @@ def apply_via_live(
     if is_resume_url_placeholder(resume.resume_url):
         return _result(False, "плейсхолдер resume_url в конфиге — укажите реальный URL")
 
+    # Позитивные success-маркеры submit (#7): только структурные data-qa;
+    # vacancy-response-link-top (кнопка отклика позади модалки) и legacy
+    # селекторы в waitFor не идут — ложный positive дал бы выдуманный success.
+    success_markers = (
+        "[data-qa='vacancy-response-sent-message']",
+        "[data-qa='vacancy-response-success']",
+        "[data-qa='responded-success-attach-cover-letter']",
+    )
+    textarea_selector = f"{APPLY_COVER_LETTER_TEXTAREA}, {APPLY_COVER_LETTER_TEXTAREA_FORM}"
+    toggle_selector = f"{APPLY_COVER_LETTER_TOGGLE}, {APPLY_COVER_LETTER_TOGGLE_POPUP}"
     already_selector = f"{VACANCY_ALREADY_RESPONDED_AGAIN}, {VACANCY_ALREADY_RESPONDED_CHAT}"
-
-    def _read(selector: str) -> dict:
-        try:
-            return channel.check(selector)
-        except (ChannelError, PrimitiveError) as exc:
-            raise _ScenarioInterrupted(f"чтение не выполнено ({exc})") from exc
 
     def _wait(selector: str, state: str, timeout_ms: int) -> bool:
         try:
@@ -166,6 +190,68 @@ def apply_via_live(
         except (ChannelError, PrimitiveError) as exc:
             raise _ScenarioInterrupted(f"канал/исполнитель: {exc}") from exc
 
+    def _click(selector: str, wait_for: dict) -> bool:
+        try:
+            return channel.click_wait_met(selector, wait_for, allow_apply=True)
+        except PrimitiveError as exc:
+            if exc.forwarded:
+                raise _ScenarioInterrupted(f"клик отправлен, исход неопределён ({exc})") from exc
+            raise _RefusedBeforeAction(f"{exc}") from exc
+        except ChannelError as exc:
+            raise _ScenarioInterrupted(f"канал: {exc}") from exc
+
+    def _read(selector: str) -> dict:
+        try:
+            return channel.check(selector)
+        except (ChannelError, PrimitiveError) as exc:
+            raise _ScenarioInterrupted(f"чтение не выполнено ({exc})") from exc
+
+    def _fill(selector: str, text: str) -> dict:
+        try:
+            return channel.fill(selector, text)
+        except (ChannelError, PrimitiveError) as exc:
+            raise _ScenarioInterrupted(f"запись письма не выполнена ({exc})") from exc
+
+    def _grey_zone(reason: str, *, acted: bool, uncertain: bool):
+        """Финализация fail-исхода ПОСЛЕ клика по кнопке отклика (#207).
+
+        found → success; not_found → вердикт сайта (uncertain СНИМАЕТСЯ —
+        список подтверждённо прочитан, отклик не ушёл); не прочитан/упал →
+        uncertain+acted (как #176). Тот же словарь вердиктов, что у боевого
+        _finalize_post_click_failure; ничего не расширяем.
+        """
+        if verify is None:
+            return _result(False, reason, acted=acted, uncertain=uncertain)
+        try:
+            verdict = verify(vacancy_id, resume_id)
+        except Exception as exc:  # noqa: BLE001 — сбой проверки = «не проверили»
+            return _result(
+                False,
+                f"{reason}; внешняя проверка упала ({exc}) — исход неопределён",
+                acted=True,
+                uncertain=True,
+            )
+        if getattr(verdict, "found", False):
+            return _result(
+                True,
+                f"внешняя сверка подтвердила отклик в /applicant/negotiations ({verdict.detail})",
+                acted=True,
+            )
+        if getattr(verdict, "indeterminate", False):
+            return _result(
+                False,
+                f"{reason}; внешняя проверка недоступна ({verdict.detail}) — исход неопределён",
+                acted=True,
+                uncertain=True,
+            )
+        return _result(
+            False,
+            f"{reason}; внешняя проверка: отклика в /applicant/negotiations нет",
+            acted=acted,
+            uncertain=False,
+        )
+
+    grey_zone = False  # True с момента клика по кнопке отклика (#207)
     try:
         # --- гейты до клика: чтения, мутировать не могут ---------------------
         try:
@@ -198,20 +284,170 @@ def apply_via_live(
                 "dry-run: план подтверждён, клик не выполнялся (one-click "
                 "shape через канал недоказуем — stop-before-click #1099)",
             )
-    except _ScenarioInterrupted as exc:
-        # Чтение не состоялось ДО кнопки отклика — на hh.ru следа нет.
-        return _result(False, str(exc))
 
-    # --- боевой путь: второй PR стека (#1162) --------------------------------
-    # Дальше начинается серая зона #207: клик по кнопке отклика открывает
-    # зону неопределённости, fail-исходы которой финализируются внешней
-    # проверкой /applicant/negotiations. Включается вместе с submit и
-    # вердиктами в следующем PR — без них боевой клик был бы
-    # невосстановимо неполным.
-    return _result(
-        False,
-        "боевой отклик в живой вкладке ещё не включён (второй PR стека #1162: "
-        "форма, submit, серая зона #207); доступен --dry-run",
+        if before_submit is not None:
+            before_submit()
+
+        # Клик кнопки отклика: forwarded-отказ (команда ушла в браузер, ответа
+        # нет — полная навигация/обрыв) УЖЕ открывает серую зону: отклик мог
+        # уйти одним кликом (#176/#1099). Не-forwarded отказ (policy/цель) —
+        # клика не было: общий обработчик ниже вернёт обычный fail.
+        try:
+            modal_met = _click(
+                VACANCY_APPLY_BUTTON,
+                {
+                    "selector": APPLY_MODAL_FORM,
+                    "state": WAIT_STATE_VISIBLE,
+                    "timeoutMs": FORM_WAIT_TIMEOUT_MS,
+                },
+            )
+        except _ScenarioInterrupted as exc:
+            return _grey_zone(str(exc), acted=True, uncertain=True)
+
+        # --- серая зона #207: клик исполнен, fail-исходы финализирует verify -
+        grey_zone = True
+
+        if not modal_met:
+            # Модалки нет: либо страница /applicant/vacancy_response (второй
+            # shape), либо one-click уже отправил отклик / relocation-попап /
+            # терминальный блокер hh.ru. Различает их только внешний источник.
+            if not _wait(textarea_selector, WAIT_STATE_VISIBLE, PAGE_FORM_WAIT_TIMEOUT_MS):
+                return _grey_zone(
+                    "форма отклика не отрисовалась после клика (возможен one-click отклик)",
+                    acted=True,
+                    uncertain=True,
+                )
+
+        # --- форма открыта: анкеты → skip в очередь (#482), канал не отвечает -
+        questions = _read(str(APPLY_QUESTION_BODY))
+        if questions.get("found") or (questions.get("matchCount") or 0) > 0:
+            texts: list[str] = []
+            question = _read(str(APPLY_QUESTION_TEXT))
+            if question.get("text"):
+                texts.append(str(question["text"]))
+            return _result(
+                False,
+                f"форма содержит анкету ({questions.get('matchCount')} вопросов) — "
+                "вопросы в очередь, канал не отвечает на анкеты сам",
+                skipped=True,
+                skip_reason=SKIP_REASONS.HAS_QUESTIONS,
+                question_texts=texts,
+            )
+
+        # --- выбор резюме: пикер обязателен на мульти-резюме (#1144) ---------
+        if require_resume_select:
+            trigger = str(APPLY_RESUME_SELECT)
+            panel = str(APPLY_RESUME_DROPDOWN)
+            option = str(APPLY_RESUME_OPTION).format(resume_id=resume_id)
+            if not _read(trigger).get("found"):
+                return _grey_zone(
+                    "пикер резюме не найден: подтверждённо приложить нужное резюме "
+                    "невозможно — отправка запрещена",
+                    acted=False,
+                    uncertain=False,
+                )
+            panel_open = {
+                "selector": panel,
+                "state": WAIT_STATE_VISIBLE,
+                "timeoutMs": PANEL_WAIT_TIMEOUT_MS,
+            }
+            if not _click(trigger, panel_open):
+                return _grey_zone("панель выбора резюме не открылась", acted=False, uncertain=False)
+            if not _read(option).get("found"):
+                return _grey_zone(
+                    f"резюме {resume_id} нет в пикере формы — отправка запрещена",
+                    acted=False,
+                    uncertain=False,
+                )
+            if not _click(
+                option,
+                {
+                    "selector": option,
+                    "state": WAIT_STATE_VISIBLE,
+                    "timeoutMs": PANEL_WAIT_TIMEOUT_MS,
+                },
+            ):
+                return _grey_zone(
+                    "клик по опции резюме не подтвердился", acted=False, uncertain=False
+                )
+            # Панель НЕ закрывается сама (#207-форма): она перекрывает submit
+            # физически — закрываем повторным кликом по триггеру и ждём скрытия
+            # САМОЙ панели (опции внутри остаются visible, пока открыта).
+            if not _click(
+                trigger,
+                {"selector": panel, "state": WAIT_STATE_HIDDEN, "timeoutMs": PANEL_WAIT_TIMEOUT_MS},
+            ):
+                return _grey_zone(
+                    "панель выбора резюме не закрылась — submit перекрыт, отправка запрещена",
+                    acted=False,
+                    uncertain=False,
+                )
+
+        # --- письмо: отсутствие textarea = fail-closed отказ ДО submit --------
+        if not _wait(textarea_selector, WAIT_STATE_VISIBLE, LETTER_WAIT_TIMEOUT_MS):
+            # Тоггла может не быть, когда hh.ru отрендерил textarea уже
+            # развёрнутой (оба варианта встречались в дампах) — его отсутствие
+            # не отказ: решает повторная проверка textarea.
+            try:
+                expanded = _click(
+                    toggle_selector,
+                    {
+                        "selector": textarea_selector,
+                        "state": WAIT_STATE_VISIBLE,
+                        "timeoutMs": LETTER_WAIT_TIMEOUT_MS,
+                    },
+                )
+            except _RefusedBeforeAction:
+                expanded = False
+            if not expanded and not _wait(
+                textarea_selector, WAIT_STATE_VISIBLE, LETTER_WAIT_TIMEOUT_MS
+            ):
+                return _grey_zone(
+                    "textarea письма не найдена в обоих shape — отклик без письма "
+                    "не отправляем (fail-closed до submit)",
+                    acted=False,
+                    uncertain=False,
+                )
+        fill = _fill(textarea_selector, letter)
+        if not fill.get("filled", False):
+            return _grey_zone(
+                "письмо не подтвердилось в поле (read-back не совпал) — не отправляем",
+                acted=False,
+                uncertain=False,
+            )
+
+        # --- submit: отказ канала здесь = uncertain+acted (#176) --------------
+        submitted = _click(
+            APPLY_SUBMIT_BUTTON,
+            {
+                "selector": ", ".join(success_markers),
+                "state": WAIT_STATE_VISIBLE,
+                "timeoutMs": SUBMIT_WAIT_TIMEOUT_MS,
+            },
+        )
+    except _ScenarioInterrupted as exc:
+        if not grey_zone:
+            # Чтение/клик не состоялись ДО кнопки отклика — на hh.ru следа нет.
+            return _result(False, str(exc))
+        # Отказ ПОСЛЕ клика по кнопке отклика (обрыв канала, таймаут, полная
+        # навигация): отправка могла состояться на любом шаге — решает внешний
+        # источник (#176: fail-closed acted+uncertain до вердикта).
+        return _grey_zone(str(exc), acted=True, uncertain=True)
+    except _RefusedBeforeAction as exc:
+        if not grey_zone:
+            return _result(False, f"клик по кнопке отклика не выполнен: {exc}")
+        # Исполнитель отказал до конкретного клика (мутации не было, как у
+        # прочих PlaywrightError заполнения в боевом пути) — флаги чистые;
+        # вердикт всё равно финализирует внешний источник: found докажет
+        # ушедший отклик, not_found снимет серую зону.
+        return _grey_zone(f"шаг формы не выполнен: {exc}", acted=False, uncertain=False)
+
+    if submitted:
+        return _result(True, "success: маркер отправки подтверждён в живой вкладке", acted=True)
+    return _grey_zone(
+        "маркер успешной отправки не подтвердился за бюджет",
+        acted=True,
+        uncertain=True,
     )
 
 

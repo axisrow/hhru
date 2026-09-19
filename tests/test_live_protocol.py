@@ -189,7 +189,9 @@ class TestAllowlist:
                 )
             )
         with pytest.raises(ProtocolError):
-            parse_envelope(_envelope(action="click_element", payload={**target, "allowApply": "yes"}))
+            parse_envelope(
+                _envelope(action="click_element", payload={**target, "allowApply": "yes"})
+            )
 
     def test_fill_element_requires_text_and_single_target(self):
         ok = parse_envelope(
@@ -200,7 +202,10 @@ class TestAllowlist:
             parse_envelope(_envelope(action="fill_element", payload={"selector": "textarea"}))
         with pytest.raises(ProtocolError):
             parse_envelope(
-                _envelope(action="fill_element", payload={"selector": "a", "text": "x", "state": "visible"})
+                _envelope(
+                    action="fill_element",
+                    payload={"selector": "a", "text": "x", "state": "visible"},
+                )
             )
         with pytest.raises(ProtocolError) as long_exc:
             parse_envelope(
