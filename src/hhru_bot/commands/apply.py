@@ -45,7 +45,7 @@ def register(subparsers) -> None:
 
 
 def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> bool:
-    from ..browser import launch_context
+    from ..browser import NotAuthenticated, launch_context, require_authenticated_session
     from ..throttle import LimitReached, Throttle
 
     if getattr(args, "approved", None) is not None and args.dry_run:
@@ -102,6 +102,18 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
         config.storage_state_file, headless=args.headless, user_agent=config.user_agent
     ) as context:
         page = context.new_page()
+        # #1140: apply (боевой и --dry-run) при подтверждённо невалидной сессии
+        # отказывает до поиска, а не молча работает анонимом. Решение (PR #1140):
+        # анонимный dry-run — не «валидный просмотр» (для того есть
+        # search/census/probe), а репетиция мутации по персональным данным —
+        # identity-гейт #1144, one-click SSR #1099, пост-клик верификатор
+        # negotiations; анониму они недоступны, план по анонимной выдаче
+        # недостоверен (инвариант #5). Отказ в стиле гейта #1129 (list-resumes).
+        try:
+            require_authenticated_session(page)
+        except NotAuthenticated as exc:
+            print(f"[FAIL] Сессия недействительна: {exc}")
+            return True
         if len(resumes) > 1:
             from ..apply.antibot import raise_for_antibot
             from ..apply.router import merge_vacancies, route_vacancies

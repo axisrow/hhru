@@ -19,6 +19,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from hhru_bot import browser
 from hhru_bot.browser import (
     GOTO_TIMEOUT_MS,
+    RESUMES_FULL_LIST_URL,
     NotAuthenticated,
     ThrottledChannelDetected,
     goto_hh,
@@ -325,6 +326,50 @@ def test_require_authenticated_page_rejects_login_form_with_cookie(monkeypatch):
     monkeypatch.setattr(browser, "has_login_form", lambda page: True)
     with pytest.raises(NotAuthenticated, match="форму входа"):
         require_authenticated_page(page)
+
+
+def test_require_authenticated_session_navigates_to_probe_url_before_check(monkeypatch):
+    """#1140: гейт сначала навигирует на auth-only поверхность, потом проверяет.
+
+    До навигации маркеры читать нельзя (cookie в jar не доказывает сессию,
+    has_login_form на свежей странице всегда False — #147), поэтому порядок
+    goto -> require — часть контракта.
+    """
+    visited = []
+
+    def fake_goto(_page, url):
+        visited.append(url)
+
+    monkeypatch.setattr(browser, "goto_hh", fake_goto)
+    monkeypatch.setattr(
+        browser, "require_authenticated_page", lambda _page: visited.append("check")
+    )
+
+    browser.require_authenticated_session(MagicMock(name="Page"))
+
+    assert visited == [RESUMES_FULL_LIST_URL, "check"]
+
+
+def test_require_authenticated_session_probe_url_is_overridable(monkeypatch):
+    monkeypatch.setattr(browser, "goto_hh", lambda _page, url: None)
+    monkeypatch.setattr(browser, "require_authenticated_page", lambda _page: None)
+
+    browser.require_authenticated_session(
+        MagicMock(name="Page"), probe_url="https://hh.ru/applicant/negotiations"
+    )
+
+
+def test_require_authenticated_session_propagates_not_authenticated(monkeypatch):
+    """Гейт — терминальный сигнал вызывающему, молча проглотить отказ нельзя."""
+
+    def fake_require(_page):
+        raise NotAuthenticated("cookie hhtoken не найден")
+
+    monkeypatch.setattr(browser, "goto_hh", lambda _page, url: None)
+    monkeypatch.setattr(browser, "require_authenticated_page", fake_require)
+
+    with pytest.raises(NotAuthenticated, match="hhtoken"):
+        browser.require_authenticated_session(MagicMock(name="Page"))
 
 
 def test_open_confirmed_resume_checks_auth_and_identity(monkeypatch):

@@ -65,6 +65,11 @@ def _fake_browser(monkeypatch):
     import hhru_bot.browser
 
     monkeypatch.setattr(hhru_bot.browser, "launch_context", fake_launch)
+    # #1140: pre-flight auth-гейт apply требует настоящую страницу — тесты
+    # маршрута (--vacancy-id) не про авторизацию, гейт проходит моком.
+    monkeypatch.setattr(
+        hhru_bot.browser, "require_authenticated_session", lambda page, **kwargs: None
+    )
 
 
 def _run_command(monkeypatch, tmp_path, args, *, card=None, error=None, applied_calls=None):
