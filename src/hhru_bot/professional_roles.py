@@ -42,6 +42,10 @@ FILTER_TRIGGER = "[data-qa='search-filter-professional-role-trigger']"
 # воспроизвёлся; data-qa снимает зависимость от accessible name и тайминга
 # монтирования сразу. Подтверждено живым DOM на обоих аккаунтах и в IAB.
 FILTERS_TOGGLE = "[data-qa='header-search-filters-button']"
+# Открытая панель фильтров (right-drawer). Источник селектора — DOM инцидента
+# 2026-09-19 (боевой импорт #1123, дамп Playwright: modal-overlay с
+# role='dialog' data-qa='search-filters' перехватывает pointer events к тогглу).
+FILTERS_PANEL = "[data-qa='search-filters']"
 TREE_INPUT = "[data-qa~='tree-selector-input-{}']"
 TREE_INPUT_ANY = "input[data-qa*='tree-selector-input-']"
 TREE_LABEL = "[data-qa='cell-text-content']"
@@ -415,12 +419,21 @@ def _open_filters_if_needed(page: Page) -> None:
         )
     trigger = page.locator(FILTER_TRIGGER)
     toggle = page.locator(FILTERS_TOGGLE)
+    panel = page.locator(FILTERS_PANEL)
     # Desktop cycles through collapsed -> quick filters -> full filters; the
     # compact in-app layout opens the full panel in one click.
     for _ in range(2):
         found = None
         for _attempt in range(_FILTERS_MOUNT_ATTEMPTS):
             if trigger.count() == 1 and trigger.is_visible():
+                return
+            # Живой факт 2026-09-19 (боевой импорт #1123): панель уже открыта
+            # (клик по тогглу мог уйти раньше завершения click-рутины), а
+            # right-drawer modal-overlay перехватывает pointer events к тому
+            # же тогглу — повторный клик таймаутит 30с и валит preflight
+            # необработанным исключением. Панель открыта — кликать нечего:
+            # поле роли в панели дождёт вызывающий код.
+            if panel.count() == 1 and panel.is_visible():
                 return
             if toggle.count() > 1:
                 raise RuntimeError(f"контрол read-only фильтров неоднозначен: {toggle.count()}")
@@ -433,7 +446,15 @@ def _open_filters_if_needed(page: Page) -> None:
                 "тоггл «Фильтры» не появился за бюджет "
                 f"{_FILTERS_MOUNT_ATTEMPTS * _FILTERS_MOUNT_POLL_MS} мс после гидрации"
             )
-        found.click()
+        try:
+            found.click()
+        except PlaywrightError:
+            # Клик мог уйти: панель открылась и перекрыла тоггл до завершения
+            # click-рутины (тот же инцидент 2026-09-19). Единственный
+            # подтверждённый факт — открытость панели: она есть — цель
+            # достигнута, нет — честный отказ.
+            if not (panel.count() == 1 and panel.is_visible()):
+                raise
         page.wait_for_timeout(250)
 
 
