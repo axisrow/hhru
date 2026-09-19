@@ -188,6 +188,11 @@ HHRU_ACCOUNT=marketing scripts/scheduled_run.sh --headless apply --limit 5
 # Поднять резюме в поиске (hh.ru разрешает не чаще раза в 4 часа)
 ./scripts/run.sh bump --resume resume-name-1
 
+# Поднять резюме кликом в ЖИВОЙ вкладке Chrome (расширение hhru-live, #1161):
+# CLI поднимает loopback-канал, ты открываешь /applicant/resumes в Chrome —
+# тот же кулдаун 4ч, дневной лимит и --dry-run, что у bump
+./scripts/run.sh bump-live --resume resume-name-1 --dry-run
+
 # Полный цикл (apply + bump) для всех резюме из конфига
 ./scripts/run.sh run
 ```
@@ -1199,6 +1204,9 @@ Account-wide ответы в чатах: план из локальной ист
 - `search.py` — поиск вакансий и фильтрация.
 - `apply.py` — отклик с сопроводительным письмом.
 - `bump.py` — поднятие резюме.
+- `live/scenarios.py` — сценарии поверх live-канала (loopback WS + расширение
+  hhru-live); первый — `bump-live` (#1161): тот же bump, но клик делает
+  расширение в твоей живой вкладке Chrome.
 - `selectors.py` — все CSS/data-qa селекторы hh.ru в одном месте.
 
 Всё — в `src/hhru_bot/`.
