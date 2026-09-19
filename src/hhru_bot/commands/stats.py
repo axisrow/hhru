@@ -47,7 +47,7 @@ def run(args: argparse.Namespace) -> None:
     import sys
 
     from ..config import ConfigError, load_config_or_exit
-    from ..history import History
+    from ..history import SKIP_REASONS, History
     from ..report import format_actions, format_replies, format_summary
 
     # --resume получает slug из конфига (resume.id), но история apply/bump
@@ -93,6 +93,26 @@ def run(args: argparse.Namespace) -> None:
                     **questionnaire_answers
                 )
             )
+            # #1132: срабатывания post-click relocation-блокера раньше были видны
+            # только внутри текста failed-причины; skipped-журнал хранит их под
+            # стабильным ключом RELOCATION_NOT_ALLOWED — показываем отдельной
+            # строкой с теми же фильтрами --resume/--period. Счётчик считает
+            # срабатывания в ОБЕИХ режимах: у боевого триггера есть парный
+            # failed в actions, dry-run-триггер (dry доходит до попапа на
+            # form-вакансиях) пишет только кэш отсева — skipped не разделяет
+            # dry/live. durable-журнал боевых исходов — actions, а skipped —
+            # кэш: clear-skipped сбрасывает счётчик. Периодный срез означает
+            # «вакансии, чья relocation-строка ВПЕРВЫЕ записана в период»:
+            # record_skip идемпотентен (INSERT OR IGNORE не обновляет
+            # created_at), поэтому повторное срабатывание по вакансии из
+            # прошлого периода периодный счётчик не увеличит (точен дефолтный
+            # --period all).
+            relocation_blocked = history.count_skipped(
+                reason=SKIP_REASONS.RELOCATION_NOT_ALLOWED,
+                resume_id=resume_id,
+                period=args.period,
+            )
+            print(f"Relocation-блокер (срабатываний): {relocation_blocked}")
         # CSV — экспорт для машин: один документ, одна схема колонок (см. #112
         # ревью). Reply-сводка имеет другую схему (metric,value), поэтому в csv
         # её печатать вторым документом в тот же stdout-поток нельзя — консьюмер,

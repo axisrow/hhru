@@ -242,18 +242,35 @@ class ProfileMixin:
             for row in rows
         ]
 
-    def count_skipped(self, reason: str | None = None) -> int:
-        """Число записей отсева (для dry-run/подтверждения clear-skipped).
+    def count_skipped(
+        self,
+        reason: str | None = None,
+        *,
+        resume_id: str | None = None,
+        period: str | None = None,
+    ) -> int:
+        """Число записей отсева (для dry-run/подтверждения clear-skipped и
+        счётчика relocation-блокера в stats #1132).
 
         ``reason=None`` — все причины, иначе — только указанная. Не удаляет.
+        ``resume_id``/``period`` — опциональные фильтры в стиле ``summary()``:
+        тот же ключ ``resume.resume_id`` и та же отсечка ``_period_since``.
         """
+        filters: list[str] = []
+        params: list = []
+        if reason is not None:
+            filters.append("reason = ?")
+            params.append(reason)
+        if resume_id is not None:
+            filters.append("resume_id = ?")
+            params.append(resume_id)
+        since = self._period_since(period) if period is not None else None
+        if since is not None:
+            filters.append("created_at >= ?")
+            params.append(since)
+        clause = (" WHERE " + " AND ".join(filters)) if filters else ""
         with self._connect() as conn:
-            if reason is None:
-                row = conn.execute("SELECT COUNT(*) AS cnt FROM skipped").fetchone()
-            else:
-                row = conn.execute(
-                    "SELECT COUNT(*) AS cnt FROM skipped WHERE reason = ?", (reason,)
-                ).fetchone()
+            row = conn.execute(f"SELECT COUNT(*) AS cnt FROM skipped{clause}", params).fetchone()
             return row["cnt"] if row else 0
 
     # --- Журнал ответов работодателям replies (#108, решение #55) -------------

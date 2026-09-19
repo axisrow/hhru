@@ -14,7 +14,7 @@ import textwrap
 import pytest
 
 from hhru_bot.commands import stats as stats_cmd
-from hhru_bot.history import History
+from hhru_bot.history import SKIP_REASONS, History
 
 pytestmark = pytest.mark.unit
 
@@ -167,3 +167,51 @@ def test_stats_run_unknown_resume_exits(capsys, tmp_path):
     assert exc.value.code == 1
     err = capsys.readouterr().err
     assert "не найдено" in err
+
+
+# --- счётчик relocation-блокера (#1132) --------------------------------------
+
+
+def test_stats_run_shows_relocation_blocker_counter(capsys, tmp_path):
+    config = _write_config(tmp_path, _minimal_config())
+    h = History(tmp_path / "h.db")
+    h.record_skip("12345", "v1", SKIP_REASONS.RELOCATION_NOT_ALLOWED)
+    h.record_skip("12345", "v2", SKIP_REASONS.RELOCATION_NOT_ALLOWED)
+    h.record_skip("12345", "v3", SKIP_REASONS.BLACKLIST)  # другая причина — не считается
+
+    stats_cmd.run(_args(config, tmp_path / "h.db"))
+    out = capsys.readouterr().out
+
+    assert "Relocation-блокер (срабатываний): 2" in out
+
+
+def test_stats_run_relocation_counter_zero_on_empty_db(capsys, tmp_path):
+    config = _write_config(tmp_path, _minimal_config())
+    stats_cmd.run(_args(config, tmp_path / "h.db"))
+    out = capsys.readouterr().out
+
+    assert "Relocation-блокер (срабатываний): 0" in out
+
+
+def test_stats_run_relocation_counter_respects_resume_filter(capsys, tmp_path):
+    config = _write_config(tmp_path, _minimal_config())
+    h = History(tmp_path / "h.db")
+    h.record_skip("12345", "v1", SKIP_REASONS.RELOCATION_NOT_ALLOWED)
+    h.record_skip("99999", "v2", SKIP_REASONS.RELOCATION_NOT_ALLOWED)  # другое резюме
+
+    stats_cmd.run(_args(config, tmp_path / "h.db", resume="python"))
+    out = capsys.readouterr().out
+
+    assert "Relocation-блокер (срабатываний): 1" in out
+
+
+def test_stats_run_relocation_counter_absent_in_csv(capsys, tmp_path):
+    """CSV — одна схема документа (#112): relocation-строка только в table/md."""
+    config = _write_config(tmp_path, _minimal_config())
+    h = History(tmp_path / "h.db")
+    h.record_skip("12345", "v1", SKIP_REASONS.RELOCATION_NOT_ALLOWED)
+
+    stats_cmd.run(_args(config, tmp_path / "h.db", format="csv"))
+    out = capsys.readouterr().out
+
+    assert "Relocation" not in out
