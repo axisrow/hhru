@@ -8,13 +8,15 @@
 // (danger anchors, close markers, disposition) are policy.js bindings
 // shared within the same isolated world and consumed below as globals.
 //
-// The ONLY click this content script ever performs is on an explicit
-// close control (aria-label/title "close", data-qa/class "close", or a
-// × glyph) of an overlay classified `safe` at the moment of dismissal —
-// see dismissOverlay(). It never presses «Сохранить»/«Отмена»/submit
-// buttons and never removes DOM nodes.
+// The ONLY click this file ever performs is on an explicit close control
+// (aria-label/title "close", data-qa/class "close", or a × glyph) of an
+// overlay classified `safe` at the moment of dismissal — see
+// dismissOverlay(). It never presses «Сохранить»/«Отмена»/submit buttons
+// and never removes DOM nodes. Stage-2 agent clicks (#1160) live in
+// executor.js (loaded between policy.js and this file) behind their own
+// single click site and the same policy core.
 
-const ACTION_ALLOWLIST = new Set(['list_overlays', 'dismiss_overlay', 'check_element']);
+const ACTION_ALLOWLIST = new Set(['list_overlays', 'dismiss_overlay', 'check_element', 'click_element', 'wait_element', 'get_page_state']);
 // Detection surface (what counts as a potential overlay at all) is
 // observation, not policy — it stays here. #932, live DOM 2026-09-05
 // (анонимная главная): информер cookies — это
@@ -150,14 +152,15 @@ function checkElement(selector) {
   // matchCount (#1006): a found [0]-th element of an ambiguous selector must
   // not silently read as "the" element — the agent sees only this report.
   if (!selector || typeof selector !== 'string') {
-    return { found: false, visible: false, obstructionChecked: false, matchCount: 0 };
+    return { found: false, visible: false, obstructionChecked: false, matchCount: 0, text: null };
   }
   const matches = document.querySelectorAll(selector);
   const element = matches[0] || null;
   if (!element) {
-    return { found: false, visible: false, obstructionChecked: false, matchCount: 0 };
+    return { found: false, visible: false, obstructionChecked: false, matchCount: 0, text: null };
   }
   const visible = isVisible(element);
+  const text = (element.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 200);
   let covered = null;
   let obstructionChecked = false;
   // Real-browser obstruction probe: the element at the overlay's center point
@@ -178,7 +181,7 @@ function checkElement(selector) {
       }
     }
   }
-  return { found: true, visible, covered, obstructionChecked, matchCount: matches.length };
+  return { found: true, visible, covered, obstructionChecked, matchCount: matches.length, text };
 }
 
 function waitForOverlayGone(element, onDone) {
@@ -255,6 +258,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'check_element') {
     sendResponse({ ok: true, element: checkElement(message.selector) });
     return false;
+  }
+  if (message.action === 'get_page_state') {
+    sendResponse({ ok: true, page: getPageState() });
+    return false;
+  }
+  // Stage-2 executor commands (#1160): click_element/wait_element answer
+  // asynchronously after their declared wait budget; the policy gate and
+  // the single click site live in executor.js.
+  if (message.action === 'click_element') {
+    clickElement(message, sendResponse);
+    return true;
+  }
+  if (message.action === 'wait_element') {
+    waitElement(message, sendResponse);
+    return true;
   }
   // dismiss_overlay answers asynchronously after the close click + re-check.
   dismissOverlay(message.id, message, sendResponse);

@@ -51,6 +51,21 @@ function makeEnv({ activeTab, tabReply, tabError }) {
   return { chrome, sent };
 }
 
+// Stage 2 (#1160): background.js connects its WebSocket bridge on load. This
+// runner has no server: the stub WebSocket never opens, so the bridge sits
+// in the connecting state — no heartbeats, no commands, no timers firing —
+// and the relay scenarios below exercise only the popup path, unchanged.
+const BRIDGE_STUBS = {
+  WebSocket: function WebSocketStub() {
+    this.readyState = 0;
+    this.send = () => {};
+  },
+  setTimeout,
+  clearTimeout,
+  setInterval,
+  clearInterval,
+};
+
 function deliver(chrome, message, sender) {
   return new Promise((resolve) => {
     chrome.runtime._listeners.forEach((fn) => fn(message, sender, resolve));
@@ -70,7 +85,7 @@ const SCENARIOS = {
       activeTab: { id: 7, url: 'https://hh.ru/applicant/profile/me' },
       tabReply: { ok: true, overlays },
     });
-    vm.runInContext(source, vm.createContext({ chrome }));
+    vm.runInContext(source, vm.createContext({ chrome, ...BRIDGE_STUBS }));
     const response = await deliver(chrome, { kind: 'agent_command', action: 'list_overlays' }, { id: OWN });
     return {
       response,
@@ -87,7 +102,7 @@ const SCENARIOS = {
     const { chrome, sent } = makeEnv({
       activeTab: { id: 3, url: 'https://example.com/page' },
     });
-    vm.runInContext(source, vm.createContext({ chrome }));
+    vm.runInContext(source, vm.createContext({ chrome, ...BRIDGE_STUBS }));
     const response = await deliver(chrome, { kind: 'agent_command', action: 'list_overlays' }, { id: OWN });
     return {
       error: response?.error ?? null,
@@ -102,7 +117,7 @@ const SCENARIOS = {
       activeTab: { id: 7, url: 'https://hh.ru/' },
       tabError: 'Could not establish connection. Receiving end does not exist.',
     });
-    vm.runInContext(source, vm.createContext({ chrome }));
+    vm.runInContext(source, vm.createContext({ chrome, ...BRIDGE_STUBS }));
     const response = await deliver(chrome, { kind: 'agent_command', action: 'check_element', selector: '[data-qa="x"]' }, { id: OWN });
     return {
       error: response?.error ?? null,
@@ -117,7 +132,7 @@ const SCENARIOS = {
       activeTab: { id: 7, url: 'https://hh.ru/' },
       tabReply: { ok: true },
     });
-    vm.runInContext(source, vm.createContext({ chrome }));
+    vm.runInContext(source, vm.createContext({ chrome, ...BRIDGE_STUBS }));
     const response = await deliver(chrome, { kind: 'agent_command', action: 'list_overlays' }, { id: 'some-other-extension' });
     return {
       error: response?.error ?? null,
@@ -132,7 +147,7 @@ const SCENARIOS = {
       activeTab: { id: 7, url: 'https://hh.ru/' },
       tabReply: { ok: true },
     });
-    vm.runInContext(source, vm.createContext({ chrome }));
+    vm.runInContext(source, vm.createContext({ chrome, ...BRIDGE_STUBS }));
     const response = await deliver(chrome, { kind: 'agent_command', action: 'close_all_windows' }, { id: OWN });
     return {
       error: response?.error ?? null,
@@ -145,7 +160,7 @@ const SCENARIOS = {
   // detection-storage path (#644) when the command path was added (#930).
   diagnostics_stored: async () => {
     const { chrome, sent } = makeEnv({ activeTab: null });
-    vm.runInContext(source, vm.createContext({ chrome }));
+    vm.runInContext(source, vm.createContext({ chrome, ...BRIDGE_STUBS }));
     const response = await deliver(chrome, {
       kind: 'overlay_detected',
       observedAt: '2026-09-05T00:00:00Z',
@@ -162,7 +177,7 @@ const SCENARIOS = {
   // claims to be an overlay report (isTrustedSender gate, #743 pattern).
   diagnostics_foreign_origin_rejected: async () => {
     const { chrome, sent } = makeEnv({ activeTab: null });
-    vm.runInContext(source, vm.createContext({ chrome }));
+    vm.runInContext(source, vm.createContext({ chrome, ...BRIDGE_STUBS }));
     const response = await deliver(chrome, { kind: 'overlay_detected', overlay: {} }, {
       id: OWN,
       tab: { id: 3, url: 'https://example.com/' },

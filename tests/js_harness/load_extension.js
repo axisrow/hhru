@@ -1,7 +1,7 @@
-// Loads the extension sources in manifest order (policy.js before
-// content.js, #929) so every scenario runner mirrors what MV3 does for
-// content_scripts of the same isolated world: top-level bindings of
-// policy.js are visible to content.js.
+// Loads the extension sources in manifest order (policy.js, then
+// executor.js (#1160), then content.js) so every scenario runner mirrors
+// what MV3 does for content_scripts of the same isolated world: top-level
+// bindings of earlier files are visible to later ones.
 'use strict';
 
 const fs = require('fs');
@@ -10,7 +10,7 @@ const path = require('path');
 const EXTENSION_DIR = path.join(__dirname, '..', '..', 'extensions', 'hhru-live');
 
 function loadExtensionSources() {
-  return ['policy.js', 'content.js'].map((name) => ({
+  return ['policy.js', 'executor.js', 'content.js'].map((name) => ({
     name,
     source: fs.readFileSync(path.join(EXTENSION_DIR, name), 'utf8'),
   }));

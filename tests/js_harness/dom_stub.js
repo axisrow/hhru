@@ -16,8 +16,11 @@
 'use strict';
 
 function matchesSimpleSelector(el, selector) {
-  // Supports exactly the selector shapes content.js's OVERLAY_SELECTORS uses:
-  // [attr="value"], [attr*="value"], [attr]
+  // Supports exactly the selector shapes the extension code uses:
+  // [attr="value"], [attr*="value"], [attr], plus bare tag names
+  // (executor.js's findByLabel candidate list, #1160).
+  const tagMatch = selector.match(/^[a-zA-Z][a-zA-Z0-9-]*$/);
+  if (tagMatch) return String(el.tagName).toLowerCase() === selector.toLowerCase();
   const attrMatch = selector.match(/^\[([a-zA-Z-]+)(?:([*])?=("([^"]*)"|'([^']*)'))?\]$/);
   if (!attrMatch) throw new Error(`unsupported selector in stub: ${selector}`);
   const [, attr, op, , dq, sq] = attrMatch;

@@ -386,3 +386,219 @@ def test_hhru_live_relay_keeps_diagnostics_storage_path():
     foreign = _run_background_scenario("diagnostics_foreign_origin_rejected")
     assert foreign["error"] == "sender_not_allowed"
     assert foreign["storedReports"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Исполнитель команд в живой вкладке (issue #1160, этап 2): click_element /
+# wait_element / get_page_state поверх policy-ядра #929. Сценарии исполняют
+# весь extension (policy.js + executor.js + content.js) по-настоящему через
+# tests/js_harness/run_executor_scenario.js <name>. Ключевой инвариант:
+# dangerous/apply_step/ambiguous и клик без объявленного post-click условия
+# отказывают БЕЗ какого-либо клика.
+# ---------------------------------------------------------------------------
+
+EXECUTOR_RUNNER = REPO_ROOT / "tests" / "js_harness" / "run_executor_scenario.js"
+
+
+def _run_executor_scenario(name: str) -> dict:
+    return _run_node_scenario(EXECUTOR_RUNNER, [name])
+
+
+def test_hhru_live_executor_click_safe_overlay_allowed():
+    """Разрешённый клик: контроль внутри safe-overlay, клик ровно по цели,
+    объявленное post-click условие дождалось, результат структурирован
+    (действие, policy-вердикт, цель, wait, итоговое состояние DOM)."""
+    scenario = _run_executor_scenario("click_safe_allowed")
+    assert scenario["ok"] is True
+    assert scenario["verdict"] == "allowed" and scenario["context"] == "safe_overlay"
+    assert scenario["clicked"] is True and scenario["waitMet"] is True
+    assert scenario["clickCount"] == 1 and scenario["clickedDetails"] is True
+    assert scenario["targetText"] == "Подробнее"
+    assert scenario["url"].startswith("https://hh.ru/")
+    assert scenario["overlaysAfter"] >= 1
+
+
+def test_hhru_live_executor_click_dangerous_refused_without_click():
+    """Якоря опасности на тексте цели — отказ без клика: и внутри модалки,
+    и «голой» кнопкой на странице (collectText включает поддерево)."""
+    scenario = _run_executor_scenario("click_dangerous_refused")
+    assert scenario["modalError"] == "policy_refused" and scenario["modalReason"] == "dangerous"
+    assert scenario["pageError"] == "policy_refused" and scenario["pageReason"] == "dangerous"
+    assert scenario["clickCount"] == 0
+
+
+def test_hhru_live_executor_click_apply_step_refused_without_click():
+    """apply-сигналы (data-qa vacancy-response) — отказ без клика: сценарий
+    отклика не входит в примитивы исполнителя, это S3/S4 (#1161/#1162)."""
+    scenario = _run_executor_scenario("click_apply_step_refused")
+    assert scenario["error"] == "policy_refused" and scenario["reason"] == "apply_step"
+    assert scenario["clickCount"] == 0
+
+
+def test_hhru_live_executor_click_ambiguous_overlay_refused():
+    """Контроль внутри неклассифицируемой модалки — ambiguous, отказ без
+    клика; вердикт возвращается агенту на решение (fail-closed)."""
+    scenario = _run_executor_scenario("click_ambiguous_overlay_refused")
+    assert scenario["error"] == "policy_refused" and scenario["reason"] == "ambiguous"
+    assert scenario["overlayType"] == "modal"
+    assert scenario["clickCount"] == 0
+
+
+def test_hhru_live_executor_click_without_wait_refused():
+    """visible != гидратирован (CLAUDE.md): клик без объявленного
+    post-click условия отказывается ДО клика — no wait declaration, no
+    click. Иначе исход клика, запускающего React-рендер, не доказуем."""
+    scenario = _run_executor_scenario("click_without_wait_refused")
+    assert scenario["error"] == "wait_required"
+    assert scenario["clickCount"] == 0
+
+
+def test_hhru_live_executor_click_ambiguous_target_refused():
+    """Неоднозначная адресация не кликает «первый» молча: matchCount
+    возвращается агенту, кликов 0."""
+    scenario = _run_executor_scenario("click_ambiguous_target")
+    assert scenario["error"] == "ambiguous_target" and scenario["matchCount"] == 2
+    assert scenario["clickCount"] == 0
+
+
+def test_hhru_live_executor_click_invisible_target_refused():
+    """Действие по невидимому контролю — действие без оснований: отказ до
+    policy-гейта, кликов 0."""
+    scenario = _run_executor_scenario("click_invisible_target")
+    assert scenario["error"] == "element_not_visible"
+    assert scenario["clickCount"] == 0
+
+
+def test_hhru_live_executor_wait_element_appears():
+    """wait_element 'visible': элемент появляется в течение явного таймаута;
+    появившийся overlay попадает в реестр детектора — MutationObserver
+    продолжает работать во время исполнения команд (#1160 п.5)."""
+    scenario = _run_executor_scenario("wait_element_appears")
+    assert scenario["ok"] is True
+    assert scenario["waitMet"] is True and scenario["state"] == "visible"
+    assert scenario["matchCount"] == 1 and scenario["visible"] is True
+    assert scenario["overlayListed"] is True
+    assert scenario["clickCount"] == 0
+
+
+def test_hhru_live_executor_wait_element_timeout_is_result_not_error():
+    """Истёкший явный таймаут — честный отрицательный результат (ok,
+    met:false), не ошибка и не бесконечный опрос."""
+    scenario = _run_executor_scenario("wait_element_timeout")
+    assert scenario["ok"] is True and scenario["waitMet"] is False
+    assert scenario["elapsedMs"] >= 100
+    assert scenario["clickCount"] == 0
+
+
+def test_hhru_live_executor_wait_requires_state_and_explicit_timeout():
+    """Таймауты явные (#1160 п.3): без state или без timeoutMs ожидание не
+    начинается."""
+    scenario = _run_executor_scenario("wait_element_validation")
+    assert scenario["noStateError"] == "state_required"
+    assert scenario["noTimeoutError"] == "timeout_required"
+    assert scenario["noTargetError"] == "target_required"
+    assert scenario["clickCount"] == 0
+
+
+def test_hhru_live_executor_get_page_state():
+    """Чтение DOM-состояния без действий: текущий URL и ноль кликов."""
+    scenario = _run_executor_scenario("get_page_state")
+    assert scenario["ok"] is True
+    assert scenario["url"] == "https://hh.ru/vacancy/1"
+    assert scenario["clickCount"] == 0
+
+
+def test_hhru_live_executor_check_element_reports_text():
+    """check_element дополняется census-полем text (#1160 п.4: наличие/
+    текст/visibility; сырой HTML по-прежнему наружу не уходит)."""
+    scenario = _run_executor_scenario("check_element_reports_text")
+    assert scenario["found"] is True and scenario["text"] == "Далее"
+    assert scenario["absentText"] is None
+
+
+# ---------------------------------------------------------------------------
+# Транспорт расширения — loopback WebSocket-мост (issue #1160 поверх #1159):
+# envelope {v, id, action, payload} -> {id, status, result}. Сценарии
+# исполняют background.js по-настоящему через
+# tests/js_harness/run_ws_bridge_scenario.js <name> (стаб WebSocket + tabs).
+# ---------------------------------------------------------------------------
+
+WS_BRIDGE_RUNNER = REPO_ROOT / "tests" / "js_harness" / "run_ws_bridge_scenario.js"
+
+
+def _run_ws_bridge_scenario(name: str) -> dict:
+    return _run_node_scenario(WS_BRIDGE_RUNNER, [name])
+
+
+def test_hhru_live_bridge_relays_envelope_and_answers():
+    scenario = _run_ws_bridge_scenario("envelope_relayed")
+    assert scenario["sentToTabCount"] == 1
+    assert scenario["sentAction"] == "check_element"
+    assert scenario["sentSelector"] == '[data-qa="x"]'
+    assert scenario["frames"] == [
+        {
+            "id": "c1",
+            "status": "ok",
+            "result": {"element": {"found": True, "visible": True}},
+        }
+    ]
+
+
+def test_hhru_live_bridge_rejects_unknown_version_without_tab():
+    scenario = _run_ws_bridge_scenario("unsupported_version_rejected")
+    assert scenario["sentToTabCount"] == 0
+    assert scenario["frames"] == [
+        {
+            "id": "c2",
+            "status": "error",
+            "result": {"code": "unsupported_version", "receivedV": 99},
+        }
+    ]
+
+
+def test_hhru_live_bridge_rejects_unknown_action_without_tab():
+    scenario = _run_ws_bridge_scenario("unknown_action_rejected")
+    assert scenario["sentToTabCount"] == 0
+    assert scenario["frames"][0]["status"] == "error"
+    assert scenario["frames"][0]["result"]["code"] == "action_not_allowed"
+
+
+def test_hhru_live_bridge_whitelists_payload_fields():
+    """Мост копирует в команду только перечисленные скалярные поля; прочее
+    содержимое payload наружу не проходит."""
+    scenario = _run_ws_bridge_scenario("payload_fields_whitelisted")
+    command = scenario["command"]
+    assert scenario["sentToTabCount"] == 1
+    assert command["action"] == "click_element"
+    assert command["dataQa"] == "x"
+    assert command["waitFor"] == {"state": "hidden", "timeoutMs": 500}
+    assert "evil" not in command
+    assert "evil" not in command["waitFor"]
+
+
+def test_hhru_live_bridge_reconnects_after_drop():
+    """Разрыв соединения — не ошибка сценария (#1159 п.3): мост планирует
+    reconnect и продолжает отвечать через новое соединение."""
+    scenario = _run_ws_bridge_scenario("reconnect_after_drop")
+    assert scenario["secondSocket"] is True
+    assert scenario["firstReadyState"] == 3
+    assert scenario["sentToTabCount"] == 1
+    assert scenario["frames"] == [{"id": "c5", "status": "ok", "result": {"overlays": []}}]
+
+
+def test_hhru_live_bridge_maps_relay_errors_into_envelope():
+    scenario = _run_ws_bridge_scenario("no_hhru_tab_ws")
+    assert scenario["sentToTabCount"] == 0
+    assert scenario["frames"] == [
+        {
+            "id": "c6",
+            "status": "error",
+            "result": {"error": "no_hhru_tab"},
+        }
+    ]
+
+
+def test_hhru_live_bridge_heartbeats_only_when_open():
+    scenario = _run_ws_bridge_scenario("heartbeat_only_when_open")
+    assert scenario["framesBeforeOpen"] == 0
+    assert scenario["heartbeatCount"] >= 1
