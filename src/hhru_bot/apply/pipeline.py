@@ -472,7 +472,8 @@ def _finalize_post_click_failure(ctx: ApplyContext, reason: str) -> ApplyResult:
             verdict.detail,
         )
         return ctx.ok(
-            f"внешняя сверка подтвердила отклик в /applicant/negotiations ({verdict.detail})",
+            f"внешняя сверка подтвердила отклик в /applicant/negotiations ({verdict.detail})"
+            + _relocation_confirmed_suffix(ctx),
             outcome_code="reconciled_success",
         )
     if verdict.indeterminate:

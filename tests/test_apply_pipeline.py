@@ -1934,3 +1934,30 @@ def test_apply_battle_relocation_confirm_is_marked_in_success_reason():
     assert "попап переезда подтверждён кликом" in result.reason
     assert page.relocation_clicks == [1]
     assert result.acted is True
+
+
+def test_apply_relocation_confirm_reconciled_success_also_marked(monkeypatch):
+    # #1135 (adversarial round): confirm-клик был, форма не отрисовалась, но
+    # внешняя сверка нашла отклик — reconciled_success обязан нести ту же
+    # пометку клика, иначе это подмножество success-исходов невидимо.
+    from hhru_bot.apply.verify import NegotiationsVerifyResult
+
+    monkeypatch.setattr(
+        pipeline_module.apply_steps, "_dump_navigation_diagnostics", lambda *_args: None
+    )
+    page = FakePage(apply_button=True, success=False, relocation_visible=True)
+
+    result = apply_to_vacancy(
+        page,
+        _vacancy(),
+        "RID",
+        "x",
+        dry_run=False,
+        allow_relocation=True,
+        verifier=lambda *_args: NegotiationsVerifyResult("found", "topic=42"),
+    )
+
+    assert result.success is True
+    assert "попап переезда подтверждён кликом" in result.reason
+    assert page.relocation_clicks == [1]
+    assert result.acted is True
