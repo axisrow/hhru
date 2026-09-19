@@ -309,14 +309,27 @@ class LedgerMixin:
             if cursor.rowcount != 1:
                 raise ValueError(f"Действие истории не найдено: id={action_id}")
 
-    def count_today(self, resume_id: str, action: str) -> int:
-        # #176: 'uncertain' расходует дневной лимит — действие могло выполниться
-        # на hh.ru, fail-closed считает его состоявшимся (dry_run/failed — нет).
+    def count_last_24h(self, resume_id: str, action: str) -> int:
+        # #1142: реальный лимит hh.ru («не более 200 откликов») — СКОЛЬЗЯЩЕЕ
+        # окно 24ч, а не календарный день (подтверждено прогоном #1134). В день
+        # сброса календарный счётчик обнулялся, hh.ru ещё отказывал, и CLI
+        # продолжал попытки, упиравшиеся в отказ лимита уже в клик-зоне.
+        # Окно [now-24h, now] всегда надмножество календарного [00:00, now],
+        # поэтому rolling-подсчёт строго консервативен: гейт останавливает
+        # раньше ровно там, где отказал бы hh.ru, и никогда не блокирует
+        # лишнего. Граница включена (created_at >= now-24h) — fail-closed:
+        # действие ровно 24ч назад ещё расходует лимит.
+        # #176: 'uncertain' расходует лимит — действие могло выполниться на
+        # hh.ru, fail-closed считает его состоявшимся (dry_run/failed — нет).
         # Пустой resume_id — account-wide sentinel (так replies не привязаны к
-        # конкретному резюме). Для apply это также важно: дневной лимит
-        # относится к аккаунту, даже если действия в истории привязаны к
-        # отдельным резюме.
-        today = datetime.now().date().isoformat()
+        # конкретному резюме). Для apply это также важно: лимит относится к
+        # аккаунту, даже если действия в истории привязаны к отдельным резюме.
+        # Строковое сравнение корректно: пишущий код кладёт created_at одним
+        # форматом (datetime.now().isoformat(), локальное время, 'T') и порог
+        # в том же формате; для gate-действий (apply/bump/reply) других
+        # писателей нет — ручные reconciliation-вставки (CLAUDE.md #6)
+        # описаны только для mutation-команд.
+        since = (datetime.now() - timedelta(hours=24)).isoformat()
         with self._connect() as conn:
             row = conn.execute(
                 """
@@ -325,7 +338,7 @@ class LedgerMixin:
                   AND status IN ('success', 'uncertain')
                   AND created_at >= ?
                 """,
-                (resume_id, resume_id, action, today),
+                (resume_id, resume_id, action, since),
             ).fetchone()
             return row["cnt"] if row else 0
 

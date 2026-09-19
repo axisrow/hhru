@@ -195,7 +195,7 @@ def test_run_success_records_history_and_next_screen(env, capsys, tmp_path):
     assert "Следующий незавершённый экран: keyskills" in out
     assert "wizard-next --resume python --allow-auto-publish --force" in out
     h = History(tmp_path / "h.db")
-    assert h.count_today(RESUME_ID, "wizard_next") == 1
+    assert h.count_last_24h(RESUME_ID, "wizard_next") == 1
     run = h.command_runs()[-1]
     assert (run["command"], run["status"], run["attempted"], run["success"], run["failed"]) == (
         "wizard-next",
@@ -221,7 +221,7 @@ def test_run_uncertain_result_records_and_blocks_retry(env, capsys, tmp_path):
     assert cmd.run(_args(tmp_path, force=True, allow_auto_publish=True)) is True
     assert "[FAIL] (uncertain)" in capsys.readouterr().out
     h = History(tmp_path / "h.db")
-    assert h.count_today(RESUME_ID, "wizard_next") == 1
+    assert h.count_last_24h(RESUME_ID, "wizard_next") == 1
 
     # повтор после неразрешённого uncertain — отказ до браузера
     with pytest.raises(SystemExit):
@@ -238,7 +238,7 @@ def test_run_plain_failure_is_not_recorded(env, capsys, tmp_path):
     assert "[FAIL]" in capsys.readouterr().out
     assert "uncertain" not in capsys.readouterr().out
     h = History(tmp_path / "h.db")
-    assert h.count_today(RESUME_ID, "wizard_next") == 0
+    assert h.count_last_24h(RESUME_ID, "wizard_next") == 0
 
 
 def test_run_dry_run_opens_screen_without_click_or_history(env, capsys, tmp_path):
@@ -248,7 +248,7 @@ def test_run_dry_run_opens_screen_without_click_or_history(env, capsys, tmp_path
     assert "[DRY-RUN]" in out
     assert env.inspect_calls == 1 and env.submit_calls == 0
     h = History(tmp_path / "h.db")
-    assert h.count_today(RESUME_ID, "wizard_next") == 0
+    assert h.count_last_24h(RESUME_ID, "wizard_next") == 0
 
 
 def test_run_resolve_refusal_fails_without_attempt(env, capsys, tmp_path):
@@ -258,7 +258,7 @@ def test_run_resolve_refusal_fails_without_attempt(env, capsys, tmp_path):
     assert "[FAIL]" in out and "уже опубликовано" in out
     assert env.submit_calls == 0
     h = History(tmp_path / "h.db")
-    assert h.count_today(RESUME_ID, "wizard_next") == 0
+    assert h.count_last_24h(RESUME_ID, "wizard_next") == 0
     run = h.command_runs()[-1]
     assert (run["status"], run["attempted"]) == ("failed", 0)
 

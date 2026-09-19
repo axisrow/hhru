@@ -103,8 +103,8 @@ def test_history_and_daily_limits_do_not_cross_account_boundary(tmp_path):
 
     assert alpha_history.has_applied(alpha_resume_id, "vacancy-alpha")
     assert beta_history.has_applied(alpha_resume_id, "vacancy-alpha") is False
-    assert beta_history.count_today("", "apply") == 0
-    assert beta_history.count_today(alpha_resume_id, "bump") == 0
+    assert beta_history.count_last_24h("", "apply") == 0
+    assert beta_history.count_last_24h(alpha_resume_id, "bump") == 0
 
     alpha_throttle = Throttle(configs["alpha"].throttle, alpha_history)
     beta_throttle = Throttle(configs["beta"].throttle, beta_history)

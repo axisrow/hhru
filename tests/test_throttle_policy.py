@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import sqlite3
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -171,7 +172,7 @@ def test_bump_dry_run_success_does_not_record_without_wait(tmp_path, monkeypatch
 
 
 def test_non_success_rows_do_not_affect_limits(tmp_path):
-    """count_today/can_bump_now считают только success: dry_run/failed строки
+    """count_last_24h/can_bump_now считают только success: dry_run/failed строки
     не расходуют дневной лимит и не запускают кулдаун 4ч (проверка п.2 #163:
     «если запись оставляем, она не должна попадать в счётчики дневных лимитов»)."""
     from hhru_bot.history import History
@@ -181,7 +182,7 @@ def test_non_success_rows_do_not_affect_limits(tmp_path):
     history.record_action("AAA111", "AAA111", "bump", "dry_run", "dry-run")
 
     throttle = Throttle(ThrottleConfig(), history)
-    assert history.count_today("AAA111", "bump") == 0
+    assert history.count_last_24h("AAA111", "bump") == 0
     assert throttle.can_bump_now("AAA111") == (True, None)
 
 
@@ -196,6 +197,112 @@ def test_apply_limit_is_account_wide_across_resumes(tmp_path):
 
     with pytest.raises(LimitReached, match="account"):
         throttle.check_apply_limit("CCC333", dry_run=False)
+
+
+# --- #1142: лимит — скользящее окно 24ч, а не календарный день ----------------
+
+
+class _FrozenDatetime(datetime):
+    """Подменяет ``datetime`` в модуле history_ledger: и ``record_action``, и
+    ``count_last_24h`` берут время из одного места, поэтому заморозка
+    согласует created_at записей с окном подсчёта (реальный sleep и ожидание
+    полуночи в тестах недопустимы)."""
+
+    _now: datetime = datetime.now()
+
+    @classmethod
+    def now(cls, tz=None):  # noqa: ARG003
+        return cls._now
+
+
+def _freeze_ledger_time(monkeypatch, moment: datetime) -> None:
+    _FrozenDatetime._now = moment
+    monkeypatch.setattr("hhru_bot.history_ledger.datetime", _FrozenDatetime)
+
+
+def test_rolling_window_spans_midnight_reset(tmp_path, monkeypatch):
+    """#1142, окно перехода суток: отклики вчера 23:30 всё ещё внутри 24ч.
+    В 00:30 календарный счётчик обнулился бы (дневной гейт пропустил бы
+    попытки, каждая упёрлась в отказ лимита hh.ru уже в клик-зоне) — rolling
+    считает их и останавливает ДО клика."""
+    from hhru_bot.history import History
+
+    _freeze_ledger_time(monkeypatch, datetime(2026, 9, 18, 23, 30))
+    history = History(tmp_path / "history.db")
+    history.record_action("AAA111", "1", "apply", "success")
+    history.record_action("BBB222", "2", "apply", "uncertain")
+
+    assert history.count_last_24h("", "apply") == 2
+
+    # Через час после полуночи: календарный счётчик был бы 0, rolling — 2.
+    _FrozenDatetime._now = datetime(2026, 9, 19, 0, 30)
+    assert history.count_last_24h("", "apply") == 2
+    throttle = Throttle(ThrottleConfig(daily_apply_limit=2), history)
+    with pytest.raises(LimitReached, match="account"):
+        throttle.check_apply_limit("AAA111", dry_run=False)
+
+
+def test_actions_older_than_24h_leave_the_window(tmp_path, monkeypatch):
+    """#1142: через 24ч+1мин те же записи выветриваются из окна — гейт
+    открывается сам, без привязки к «сбросу в полночь» (как у hh.ru)."""
+    from hhru_bot.history import History
+
+    _freeze_ledger_time(monkeypatch, datetime(2026, 9, 18, 23, 30))
+    history = History(tmp_path / "history.db")
+    history.record_action("AAA111", "1", "apply", "success")
+
+    _FrozenDatetime._now = datetime(2026, 9, 19, 23, 31)
+    assert history.count_last_24h("", "apply") == 0
+    # Не кидает: окно свободно.
+    Throttle(ThrottleConfig(daily_apply_limit=1), history).check_apply_limit(
+        "AAA111", dry_run=False
+    )
+
+
+def test_action_exactly_24h_old_still_counts_fail_closed(tmp_path, monkeypatch):
+    """#1142, граница окна: действие ровно 24ч назад ещё расходует лимит
+    (created_at >= now-24h включительно). В сомнительном случае гейт
+    консервативен — тот же fail-closed выбор, что в #5 и #176."""
+    from hhru_bot.history import History
+
+    moment = datetime(2026, 9, 18, 12, 0)
+    _freeze_ledger_time(monkeypatch, moment)
+    history = History(tmp_path / "history.db")
+    with history._connect() as conn:
+        conn.execute(
+            "INSERT INTO actions (resume_id, vacancy_id, action, status, reason, created_at) "
+            "VALUES ('AAA111', '1', 'apply', 'success', '', ?)",
+            ((moment - timedelta(hours=24)).isoformat(),),
+        )
+
+    assert history.count_last_24h("AAA111", "apply") == 1
+    with pytest.raises(LimitReached, match="account"):
+        Throttle(ThrottleConfig(daily_apply_limit=1), history).check_apply_limit(
+            "AAA111", dry_run=False
+        )
+
+
+def test_bump_limit_same_rolling_window_cooldown_unaffected(tmp_path, monkeypatch):
+    """#1142 п.2: daily_bump_limit переезжает в то же rolling-окно 24ч и НЕ
+    ломается. BUMP_COOLDOWN (4ч) и был скользящим (time_since_last) — второй
+    предохранитель теперь считает ту же семантику, кулдаун не затронут."""
+    from hhru_bot.history import History
+
+    _freeze_ledger_time(monkeypatch, datetime(2026, 9, 18, 23, 30))
+    history = History(tmp_path / "history.db")
+    history.record_action("AAA111", "AAA111", "bump", "success")
+
+    # Полночь+30м: календарный счётчик обнулился бы, rolling — нет.
+    _FrozenDatetime._now = datetime(2026, 9, 19, 0, 30)
+    throttle = Throttle(ThrottleConfig(daily_bump_limit=1), history)
+    assert history.count_last_24h("AAA111", "bump") == 1
+    with pytest.raises(LimitReached, match="AAA111"):
+        throttle.check_bump_limit("AAA111", dry_run=False)
+
+    # Кулдаун 4ч по-прежнему работает: последний bump час назад < 4ч.
+    can_bump, wait_left = throttle.can_bump_now("AAA111")
+    assert can_bump is False
+    assert wait_left is not None
 
 
 # --- apply: командный цикл ---------------------------------------------------
@@ -332,7 +439,7 @@ def test_apply_uncertain_waits_and_records_uncertain(tmp_path, monkeypatch, wait
 
 def test_uncertain_rows_affect_limits_cooldown_and_dedup(tmp_path):
     """#176, антитеза test_non_success_rows_do_not_affect_limits: uncertain-строки
-    fail-closed — расходуют дневной лимит (count_today), запускают кулдаун 4ч
+    fail-closed — расходуют дневной лимит (count_last_24h), запускают кулдаун 4ч
     (can_bump_now через last_action_at) и дедуплицируют отклик. Действие могло
     выполниться на hh.ru — локальная история обязана считать его состоявшимся."""
     from hhru_bot.history import History
@@ -342,7 +449,7 @@ def test_uncertain_rows_affect_limits_cooldown_and_dedup(tmp_path):
     history.record_action("AAA111", "42", "apply", "uncertain", "submit упал после клика")
 
     throttle = Throttle(ThrottleConfig(), history)
-    assert history.count_today("AAA111", "bump") == 1
+    assert history.count_last_24h("AAA111", "bump") == 1
     can_bump, wait_left = throttle.can_bump_now("AAA111")
     assert can_bump is False
     assert wait_left is not None

@@ -96,7 +96,7 @@ def test_no_mode_and_no_employer_flags_reads_active_mode(tmp_path, monkeypatch, 
     assert cmd.run(_args(tmp_path, mode=None)) is False
     out = capsys.readouterr().out
     assert "активный режим видимости «everyone»" in out
-    assert History(tmp_path / "h.db").count_today(RESUME_ID, "resume_visibility") == 0
+    assert History(tmp_path / "h.db").count_last_24h(RESUME_ID, "resume_visibility") == 0
 
 
 def test_dry_run_is_preview_and_writes_no_action(tmp_path, monkeypatch, capsys):
@@ -104,7 +104,7 @@ def test_dry_run_is_preview_and_writes_no_action(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(hhru_bot.browser, "launch_context", lambda *a, **kw: _context())
     assert cmd.run(_args(tmp_path, dry_run=True)) is False
     assert "DRY-RUN" in capsys.readouterr().out
-    assert History(tmp_path / "h.db").count_today(RESUME_ID, "resume_visibility") == 0
+    assert History(tmp_path / "h.db").count_last_24h(RESUME_ID, "resume_visibility") == 0
 
 
 def test_live_write_succeeds_with_confirmed_selectors(tmp_path, monkeypatch, capsys):
@@ -131,7 +131,7 @@ def test_live_write_succeeds_with_confirmed_selectors(tmp_path, monkeypatch, cap
     assert cmd.run(_args(tmp_path, force=True)) is False
     out = capsys.readouterr().out
     assert "[OK]" in out
-    assert History(tmp_path / "h.db").count_today(RESUME_ID, "resume_visibility") == 1
+    assert History(tmp_path / "h.db").count_last_24h(RESUME_ID, "resume_visibility") == 1
 
 
 def test_resume_all_iterates_every_configured_resume(tmp_path, monkeypatch, capsys):

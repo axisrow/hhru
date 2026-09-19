@@ -400,7 +400,7 @@ def _finalize_post_click_failure(ctx: ApplyContext, reason: str) -> ApplyResult:
       SubmitClickUncertain'ом uncertain переживал опровергающую его проверку →
       в actions писался status='uncertain' при доказанном отсутствии отклика
       (боевой случай vacancy_id=136190065, 2026-08-20): он расходовал дневной
-      лимит (count_today) и навсегда блокировал вакансию (has_applied);
+      лимит (count_last_24h) и навсегда блокировал вакансию (has_applied);
     * indeterminate — список не прочитан: fail-closed uncertain+acted —
       has_applied видит запись, троттл ждёт (как у #176).
     """

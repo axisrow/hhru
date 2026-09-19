@@ -410,9 +410,9 @@ def run(args: argparse.Namespace):
                 "Проверьте статус резюме на hh.ru вручную перед повтором."
             )
             sys.exit(1)
-        if history.count_today(resume.resume_id, "copy_resume") > 0:
+        if history.count_last_24h(resume.resume_id, "copy_resume") > 0:
             print(
-                f"[INFO] Уже копировали {resume.id} сегодня — "
+                f"[INFO] {resume.id} уже копировали за последние 24ч — "
                 "повторный запуск создаст ещё один дубль на hh.ru."
             )
 

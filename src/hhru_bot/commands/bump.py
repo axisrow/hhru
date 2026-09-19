@@ -61,8 +61,8 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
             # ничего не кликает и не записывается в историю.
             if result.acted:
                 # #176: uncertain — клик мог уйти, но результат неизвестен.
-                # Такой статус видят кулдаун can_bump_now и дневной лимит
-                # (count_today), поэтому «просто failed» не годится: он не
+                # Такой статус видят кулдаун can_bump_now и лимит за 24ч
+                # (count_last_24h), поэтому «просто failed» не годится: он не
                 # остановил бы повторное поднятие раньше 4ч. dry_run по
                 # определению без клика — uncertain там невозможен.
                 status = action_status(
