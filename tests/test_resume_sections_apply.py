@@ -188,6 +188,13 @@ if __name__ == "__main__":
 
 CONTACTS_URL = "https://hh.ru/resume/edit/test-resume-id/contacts"
 
+# data-qa радио → тип контакта (census #1119); суффикс -checked — часть имени
+# селектора, состояние живёт в классе magritte-radio-input-{checked,unchecked}.
+PREFERRED_RADIO_TYPE = {
+    "resume-editor-preferred-contact-cell_phone-checked": "phone",
+    "resume-editor-preferred-contact-email-checked": "email",
+}
+
 
 class FakeContactField:
     """Locator одного поля формы: count/input_value/fill/first."""
@@ -213,10 +220,12 @@ class FakeContactField:
         return self._page.filled.get(self._qa, "")
 
     def get_attribute(self, name):  # noqa: ARG002
+        if self._qa not in PREFERRED_RADIO_TYPE:
+            return None
         return (
-            "magritte-radio-input-unchecked"
-            if not self._page.preferred
-            else ("magritte-radio-input-checked")
+            "magritte-radio-input-checked"
+            if PREFERRED_RADIO_TYPE[self._qa] == self._page.preferred_type
+            else "magritte-radio-input-unchecked"
         )
 
     def fill(self, value):
@@ -233,7 +242,9 @@ class FakeContactField:
             raise PlaywrightTimeoutError("гидратация не завершилась вовремя")
 
     def click(self):
-        self._page.preferred = True
+        # Радио hh.ru: выбор одного значения снимает второе (census #1119).
+        self._page.preferred_type = PREFERRED_RADIO_TYPE[self._qa]
+        self._page.radio_clicks.append(self._qa)
 
 
 class FakeContactsSave:
@@ -274,7 +285,10 @@ class FakeContactsPage:
         self.readback_values: dict[str, str] = {}
         self.readback_raises: str = ""
         self.mask_rewrite_once: bool = False
-        self.preferred = False
+        # Census #1119: один радио предпочтительного способа выбран всегда;
+        # исходное состояние фейка — «телефон», как на живом резюме.
+        self.preferred_type = "phone"
+        self.radio_clicks: list[str] = []
         self.saved = False
         self.closed = False
         self.cancelled = False
@@ -336,9 +350,43 @@ def test_contacts_save_confirmed_by_readback(contacts_page):
     )
 
     assert errors == []
-    assert contacts_page.saved and contacts_page.closed and contacts_page.preferred
+    assert contacts_page.saved and contacts_page.closed
+    assert contacts_page.preferred_type == "phone"
+    assert contacts_page.radio_clicks == ["resume-editor-preferred-contact-cell_phone-checked"]
     assert [o.status for o in outcomes] == [OUTCOME_UPDATED, OUTCOME_UPDATED]
     assert all("readback совпал" in o.reason for o in outcomes)
+
+
+def test_contacts_email_preferred_moves_radio(contacts_page):
+    # #1124: явный preferred=True у email переставляет радио на email;
+    # readback подтверждает checked-класс именно email-радио.
+    items = [resume_sections.Contact(type="email", value="a@b.c", preferred=True)]
+    outcomes = [RowOutcome("contacts", 0, OUTCOME_PLANNED)]
+
+    errors = _apply_contacts(
+        contacts_page, "test-resume-id", items, dry_run=False, outcomes=outcomes
+    )
+
+    assert errors == []
+    assert contacts_page.preferred_type == "email"
+    assert contacts_page.radio_clicks == ["resume-editor-preferred-contact-email-checked"]
+    assert [o.status for o in outcomes] == [OUTCOME_UPDATED]
+
+
+def test_contacts_without_preferred_keeps_existing_radio(contacts_page):
+    # #1124: без явного preferred радио не кликается вовсе — существующий
+    # выбор hh.ru (телефон) остаётся; снимать preferred молча запрещено.
+    items = [resume_sections.Contact(type="email", value="a@b.c")]
+    outcomes = [RowOutcome("contacts", 0, OUTCOME_PLANNED)]
+
+    errors = _apply_contacts(
+        contacts_page, "test-resume-id", items, dry_run=False, outcomes=outcomes
+    )
+
+    assert errors == []
+    assert contacts_page.preferred_type == "phone"
+    assert contacts_page.radio_clicks == []
+    assert [o.status for o in outcomes] == [OUTCOME_UPDATED]
 
 
 def test_contacts_phone_readback_tolerates_country_prefix(contacts_page):
