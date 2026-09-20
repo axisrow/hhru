@@ -648,6 +648,7 @@ def test_hhru_live_bridge_announces_hello_diagnostics():
             "click_element",
             "wait_element",
             "get_page_state",
+            "fill_element",
         ]
     )
     assert hello["permissions"] == ["storage"]
