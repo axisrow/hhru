@@ -229,9 +229,10 @@ const SCENARIOS = {
     };
   },
 
-  // Одинаковый dataQa во всех матчах — один контрол в нескольких местах
+  // Одинаковый data-qa во всех матчах — один контрол в нескольких местах
   // страницы (шапка + липкая панель hh.ru, боевой прогон #1162): кликается
-  // первый видимый. Разные data-qa / сырой CSS остаются ambiguous.
+  // первый видимый — и по явному dataQa, и по чистому [data-qa='X'].
+  // Неточный селектор ([data-qa*='...']) остаётся ambiguous.
   click_ambiguous_target: async () => {
     append(el('button', { 'data-qa': 'dup-button' }, 'Один'));
     append(el('button', { 'data-qa': 'dup-button' }, 'Два'));
@@ -245,11 +246,17 @@ const SCENARIOS = {
       selector: '[data-qa="dup-button"]',
       waitFor: { state: 'hidden', dataQa: 'dup-button', timeoutMs: 1000 },
     });
+    const fuzzy = await send({
+      action: 'click_element',
+      selector: "[data-qa*='dup-']",
+      waitFor: { state: 'hidden', dataQa: 'dup-button', timeoutMs: 1000 },
+    });
     return {
       sameQaClicked: sameQa.result?.clicked ?? null,
       sameQaText: sameQa.result?.target?.text ?? null,
-      cssError: css.error ?? null,
-      cssMatchCount: css.matchCount ?? null,
+      cssClicked: css.result?.clicked ?? null,
+      fuzzyError: fuzzy.error ?? null,
+      fuzzyMatchCount: fuzzy.matchCount ?? null,
       clickCount: env.clicks.length,
     };
   },

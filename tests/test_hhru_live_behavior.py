@@ -481,12 +481,14 @@ def test_hhru_live_executor_click_without_wait_refused():
 
 def test_hhru_live_executor_click_ambiguous_target_refused():
     """Дубликаты одного data-qa (шапка + липкая панель hh.ru, прогон #1162) —
-    один контрол в нескольких местах: кликается первый видимый. Сырой
-    CSS-селектор с двумя матчами остаётся ambiguous (кликов 0)."""
+    один контрол в нескольких местах: кликается первый видимый — и по dataQa,
+    и по чистому [data-qa='X']. Неточный селектор ([data-qa*='...']) остаётся
+    ambiguous (fail-closed)."""
     scenario = _run_executor_scenario("click_ambiguous_target")
     assert scenario["sameQaClicked"] is True and scenario["sameQaText"] == "Один"
-    assert scenario["cssError"] == "ambiguous_target" and scenario["cssMatchCount"] == 2
-    assert scenario["clickCount"] == 1
+    assert scenario["cssClicked"] is True
+    assert scenario["fuzzyError"] == "ambiguous_target" and scenario["fuzzyMatchCount"] == 2
+    assert scenario["clickCount"] == 2
 
 
 def test_hhru_live_executor_click_invisible_target_refused():
