@@ -514,14 +514,23 @@ class LiveChannel:
         return bool((result.get("wait") or result).get("met", result.get("conditionMet", False)))
 
     def close(self) -> None:
-        """EOF в stdin сервера — цикл завершается (foreground-семантика #1159)."""
+        """EOF в stdin сервера — цикл завершается (foreground-семантика #1159).
+
+        Source-fd закрываем только при чистом завершении потока: если сервер
+        ещё висит на in-flight команде (join(5) истёк), select на закрытом fd
+        уронил бы фоновый поток с OSError — daemon и так умрёт с процессом,
+        один fd до выхода не стоит рваного завершения.
+        """
         if self._sink_fd is not None:
             os.close(self._sink_fd)
             self._sink_fd = None
         if self._thread is not None:
             self._thread.join(timeout=5)
+            finished = not self._thread.is_alive()
             self._thread = None
-        if self._source_fd is not None:
+        else:
+            finished = True
+        if self._source_fd is not None and finished:
             os.close(self._source_fd)
             self._source_fd = None
 

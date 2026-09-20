@@ -33,6 +33,12 @@ def _port(value: str) -> int:
     return parsed
 
 
+#: Дефолт порта согласован с расширением: background.js подключается к
+#: ws://127.0.0.1:8765 жёстко (LIVE_SERVE_URL), другого механизма сказать ему
+#: порт у моста нет.
+LIVE_SERVE_DEFAULT_PORT = 8765
+
+
 def register(subparsers: Any) -> None:
     parser = subparsers.add_parser(
         "live-serve",
@@ -44,8 +50,8 @@ def register(subparsers: Any) -> None:
     parser.add_argument(
         "--port",
         type=_port,
-        default=0,
-        help="Порт на 127.0.0.1 (0 — свободный ephemeral, печатается при старте)",
+        default=LIVE_SERVE_DEFAULT_PORT,
+        help="Порт на 127.0.0.1 (по умолчанию 8765 — согласован с расширением)",
     )
     parser.set_defaults(func=run)
 
