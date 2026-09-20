@@ -79,13 +79,17 @@ class FakeChannel:
         self.calls.append((ACTION_CHECK, {"selector": selector}))
         return {"found": self.login_found, "visible": self.login_found}
 
-    def click(self, selector: str) -> dict:
-        self.calls.append((ACTION_CLICK, {"selector": selector}))
+    def click(self, selector: str, wait_for: dict) -> dict:
+        self.calls.append((ACTION_CLICK, {"selector": selector, "waitFor": wait_for}))
         if self.click_error is not None:
             raise self.click_error
         self._clicked = True
         self.hint_present, self.button_present = self.post_click
-        return {"clicked": True}
+        # Исполнитель сам держит бюджет объявленного условия и отвечает
+        # result.wait.met (executor.js waitForCondition).
+        present = self._present(wait_for["selector"])
+        met = present if wait_for["state"] == WAIT_STATE_VISIBLE else not present
+        return {"clicked": True, "wait": {"met": met}}
 
     def wait(self, selector: str, state: str, timeout_ms: int) -> bool:
         self.calls.append(
@@ -145,9 +149,10 @@ def test_success_path_maps_to_primitives_in_battle_order() -> None:
         False,
     )
     # Порядок боевого bump.py: URL -> форма входа -> список -> карточка ->
-    # hint -> кнопка -> клик -> позитивный маркер. Селекторы кнопки/hint
-    # скоупятся карточкой резюме (мульти-резюме аккаунта).
+    # hint -> кнопка -> клик (с объявленным пост-клик условием). Селекторы
+    # кнопки/hint скоупятся карточкой резюме (мульти-резюме аккаунта).
     waits = [payload for action, payload in channel.calls if action == ACTION_WAIT]
+    clicks = [payload for action, payload in channel.calls if action == ACTION_CLICK]
     assert _actions(channel) == [
         ACTION_GET_STATE,
         ACTION_CHECK,
@@ -156,11 +161,14 @@ def test_success_path_maps_to_primitives_in_battle_order() -> None:
         ACTION_WAIT,
         ACTION_WAIT,
         ACTION_CLICK,
-        ACTION_WAIT,
     ]
-    assert waits[-1]["timeout_ms"] == MARKER_TIMEOUT_MS
+    # Последнее ожидание до клика — кнопка; пост-клик условие объявлено
+    # самим кликом (executor.js wait_required) и ждёт кулдаун-хинт.
+    assert waits[-1]["timeout_ms"] == BUMP_TIMEOUT_MS
     assert "resume-update-button" in channel.calls[-2][1]["selector"]
     assert "resume-card-link-abc123" in channel.calls[-2][1]["selector"]
+    assert clicks[0]["waitFor"]["timeoutMs"] == MARKER_TIMEOUT_MS
+    assert "resume-update-button-disabled" in clicks[0]["waitFor"]["selector"]
 
 
 def test_dry_run_stops_before_click() -> None:
@@ -258,10 +266,12 @@ def test_marker_absent_button_still_there_is_uncertain() -> None:
 
 
 def test_post_click_transport_failure_is_uncertain() -> None:
-    # Обрыв после клика: wait отказывает — подтверждение не прочитано,
-    # исход обязан быть uncertain независимо от факта клика.
+    # Обрыв после клика: объявленное условие не метнулось (хинта нет), а
+    # добивочное чтение отказывает — подтверждение не прочитано, исход
+    # обязан быть uncertain независимо от факта клика.
     channel = FakeChannel(
-        wait_error=PrimitiveError("client_disconnected", "соединение потеряно", forwarded=True)
+        post_click=(False, True),
+        wait_error=PrimitiveError("client_disconnected", "соединение потеряно", forwarded=True),
     )
     result = bump_via_live(channel, _resume(), dry_run=False)
 

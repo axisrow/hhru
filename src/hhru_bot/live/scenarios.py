@@ -143,8 +143,18 @@ def bump_via_live(channel, resume, dry_run: bool):
     if dry_run:
         return BumpResult(resume.id, True, "dry-run")
 
+    # Пост-клик условие объявлено САМИМ кликом (executor.js wait_required):
+    # первичный маркер — кулдаун-хинт в своей карточке; исполнитель сам
+    # держит бюджет MARKER_TIMEOUT_MS и отвечает result.wait.met.
     try:
-        channel.click(in_scope_button)
+        click_result = channel.click(
+            in_scope_button,
+            {
+                "selector": in_scope_hint,
+                "state": WAIT_STATE_VISIBLE,
+                "timeoutMs": MARKER_TIMEOUT_MS,
+            },
+        )
     except PrimitiveError as exc:
         if exc.forwarded:
             # Команда ушла в браузер, ответа/исхода нет — как PlaywrightError
@@ -158,12 +168,12 @@ def bump_via_live(channel, resume, dry_run: bool):
             )
         return BumpResult(resume.id, False, f"клик не выполнен: {exc}")
 
-    # Позитивный маркер успеха (#1161): кулдаун-хинт появился (hh.ru снял
-    # кнопку) или хотя бы кнопка исчезла из карточки. Ни один не подтверждён —
-    # выдуманный успех запрещён: acted+uncertain.
+    if (click_result.get("wait") or {}).get("met"):
+        return BumpResult(resume.id, True, "success", acted=True)
+
+    # Второй позитивный маркер: хинт не явился, но кнопка исчезла из карточки
+    # (например, исчерпан дневной лимит hh.ru). Короткий добивочный бюджет.
     try:
-        if channel.wait(in_scope_hint, WAIT_STATE_VISIBLE, MARKER_TIMEOUT_MS):
-            return BumpResult(resume.id, True, "success", acted=True)
         if not channel.wait(in_scope_button, WAIT_STATE_VISIBLE, MARKER_GONE_TIMEOUT_MS):
             return BumpResult(resume.id, True, "success: кнопка поднятия исчезла", acted=True)
         return BumpResult(
@@ -292,8 +302,11 @@ class LiveChannel:
     def check(self, selector: str) -> dict:
         return self._call(ACTION_CHECK, {"selector": selector})
 
-    def click(self, selector: str) -> dict:
-        return self._call(ACTION_CLICK, {"selector": selector})
+    def click(self, selector: str, wait_for: dict) -> dict:
+        """Клик с ОБЯЗАТЕЛЬНЫМ объявленным пост-клик условием: исполнитель
+        отказывает на клик без waitFor (executor.js wait_required) и сам
+        держит бюджет ожидания, отвечая result.wait.met."""
+        return self._call(ACTION_CLICK, {"selector": selector, "waitFor": wait_for})
 
     def wait(self, selector: str, state: str, timeout_ms: int) -> bool:
         """Дождаться состояния селектора; False — бюджет истёк без события."""

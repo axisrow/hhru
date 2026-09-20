@@ -563,6 +563,15 @@ def test_hhru_live_bridge_rejects_unknown_action_without_tab():
     assert scenario["envelopes"][0]["result"]["code"] == "action_not_allowed"
 
 
+def test_hhru_live_bridge_echoes_integer_command_id():
+    """Серверный протокол допускает целочисленные id (protocol._is_valid_id):
+    ответ обязан эхоить тот же id — раньше мост отвечал command_id_required
+    с null-id, и вызывающий сгорал по полному таймауту ответа (#1178 review)."""
+    scenario = _run_ws_bridge_scenario("integer_id_echoed")
+    assert scenario["sentToTabCount"] == 1
+    assert scenario["envelopes"] == [{"id": 7, "status": "ok", "result": {"overlays": []}}]
+
+
 def test_hhru_live_bridge_whitelists_payload_fields():
     """Мост копирует в команду только перечисленные скалярные поля; прочее
     содержимое payload наружу не проходит."""
