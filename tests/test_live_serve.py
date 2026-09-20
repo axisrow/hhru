@@ -20,6 +20,8 @@ from typing import Any
 import pytest
 
 from hhru_bot.live import PROTOCOL_VERSION, LiveServeServer
+from hhru_bot.live import server as live_server
+from hhru_bot.live.ws import MAX_HANDSHAKE_BYTES
 
 pytestmark = pytest.mark.integration
 
@@ -573,3 +575,65 @@ def test_reconnect_hello_overwrites_previous(server_harness):
         assert server_harness.server.client_hello == second_hello
     finally:
         second.close()
+
+
+# ---------------------------------------------------------------------------
+# Не-handshake подключения не задерживают select-цикл (#1185): кандидат
+# дозревает в общем цикле, HANDSHAKE_TIMEOUT — его дедлайн, не блокировка.
+# ---------------------------------------------------------------------------
+
+
+def test_handshakeless_probe_does_not_stall_command_processing():
+    harness = ServerHarness()
+    # Зонд без handshake (скан порта, GET) при свободном слоте: прежний
+    # блокирующий accept держал бы единственный поток до HANDSHAKE_TIMEOUT
+    # и отвечал бы пришедшей в это окно команде с 5-секундным опозданием.
+    probe = socket.create_connection(("127.0.0.1", harness.server.port), timeout=5)
+    try:
+        harness.send_stdin(_envelope("c1", "list_overlays"))
+        line = harness.wait_for_line(_has_code("no_client"), timeout=1.5)
+        assert json.loads(line)["id"] == "c1"
+        # Зонд ещё держится открытым: дедлайн его handshake (5 c) не настал.
+        probe.settimeout(0.3)
+        with pytest.raises(TimeoutError):
+            probe.recv(1, socket.MSG_PEEK)
+    finally:
+        probe.close()
+        harness.stop()
+
+
+def test_handshake_probe_closed_after_deadline_frees_slot(monkeypatch):
+    monkeypatch.setattr(live_server, "HANDSHAKE_TIMEOUT", 0.3)
+    harness = ServerHarness()
+    try:
+        probe = socket.create_connection(("127.0.0.1", harness.server.port), timeout=5)
+        probe.settimeout(3.0)
+        # Молчащий кандидат закрывается по дедлайну handshake.
+        assert probe.recv(1) == b"", "зонд без handshake не закрыт по дедлайну"
+        probe.close()
+        # Слот свободен: обычный клиент подключается и работает как раньше.
+        client = ExtensionClientStub(harness.server.port)
+        try:
+            harness.wait_for_line(lambda line: "подключ" in line)
+            harness.send_stdin(_envelope("c1", "list_overlays"))
+            opcode, payload = client.recv_frame()
+            assert json.loads(payload)["id"] == "c1"
+        finally:
+            client.close()
+    finally:
+        harness.stop()
+
+
+def test_oversized_handshake_request_closed_immediately():
+    harness = ServerHarness()
+    try:
+        probe = socket.create_connection(("127.0.0.1", harness.server.port), timeout=5)
+        # MAX_HANDSHAKE_BYTES + 1 байт без \r\n\r\n: лимит handshake обязан
+        # сработать сразу («слишком большой»), а не держать кандидата до
+        # дедлайна или ждать «закрытия до handshake» следующего байта.
+        probe.sendall(b"a" * (MAX_HANDSHAKE_BYTES + 1))
+        probe.settimeout(1.0)
+        assert probe.recv(1) == b"", "переполненный handshake не закрыт сразу"
+        probe.close()
+    finally:
+        harness.stop()
