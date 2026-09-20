@@ -105,8 +105,15 @@ function handleEnvelope(envelope) {
 // Shared tab relay: the popup path (#931) and the WebSocket bridge both land
 // here. `command` is already shaped for content.js; content responses pass
 // through untouched (the bridge maps ok -> status itself).
+//
+// Target = ANY hh.ru tab (active one first), not the active tab of the last
+// focused window: the agent's runs survive the user working in other
+// windows — active-tab-only made every primitive poll a foreign DOM
+// (battle run #1162, 2026-09-20). URL-scoped query needs only the
+// host_permissions the manifest already declares.
 function relayToTab(command, sendResponse) {
-  chrome.tabs.query({ active: true, lastFocusedWindow: true }, ([tab]) => {
+  chrome.tabs.query({ url: ['https://hh.ru/*', 'https://*.hh.ru/*'] }, (tabs) => {
+    const tab = tabs.find((t) => t.active) ?? tabs[0];
     if (!tab || !isTrustedSender({ tab })) {
       sendResponse({ ok: false, error: 'no_hhru_tab' });
       return;
