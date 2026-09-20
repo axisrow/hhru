@@ -164,15 +164,29 @@ def relocation_popup_visible(page: Page) -> bool:
     return _visible(page, vacancy_page.VACANCY_RELOCATION_CONFIRM)
 
 
-def close_stale_contacts_alert(page: Page, wait_ms: int = 3_000) -> bool:
+def close_stale_contacts_alert(page: Page, wait_ms: int = 3_000, render_wait_ms: int = 0) -> bool:
     """Закрыть модалку «Контакты в резюме могли устареть» кликом «Закрыть» (#1189).
 
     Cancel-кнопка — secondary «Закрыть» (dismiss): отказ от замены контактов,
     НЕ мутация профиля (живой census 2026-09-20). Замена — отдельная primary
     accept-кнопка, кодом не адресуется никогда. Возвращает True, если модалка
     была видима и cancel кликнут; False — «модалки нет, ничего не делали».
+
+    ``render_wait_ms`` — короткий бюджет ожидания монтажа (CLAUDE.md п.4):
+    боевой прогон 2026-09-20 показал, что к моменту close-проверки bump
+    (~5-я секунда) попап ещё не смонтирован, а в census-визите на 6-й секунде
+    он уже виден, — без бюджета быстрый прогон обгоняет монтаж и кликает
+    «впритык» до перехвата. 0 — «не ждать» (пост-клик проход в
+    ``handle_post_click_blockers`` уже сделал общий ``_wait_for_any_blocker``).
     """
 
+    if render_wait_ms > 0:
+        try:
+            page.locator(resume_page.STALE_CONTACTS_SYNC_ALERT).first.wait_for(
+                state="visible", timeout=render_wait_ms
+            )
+        except (PlaywrightError, AttributeError):
+            return False
     if not _visible(page, resume_page.STALE_CONTACTS_SYNC_ALERT):
         return False
     _close_specific(page, resume_page.STALE_CONTACTS_SYNC_ALERT_CANCEL)
