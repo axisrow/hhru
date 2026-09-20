@@ -160,6 +160,39 @@ const SCENARIOS = {
     };
   },
 
+  // Боевой факт #1162 (testing, 2026-09-20): сама ответная модалка
+  // классифицируется apply_step (структурные якоря), а пикер/письмо/submit
+  // сидят ВНУТРИ неё — allowApply понижает и apply_step оверлея-предка
+  // (context apply_flow_overlay). Без флага — отказ; ambiguous- и опасные
+  // оверлеи не пускаются и с флагом.
+  click_apply_modal_overlay_allowed_with_permission: async () => {
+    const form = el('form', { id: 'RESPONSE_MODAL_FORM_ID' });
+    const picker = el('button', { 'data-qa': 'resume-title' }, 'Резюме');
+    const letter = el('textarea', { 'data-qa': 'vacancy-response-popup-form-letter-input' });
+    form.appendChild(picker);
+    form.appendChild(letter);
+    const modal = el('div', { class: 'magritte-modal' }, '');
+    modal.appendChild(form);
+    append(modal);
+    const allowed = await send({
+      action: 'click_element',
+      dataQa: 'resume-title',
+      allowApply: true,
+      waitFor: { state: 'visible', dataQa: 'resume-title', timeoutMs: 1000 },
+    });
+    const noFlag = await send({
+      action: 'click_element',
+      dataQa: 'resume-title',
+      waitFor: { state: 'visible', dataQa: 'resume-title', timeoutMs: 1000 },
+    });
+    return {
+      allowedContext: allowed.result?.policy?.context ?? null,
+      allowedClicked: allowed.result?.clicked ?? null,
+      noFlagError: noFlag.error ?? null,
+      noFlagReason: noFlag.policy?.reason ?? null,
+    };
+  },
+
   // fill_element (#1162): the letter text lands in the field through the
   // native setter path and is read back; a mismatch is ok:false, never a
   // silent half-filled form.
