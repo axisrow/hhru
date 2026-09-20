@@ -288,9 +288,14 @@ class FakeContactsSave:
         if self._page.settle == "closed":
             # Опубликованное резюме: редактор закрывается, кнопка исчезает.
             self._page.editor_closed = True
-        else:
-            # Черновик #1179 / негидратированный клик: кнопка уходит в loading.
+        elif self._page.settle != "dead":
+            # loading_ends (#1179, черновик) и hang: кнопка уходит в loading;
+            # в loading_ends wait_for_timeout снимает его после первого такта,
+            # в hang никто не снимает.
             self._page.save_loading = True
+        # settle == "dead": клик не дошёл до loading (негидратированная
+        # кнопка, #858) — класс не появляется ни разу, loading_seen не
+        # взводится; выход через исчерпание бюджета тот же, что у hang.
 
 
 class FakeContactsCancel:
@@ -309,8 +314,11 @@ class FakeContactsPage:
 
     ``settle`` — пост-клик поведение редактора: ``"closed"`` (опубликованное
     резюме, кнопка исчезает), ``"loading_ends"`` (#1179, свежий черновик:
-    кнопка loading → visible, редактор остаётся открыт) и ``"hang"``
-    (ни закрытия, ни выхода из loading — бюджет исчерпан).
+    кнопка loading → visible, редактор остаётся открыт), ``"hang"`` (XHR
+    завис В loading — loading_seen взведён, раннего выхода нет) и ``"dead"``
+    (клик не дошёл до loading, #858 — класс не появляется ни разу). Обе
+    последние выгорают бюджет целиком и выходят одинаково, вердикт добирает
+    readback.
     """
 
     def __init__(self, *, ready: bool = True, settle: str = "closed"):
@@ -333,7 +341,6 @@ class FakeContactsPage:
         self.preferred_type = "phone"
         self.radio_clicks: list[str] = []
         self.saved = False
-        self.closed = False
         self.cancelled = False
 
     def wait_for_timeout(self, timeout):  # noqa: ARG002
@@ -503,11 +510,28 @@ def test_contacts_draft_save_readback_mismatch_stays_uncertain(contacts_page):
     assert [o.status for o in outcomes] == [OUTCOME_UNCERTAIN]
 
 
-def test_contacts_save_signal_never_comes_readback_still_decides(contacts_page):
-    # Клик не дошёл до loading (негидратированная кнопка, #858) или XHR завис:
-    # бюджет исчерпан без единого сигнала — и это тоже не вердикт, факт
-    # добывается readback (здесь значения совпали → updated).
+def test_contacts_save_stuck_in_loading_readback_still_decides(contacts_page):
+    # XHR завис В loading (клик дошёл, ответа нет): loading_seen взведён,
+    # раннего выхода нет — бюджет выгорает целиком, но и это не вердикт,
+    # факт добирается readback (здесь значения совпали → updated).
     contacts_page.settle = "hang"
+    items = [resume_sections.Contact(type="email", value="a@b.c")]
+    outcomes = [RowOutcome("contacts", 0, OUTCOME_PLANNED)]
+
+    errors = _apply_contacts(
+        contacts_page, "test-resume-id", items, dry_run=False, outcomes=outcomes
+    )
+
+    assert errors == []
+    assert [o.status for o in outcomes] == [OUTCOME_UPDATED]
+
+
+def test_contacts_save_click_swallowed_readback_still_decides(contacts_page):
+    # Ветка #858: клик по негидратированной кнопке теряется — loading-класс
+    # не появляется ни разу, бюджет выгорает без единого сигнала. Вердикт
+    # всё равно не по таймауту: readback добирает факт (здесь значения
+    # совпали → updated).
+    contacts_page.settle = "dead"
     items = [resume_sections.Contact(type="email", value="a@b.c")]
     outcomes = [RowOutcome("contacts", 0, OUTCOME_PLANNED)]
 
