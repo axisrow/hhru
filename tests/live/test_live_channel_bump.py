@@ -21,6 +21,7 @@ import pytest
 
 from hhru_bot.cli import DEFAULT_HISTORY_PATH
 from hhru_bot.commands._audit import action_status, record_resume_action
+from hhru_bot.commands.bump_live import DEFAULT_LIVE_PORT
 from hhru_bot.config import is_resume_url_placeholder, load_config
 from hhru_bot.history import History
 from hhru_bot.live.scenarios import LiveChannel, bump_via_live
@@ -68,7 +69,9 @@ def test_bump_via_live_tab():
     if not can_bump:
         pytest.skip(f"рано поднимать, кулдаун {wait_left}")
 
-    channel = LiveChannel(client_timeout=CLIENT_TIMEOUT_SECONDS)
+    # Порт расширения захардкожен (background.js LIVE_SERVE_URL): ephemeral
+    # не получил бы клиента вовсе — та же константа, что у команды bump-live.
+    channel = LiveChannel(port=DEFAULT_LIVE_PORT, client_timeout=CLIENT_TIMEOUT_SECONDS)
     url = channel.start()
     print(f"[INFO] канал {url} — жду расширение hhru-live (до {CLIENT_TIMEOUT_SECONDS:.0f} с)")
     try:

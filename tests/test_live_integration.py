@@ -7,6 +7,13 @@ RFC 6455-клиент из test_live_serve в роли расширения hhru
 envelope -> ответ -> результат/PrimitiveError» на настоящем сокете и
 stdin-пайпе, включая reconnect/heartbeat, отказ dangerous-команды и
 неизвестное действие глазами клиента сценария.
+
+Формы ответов фейка — РЕАЛЬНЫЕ формы исполнителя S2 (#1186, зафиксированы
+живым прогоном и tests/live/test_live_channel_read.py): stage-1 ответы
+вложены в 'page'/'element', ответы executor.js — в 'result' (двойной
+уровень), ошибки расширения идут с ключом 'error', а не 'code'. Плоский
+словарь здесь молча проходил бы fallback-ветки распаковки — и регрессия
+вложенности стала бы невидимой для CI.
 """
 
 from __future__ import annotations
@@ -25,7 +32,13 @@ from hhru_bot.live.protocol import (
     TIMEOUT,
     UNKNOWN_ACTION,
 )
-from hhru_bot.live.scenarios import ACTION_GET_STATE, ChannelError, LiveChannel, PrimitiveError
+from hhru_bot.live.scenarios import (
+    ACTION_CHECK,
+    ACTION_GET_STATE,
+    ChannelError,
+    LiveChannel,
+    PrimitiveError,
+)
 from test_live_serve import ExtensionClientStub, _assert_no_text_frame
 
 pytestmark = pytest.mark.integration
@@ -76,10 +89,14 @@ def _responder(client: ExtensionClientStub, results: list[dict], seen: list[dict
 def test_get_state_roundtrip_over_real_socket(channel):
     client = _connect(channel)
     seen: list[dict] = []
-    state = {"url": "https://hh.ru/applicant/resumes", "title": "Резюме", "readyState": "complete"}
-    _responder(client, [state], seen)
+    # Форма РЕАЛЬНОГО ответа исполнителя (content.js get_page_state через
+    # background.js: {ok:true, page:{...}} -> result={page:{...}}), #1186:
+    # плоский словарь здесь молча проскочил бы мимо распаковки 'page' в
+    # LiveChannel.get_state, и регрессия вложенности была бы невидима CI.
+    page = {"url": "https://hh.ru/applicant/resumes", "title": "Резюме", "readyState": "complete"}
+    _responder(client, [{"page": page}], seen)
     try:
-        assert channel.get_state() == state
+        assert channel.get_state() == page
     finally:
         client.close()
     # Контракт S1/S2 в пересланном envelope: версия, имя действия исполнителя.
@@ -88,10 +105,31 @@ def test_get_state_roundtrip_over_real_socket(channel):
     assert seen[0]["payload"] == {}
 
 
+def test_check_element_roundtrip_unwraps_element(channel):
+    # Реальная форма stage-1 (content.js: {ok:true, element:{...}}):
+    # found/visible живут ВНУТРИ 'element', и гейт формы входа в сценариях
+    # читает их только после распаковки LiveChannel.check (#1186).
+    client = _connect(channel)
+    seen: list[dict] = []
+    element = {"found": True, "visible": True, "covered": False, "matchCount": 1, "text": "Вход"}
+    _responder(client, [{"element": element}], seen)
+    try:
+        assert channel.check("[data-qa='login-form']") == element
+    finally:
+        client.close()
+    assert seen[0]["action"] == ACTION_CHECK
+
+
 def test_wait_primitive_maps_wait_met_to_bool(channel):
     client = _connect(channel)
     seen: list[dict] = []
-    _responder(client, [{"wait": {"met": True}}, {"wait": {"met": False}}], seen)
+    # Исполнитель кладёт итог в result.wait.met и оборачивает его в 'result'
+    # (executor.js waitElement: {ok:true, result:{action, wait:{...}}}):
+    # ДВОЙНОЙ уровень вложенности, снимаемый _executor_result + 'wait'.
+    wait = {"state": "visible", "timeoutMs": 1500, "met": True, "elapsedMs": 12}
+    result = {"action": "wait_element", "state": "visible", "wait": wait, "finalState": {}}
+    missed = {**result, "wait": {**wait, "met": False, "elapsedMs": 1500}}
+    _responder(client, [{"result": result}, {"result": missed}], seen)
     try:
         assert channel.wait(BUTTON, "visible", 1500) is True
         assert channel.wait(BUTTON, "visible", 1500) is False
@@ -104,12 +142,22 @@ def test_wait_primitive_maps_wait_met_to_bool(channel):
 def test_click_forwards_declared_wait_for(channel):
     client = _connect(channel)
     seen: list[dict] = []
-    _responder(client, [{"clicked": True, "wait": {"met": True}}], seen)
+    # Реальная форма ответа клика (executor.js clickElement): полезная нагрузка
+    # во вложенном 'result', факт исполнения условия — в result.wait.met.
+    click = {
+        "action": "click_element",
+        "policy": {"verdict": "allowed", "context": "page"},
+        "target": {"tag": "button", "dataQa": "resume-update-button", "text": "Поднять"},
+        "clicked": True,
+        "wait": {"state": "visible", "timeoutMs": 15000, "met": True, "elapsedMs": 340},
+        "finalState": {"url": "https://hh.ru/applicant/resumes"},
+    }
+    _responder(client, [{"result": click}], seen)
     try:
         result = channel.click(BUTTON, {"selector": HINT, "state": "visible", "timeoutMs": 15_000})
     finally:
         client.close()
-    assert result == {"clicked": True, "wait": {"met": True}}
+    assert result == click
     assert seen[0]["action"] == "click_element"
     assert seen[0]["payload"]["waitFor"] == {
         "selector": HINT,
@@ -142,6 +190,38 @@ def test_extension_refusal_is_not_forwarded(channel):
     client.close()
     assert exc.value.code == "action_not_allowed"
     assert exc.value.forwarded is False
+
+
+def test_extension_error_shape_error_key_is_not_lost(channel):
+    # Ошибки ИСПОЛНИТЕЛЯ приходят без ключа 'code' (background.js удаляет
+    # только ok: {ok:false, error:'policy_refused', policy:{...}} -> result
+    # {'error': ...}); код читается из 'error', текст отказа не теряется
+    # и не считается «команда ушла в браузер» (#1186).
+    client = _connect(channel)
+
+    def refuse() -> None:
+        _, payload = client.recv_frame()
+        obj = json.loads(payload)
+        client.send_text(
+            json.dumps(
+                {
+                    "id": obj["id"],
+                    "status": "error",
+                    "result": {
+                        "error": "policy_refused",
+                        "policy": {"verdict": "refused", "reason": "dangerous"},
+                    },
+                }
+            )
+        )
+
+    threading.Thread(target=refuse, daemon=True).start()
+    with pytest.raises(PrimitiveError) as exc:
+        channel.click(BUTTON, {"selector": HINT, "state": "visible", "timeoutMs": 1000})
+    client.close()
+    assert exc.value.code == "policy_refused"
+    assert exc.value.forwarded is False
+    assert "policy_refused" in str(exc.value)
 
 
 def test_unknown_action_fails_closed_before_forward(channel):
@@ -224,7 +304,7 @@ def test_reconnect_after_drop_serves_next_command(channel):
 
     client = _connect(channel)  # то же расширение переподключилось
     seen: list[dict] = []
-    _responder(client, [{"url": "https://hh.ru/applicant/resumes"}], seen)
+    _responder(client, [{"page": {"url": "https://hh.ru/applicant/resumes"}}], seen)
     try:
         assert channel.get_state()["url"] == "https://hh.ru/applicant/resumes"
     finally:
