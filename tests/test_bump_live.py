@@ -301,3 +301,13 @@ def test_marker_timeouts_documented_budgets() -> None:
     # Пост-клик бюджет шире боевого ожидания карточки: сеть + гидрация.
     assert MARKER_TIMEOUT_MS > BUMP_TIMEOUT_MS
     assert 0 < MARKER_GONE_TIMEOUT_MS <= BUMP_HINT_TIMEOUT_MS * 10
+
+
+def test_default_port_matches_extension_bridge() -> None:
+    # Расширение подключается только к ws://127.0.0.1:8765 (LIVE_SERVE_URL,
+    # background.js): дефолт ephemeral 0 дал бы канал, которого клиент никогда
+    # не увидит, и каждый запуск сгорал бы в 120-секундном wait_client.
+    from hhru_bot.commands.bump_live import DEFAULT_LIVE_PORT
+    from hhru_bot.commands.live_serve import LIVE_SERVE_DEFAULT_PORT
+
+    assert DEFAULT_LIVE_PORT == LIVE_SERVE_DEFAULT_PORT == 8765
