@@ -189,7 +189,18 @@ def close_stale_contacts_alert(page: Page, wait_ms: int = 3_000, render_wait_ms:
             return False
     if not _visible(page, resume_page.STALE_CONTACTS_SYNC_ALERT):
         return False
-    _close_specific(page, resume_page.STALE_CONTACTS_SYNC_ALERT_CANCEL)
+    # Клик cancel напрямую, не через _close_specific: возврат обязан означать
+    # ФАКТ клика (cycle-review #1190) — success-reason в actions не должен
+    # получать «закрыта кликом» без клика. Невидимый cancel/ошибка Playwright —
+    # честный False: клик поднятия упрётся в оставшийся overlay и получит
+    # диагностичный uncertain, а не ложную пометку в success.
+    try:
+        cancel = page.locator(resume_page.STALE_CONTACTS_SYNC_ALERT_CANCEL).first
+        if not cancel.is_visible():
+            return False
+        cancel.click()
+    except (PlaywrightError, AttributeError):
+        return False
     logger.info(
         "Модалка «Контакты в резюме могли устареть» закрыта dismiss-кнопкой «Закрыть» (#1189)"
     )

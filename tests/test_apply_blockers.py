@@ -203,6 +203,20 @@ def test_stale_contacts_alert_absent_changes_nothing():
     assert page.clicked == []
 
 
+def test_stale_contacts_alert_without_visible_cancel_is_not_reported_closed():
+    # cycle-review #1190: close возвращает True только при ФАКТЕ клика cancel.
+    # Модалка видима, dismiss-кнопка нет (аномальный DOM) — ветка не срабатывает,
+    # ни одного клика; вызывальщик не получает ложное «закрыта кликом».
+    page = _Page(
+        (resume_page.STALE_CONTACTS_SYNC_ALERT, "Контакты в резюме могли устареть"),
+    )
+
+    result = handle_post_click_blockers(page, allow_relocation=False)
+
+    assert result is None
+    assert page.clicked == []
+
+
 def test_direct_application_requires_alert_text():
     page = _Page(
         (vacancy_page.VACANCY_DIRECT_APPLICATION_CANCEL, "Отменить"),

@@ -207,8 +207,10 @@ def bump_resume(page: Page, resume: ResumeConfig, dry_run: bool) -> BumpResult:
         # следующем запуске. Модалку закрываем dismiss-кнопкой, чтобы она не
         # съела и следующий прогон; вердикт прежний fail-closed. Формулировка
         # честная: фиксируем ВИДИМОСТЬ модалки в момент сбоя, а не доказанный
-        # перехват (клик мог уйти и по другой причине).
-        if close_stale_contacts_alert(page):
+        # перехват (клик мог уйти и по другой причине). render-wait — тот же,
+        # что на pre-click пути: модалка может монтироваться сразу ПОСЛЕ
+        # исключения (cycle-review #1190), мгновенный is_visible её не увидит.
+        if close_stale_contacts_alert(page, render_wait_ms=STALE_ALERT_RENDER_WAIT_MS):
             return BumpResult(
                 resume.id,
                 False,

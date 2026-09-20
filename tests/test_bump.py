@@ -193,6 +193,7 @@ class FakeBumpPage:
         other_cards_present: bool = True,
         ssr_anchors: bool = False,
         stale_alert_present: bool = False,
+        stale_cancel_present: bool | None = None,
     ):
         self.goto_calls: list[str] = []
         self.click_log: list[str] = []
@@ -211,6 +212,11 @@ class FakeBumpPage:
         # #1189: модалка «Контакты в резюме могли устареть» смонтирована
         # и видима при заходе на список (живой census 2026-09-20).
         self._stale_alert_present = stale_alert_present
+        # None — cancel живёт тем же флагом, что и модалка; False отдельно —
+        # для кейса «модалка видима, а dismiss-кнопки нет» (cycle-review #1190).
+        self._stale_cancel_present = (
+            stale_alert_present if stale_cancel_present is None else stale_cancel_present
+        )
         self._wait_calls = 0
 
     @property
@@ -237,7 +243,7 @@ class FakeBumpPage:
         if selector == resume_page.STALE_CONTACTS_SYNC_ALERT:
             return _FakeLocator(self._stale_alert_present, self.click_log, "stale-alert")
         if selector == resume_page.STALE_CONTACTS_SYNC_ALERT_CANCEL:
-            return _FakeLocator(self._stale_alert_present, self.click_log, "stale-alert-cancel")
+            return _FakeLocator(self._stale_cancel_present, self.click_log, "stale-alert-cancel")
         return _FakeLocator(False)
 
 
@@ -542,6 +548,24 @@ def test_bump_closes_stale_contacts_alert_before_click():
     assert result.success is True
     assert page.click_log == ["stale-alert-cancel", "button"]
     assert "модалка контактов закрыта" in result.reason
+
+
+def test_bump_stale_alert_without_visible_cancel_has_no_false_close_mark():
+    """cycle-review #1190: True close обязан означать ФАКТ клика. Модалка видима,
+    но dismiss-кнопка нет (аномальный DOM) — клика не было, пометка «закрыта
+    кликом» в success-reason не появляется."""
+    page = FakeBumpPage(
+        hint_present=False,
+        button_present=True,
+        stale_alert_present=True,
+        stale_cancel_present=False,
+    )
+
+    result = bump_resume(page, _resume(), dry_run=False)
+
+    assert result.success is True
+    assert page.click_log == ["button"]
+    assert result.reason == "success"
 
 
 def test_bump_stale_alert_not_touched_in_dry_run():
