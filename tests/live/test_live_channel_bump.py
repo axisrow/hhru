@@ -20,6 +20,7 @@ import os
 import pytest
 
 from hhru_bot.cli import DEFAULT_HISTORY_PATH
+from hhru_bot.commands._audit import action_status, record_resume_action
 from hhru_bot.config import is_resume_url_placeholder, load_config
 from hhru_bot.history import History
 from hhru_bot.live.scenarios import LiveChannel, bump_via_live
@@ -42,7 +43,17 @@ def test_bump_via_live_tab():
     assert _LIVE_CONFIG is not None  # skipif выше гарантирует явный opt-in
     config = load_config(_LIVE_CONFIG)
     name = os.environ.get("HHRU_LIVE_RESUME")
-    resume = next((r for r in config.resumes if r.id == name), config.resumes[0])
+    if name is None:
+        resume = config.resumes[0]
+    else:
+        # Мутационный тест: опечатка в имени не имеет права молча поднять
+        # другое резюме — отказ со списком доступных, как у команды bump-live.
+        resume = next((r for r in config.resumes if r.id == name), None)
+        if resume is None:
+            pytest.fail(
+                f"HHRU_LIVE_RESUME={name!r} нет в конфиге; доступные: "
+                + ", ".join(r.id for r in config.resumes)
+            )
     if is_resume_url_placeholder(resume.resume_url):
         pytest.skip(f"в конфиге {resume.id} плейсхолдер resume_url — укажите реальное резюме")
 
@@ -67,6 +78,18 @@ def test_bump_via_live_tab():
         channel.close()
 
     print(f"[INFO] bump_via_live: {result.resume_id} -> {result.reason}")
+    # Ledger честный с обеих сторон: действие пишется тем же путём, что у
+    # команды bump-live (commands/bump_live.py), — иначе live-тестовый подъём
+    # невидим локальному кулдауну 4ч и окну 24ч боевых прогонов. Гейт тот же:
+    # исходы без реального клика (acted=False) в actions не пишутся.
+    if result.acted:
+        record_resume_action(
+            history,
+            resume.resume_id,
+            "bump",
+            action_status(dry_run=False, success=result.success, uncertain=result.uncertain),
+            result.reason,
+        )
     # Инварианты вердикта (#176/#1161), не конкретный исход: боевой вердикт
     # зависит от состояния hh.ru (кулдаун, лимит) и проверяется человеком
     # по чеклисту; выдумывать успех тест не имеет права.

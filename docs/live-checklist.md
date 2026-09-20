@@ -19,7 +19,8 @@
 - [ ] `HHRU_LIVE_CONFIG=data/config.yaml pytest -m live_read tests/live/ -q -s`
       — `[OK]`, в выводе видны URL/title вкладки hh.ru и ответ `check_element`.
 - [ ] План без мутаций: `./scripts/run.sh bump-live --resume <имя> --dry-run`
-      — `[OK] dry-run`, клика не было (кнопка поднятия осталась на странице).
+      — `[OK] <имя> поднято` (команда не печатает отдельной пометки dry-run);
+      настоящий признак сухого прогона — кнопка поднятия осталась на странице.
 
 ## 2. Боевой bump-live (мутация своего аккаунта)
 
