@@ -194,8 +194,24 @@ function clickElement(params, sendResponse) {
     return;
   }
   if (resolved.matches.length > 1) {
-    sendResponse({ ok: false, error: 'ambiguous_target', matchCount: resolved.matches.length });
-    return;
+    // Одинаковый dataQa на ВСЕХ матчах — один контрол в нескольких местах
+    // страницы (hh.ru дублирует «Откликнуться» в шапке и липкой панели,
+    // боевой прогон #1162): берём первый видимый, как first_locator
+    // боевого пути. Сырой CSS-селектор и разные data-qa — ambiguous
+    // (fail-closed, никакого «кликнем первый молча»).
+    const sameQa = typeof params.dataQa === 'string' && params.dataQa.trim() !== ''
+      && resolved.matches.every((el) => el.getAttribute('data-qa') === params.dataQa);
+    if (sameQa) {
+      const visibleMatch = resolved.matches.find((el) => isVisible(el));
+      if (!visibleMatch) {
+        sendResponse({ ok: false, error: 'element_not_visible' });
+        return;
+      }
+      resolved.matches = [visibleMatch];
+    } else {
+      sendResponse({ ok: false, error: 'ambiguous_target', matchCount: resolved.matches.length });
+      return;
+    }
   }
   const target = resolved.matches[0];
   if (!isVisible(target)) {

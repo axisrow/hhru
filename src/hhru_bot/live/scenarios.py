@@ -574,7 +574,9 @@ class LiveChannel:
         response = self._collector.responses.pop(command_id)
         if response.get("status") != "ok":
             result = response.get("result") or {}
-            code = str(result.get("code", "unknown"))
+            # Транспортные ошибки кладут имя в 'code', ошибки расширения —
+            # в 'error' ({ok:false, error:...}); читаем оба.
+            code = str(result.get("code") or result.get("error") or "unknown")
             detail = str(result.get("detail", ""))
             raise PrimitiveError(code, detail, forwarded=code in FORWARD_UNKNOWN_CODES)
         return response.get("result") or {}

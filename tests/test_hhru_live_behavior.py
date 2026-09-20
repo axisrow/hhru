@@ -480,11 +480,13 @@ def test_hhru_live_executor_click_without_wait_refused():
 
 
 def test_hhru_live_executor_click_ambiguous_target_refused():
-    """Неоднозначная адресация не кликает «первый» молча: matchCount
-    возвращается агенту, кликов 0."""
+    """Дубликаты одного data-qa (шапка + липкая панель hh.ru, прогон #1162) —
+    один контрол в нескольких местах: кликается первый видимый. Сырой
+    CSS-селектор с двумя матчами остаётся ambiguous (кликов 0)."""
     scenario = _run_executor_scenario("click_ambiguous_target")
-    assert scenario["error"] == "ambiguous_target" and scenario["matchCount"] == 2
-    assert scenario["clickCount"] == 0
+    assert scenario["sameQaClicked"] is True and scenario["sameQaText"] == "Один"
+    assert scenario["cssError"] == "ambiguous_target" and scenario["cssMatchCount"] == 2
+    assert scenario["clickCount"] == 1
 
 
 def test_hhru_live_executor_click_invisible_target_refused():

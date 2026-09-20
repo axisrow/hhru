@@ -229,18 +229,27 @@ const SCENARIOS = {
     };
   },
 
-  // An ambiguous selector must not silently click "the first" match.
+  // Одинаковый dataQa во всех матчах — один контрол в нескольких местах
+  // страницы (шапка + липкая панель hh.ru, боевой прогон #1162): кликается
+  // первый видимый. Разные data-qa / сырой CSS остаются ambiguous.
   click_ambiguous_target: async () => {
     append(el('button', { 'data-qa': 'dup-button' }, 'Один'));
     append(el('button', { 'data-qa': 'dup-button' }, 'Два'));
-    const response = await send({
+    const sameQa = await send({
       action: 'click_element',
       dataQa: 'dup-button',
       waitFor: { state: 'hidden', dataQa: 'dup-button', timeoutMs: 1000 },
     });
+    const css = await send({
+      action: 'click_element',
+      selector: '[data-qa="dup-button"]',
+      waitFor: { state: 'hidden', dataQa: 'dup-button', timeoutMs: 1000 },
+    });
     return {
-      error: response.error ?? null,
-      matchCount: response.matchCount ?? null,
+      sameQaClicked: sameQa.result?.clicked ?? null,
+      sameQaText: sameQa.result?.target?.text ?? null,
+      cssError: css.error ?? null,
+      cssMatchCount: css.matchCount ?? null,
       clickCount: env.clicks.length,
     };
   },
