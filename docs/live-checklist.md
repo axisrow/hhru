@@ -16,6 +16,12 @@
 
 ## 1. Живое чтение — read-only, безопасно
 
+Порядок критичен: MV3 service worker расширения подключается к каналу при
+старте браузера и засыпает навсегда, если сервер в это окно не слушал
+(живой факт 2026-09-20). Тест сам поднимает канал на 8765 — живой
+`live-serve` останови; Chrome (пере)запусти ПОСЛЕ старта теста, например
+`./scripts/run_extension_chrome.sh https://hh.ru/applicant/resumes`.
+
 - [ ] `HHRU_LIVE_CONFIG=data/config.yaml pytest -m live_read tests/live/ -q -s`
       — `[OK]`, в выводе видны URL/title вкладки hh.ru и ответ `check_element`.
 - [ ] План без мутаций: `./scripts/run.sh bump-live --resume <имя> --dry-run`

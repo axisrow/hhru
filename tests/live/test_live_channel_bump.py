@@ -30,6 +30,11 @@ _LIVE_CONFIG = os.environ.get("HHRU_LIVE_CONFIG")
 
 CLIENT_TIMEOUT_SECONDS = 30.0
 
+# Расширение подключается ТОЛЬКО к ws://127.0.0.1:8765 (background.js
+# LIVE_SERVE_URL) — ephemeral-порт клиента не увидит никогда (#1183).
+# Живой live-serve на 8765 на время теста надо остановить.
+CHANNEL_PORT = 8765
+
 pytestmark = [
     pytest.mark.live_write,
     pytest.mark.skipif(
@@ -68,7 +73,7 @@ def test_bump_via_live_tab():
     if not can_bump:
         pytest.skip(f"рано поднимать, кулдаун {wait_left}")
 
-    channel = LiveChannel(client_timeout=CLIENT_TIMEOUT_SECONDS)
+    channel = LiveChannel(port=CHANNEL_PORT, client_timeout=CLIENT_TIMEOUT_SECONDS)
     url = channel.start()
     print(f"[INFO] канал {url} — жду расширение hhru-live (до {CLIENT_TIMEOUT_SECONDS:.0f} с)")
     try:
