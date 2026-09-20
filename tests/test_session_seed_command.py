@@ -37,7 +37,7 @@ def _write_config(tmp_path, storage_state: str = "storage_state/hh_session.json"
     return str(path)
 
 
-def _write_storage_state(tmp_path, cookies: list[dict]):
+def _write_storage_state(tmp_path, cookies: list):
     path = tmp_path / "storage_state" / "hh_session.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"cookies": cookies, "origins": []}), encoding="utf-8")
@@ -140,13 +140,38 @@ def test_run_reports_fail_on_seed_error(tmp_path, monkeypatch, capsys):
     assert "[FAIL]" in capsys.readouterr().out
 
 
-def test_run_reports_fail_on_malformed_storage_state(tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize(
+    "payload",
+    [
+        '{"origins": []}',  # нет ключа cookies -> KeyError
+        "[1, 2]",  # валидный JSON, но не объект -> TypeError
+        '{"cookies": "x"}',  # cookies не список -> ValueError
+    ],
+)
+def test_run_reports_fail_on_malformed_storage_state(tmp_path, monkeypatch, capsys, payload):
     path = tmp_path / "storage_state" / "hh_session.json"
     path.parent.mkdir(parents=True)
-    path.write_text('{"origins": []}', encoding="utf-8")
+    path.write_text(payload, encoding="utf-8")
 
     def fail_seed(_profile_dir, _cookies):
         raise AssertionError("битый storage_state — профиль не открывать")
+
+    monkeypatch.setattr(session_seed_cmd, "_seed_cookies", fail_seed)
+
+    failed = session_seed_cmd.run(_args(_write_config(tmp_path), tmp_path / "p"))
+
+    assert failed is True
+    assert "[FAIL]" in capsys.readouterr().out
+
+
+def test_run_fail_closed_on_non_dict_cookie_element(tmp_path, monkeypatch, capsys):
+    # Валидный JSON, но элемент списка — не dict: .get() в hhtoken-гейте
+    # уронил бы AttributeError мимо except (review PR #1201); должен быть
+    # честный [FAIL] «hhtoken не найден» без traceback.
+    _write_storage_state(tmp_path, ["not-a-dict"])
+
+    def fail_seed(_profile_dir, _cookies):
+        raise AssertionError("кривые cookies — профиль не открывать")
 
     monkeypatch.setattr(session_seed_cmd, "_seed_cookies", fail_seed)
 

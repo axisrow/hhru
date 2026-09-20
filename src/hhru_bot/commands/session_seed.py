@@ -61,15 +61,20 @@ def run(args: argparse.Namespace) -> bool:
         cookies = state["cookies"]
         if not isinstance(cookies, list):
             raise ValueError("cookies не список")
-    except (OSError, ValueError, KeyError) as exc:
+    # TypeError: валидный JSON, но не объект (список/строка/число) — индексация
+    # по строковому ключу; KeyError: ключа cookies нет; ValueError: не список.
+    except (OSError, ValueError, KeyError, TypeError) as exc:
         print(f"[FAIL] Не удалось прочитать storage_state: {exc}")
         return True
 
     # Тот же expiry-aware гейт, что у import-cookies: сеять сессию без
-    # hhtoken бессмысленно — fail-closed без мутации профиля.
+    # hhtoken бессмысленно — fail-closed без мутации профиля. Страж
+    # isinstance отсекает не-dict элементы списка (иначе .get() уронил бы
+    # AttributeError мимо except выше).
     now = time.time()
     has_hhtoken = any(
-        cookie.get("name") == "hhtoken"
+        isinstance(cookie, dict)
+        and cookie.get("name") == "hhtoken"
         and cookie.get("value")
         and (cookie.get("expires", -1) == -1 or cookie.get("expires", -1) > now)
         for cookie in cookies
