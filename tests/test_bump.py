@@ -571,5 +571,5 @@ def test_bump_click_error_with_stale_alert_visible_names_it():
     assert result.success is False
     assert result.acted is True
     assert result.uncertain is True
-    assert "перехвачен модалкой" in result.reason
+    assert "видима модалка" in result.reason
     assert "stale-alert-cancel" in page.click_log
