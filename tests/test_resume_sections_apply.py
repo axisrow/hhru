@@ -260,19 +260,37 @@ class FakeContactField:
 
 
 class FakeContactsSave:
+    """Кнопка save: клик запускает сценарий settle страницы, опрос цикла
+    _wait_save_settled читает is_visible/get_attribute."""
+
     def __init__(self, page):
         self._page = page
 
+    @property
+    def first(self):
+        return self
+
     def count(self):
-        return 1
+        return 0 if self._page.editor_closed else 1
+
+    def is_visible(self):
+        return not self._page.editor_closed
+
+    def get_attribute(self, name, *, timeout=None):  # noqa: ARG002
+        if self._page.save_loading:
+            # css-модульный суффикс как у живого Magritte (лог #1165):
+            # _wait_save_settled матчит класс по подстроке.
+            return "magritte-button magritte-button_loading___7f3"
+        return "magritte-button___7f3"
 
     def click(self):
         self._page.saved = True
-
-    def wait_for(self, *, state="hidden", timeout=None):
-        if self._page.save_wait_times_out:
-            raise PlaywrightTimeoutError("редактор не закрылся")
-        self._page.closed = True
+        if self._page.settle == "closed":
+            # Опубликованное резюме: редактор закрывается, кнопка исчезает.
+            self._page.editor_closed = True
+        else:
+            # Черновик #1179 / негидратированный клик: кнопка уходит в loading.
+            self._page.save_loading = True
 
 
 class FakeContactsCancel:
@@ -287,12 +305,21 @@ class FakeContactsCancel:
 
 
 class FakeContactsPage:
-    """Стаб формы контактов (#1119): телефон/email/комментарий, radio, save/cancel."""
+    """Стаб формы контактов (#1119): телефон/email/комментарий, radio, save/cancel.
 
-    def __init__(self, *, ready: bool = True, save_wait_times_out: bool = False):
+    ``settle`` — пост-клик поведение редактора: ``"closed"`` (опубликованное
+    резюме, кнопка исчезает), ``"loading_ends"`` (#1179, свежий черновик:
+    кнопка loading → visible, редактор остаётся открыт) и ``"hang"``
+    (ни закрытия, ни выхода из loading — бюджет исчерпан).
+    """
+
+    def __init__(self, *, ready: bool = True, settle: str = "closed"):
         self.url = CONTACTS_URL
         self.ready = ready
-        self.save_wait_times_out = save_wait_times_out
+        self.settle = settle
+        self.editor_closed = False
+        self.save_loading = False
+        self.save_ticks = 0
         # Census #1165: поля attached, но скрытые (phone на свежем черновике).
         self.hidden_fields: set[str] = set()
         # Review #1173: страницы, ушедшие между wait и count (навигация).
@@ -310,7 +337,11 @@ class FakeContactsPage:
         self.cancelled = False
 
     def wait_for_timeout(self, timeout):  # noqa: ARG002
-        pass
+        # Такт опроса _wait_save_settled (и пауза маски телефона): в сценарии
+        # «loading_ends» кнопка выходит из loading после первого такта.
+        self.save_ticks += 1
+        if self.settle == "loading_ends" and self.save_ticks >= 1:
+            self.save_loading = False
 
     def locator(self, selector: str):
         if selector == "[data-qa='resume-partial-edit-save']":
@@ -366,7 +397,7 @@ def test_contacts_save_confirmed_by_readback(contacts_page):
     )
 
     assert errors == []
-    assert contacts_page.saved and contacts_page.closed
+    assert contacts_page.saved and contacts_page.editor_closed
     assert contacts_page.preferred_type == "phone"
     assert contacts_page.radio_clicks == ["resume-editor-preferred-contact-cell_phone-checked"]
     assert [o.status for o in outcomes] == [OUTCOME_UPDATED, OUTCOME_UPDATED]
@@ -437,10 +468,31 @@ def test_contacts_mask_rewrite_is_retried_before_save(contacts_page):
     assert [o.status for o in outcomes] == [OUTCOME_UPDATED]
 
 
-def test_contacts_save_wait_timeout_marks_all_uncertain(contacts_page):
-    # Клик save мог уйти (#176): readback не выполняется, все строки uncertain.
-    contacts_page.save_wait_times_out = True
-    items = [resume_sections.Contact(type="phone", value="+7 900")]
+def test_contacts_draft_save_editor_stays_open_readback_confirms(contacts_page):
+    # #1179 (боевой прогон #1165): на свежем черновике hh.ru сохраняет контакт,
+    # но редактор не закрывает — кнопка уходит в loading и возвращается
+    # visible. Исчерпание ожидания закрытия больше не вердикт: решает
+    # readback полей, строка получает честный updated с боевым маркером.
+    contacts_page.settle = "loading_ends"
+    items = [resume_sections.Contact(type="email", value="a@b.c")]
+    outcomes = [RowOutcome("contacts", 0, OUTCOME_PLANNED)]
+
+    errors = _apply_contacts(
+        contacts_page, "test-resume-id", items, dry_run=False, outcomes=outcomes
+    )
+
+    assert errors == []
+    assert contacts_page.saved and not contacts_page.editor_closed
+    assert [o.status for o in outcomes] == [OUTCOME_UPDATED]
+    assert "редактор не закрылся" in outcomes[0].reason
+
+
+def test_contacts_draft_save_readback_mismatch_stays_uncertain(contacts_page):
+    # Fail-closed не ослаблен (#1179 п.3): таймаут закрытия сам по себе не
+    # вердикт, но если readback не подтвердил запись — исход uncertain (#176).
+    contacts_page.settle = "loading_ends"
+    contacts_page.readback_values = {"resume-editor-email-input": "old@b.c"}
+    items = [resume_sections.Contact(type="email", value="a@b.c")]
     outcomes = [RowOutcome("contacts", 0, OUTCOME_PLANNED)]
 
     errors = _apply_contacts(
@@ -449,6 +501,22 @@ def test_contacts_save_wait_timeout_marks_all_uncertain(contacts_page):
 
     assert len(errors) == 1 and "uncertain" in errors[0]
     assert [o.status for o in outcomes] == [OUTCOME_UNCERTAIN]
+
+
+def test_contacts_save_signal_never_comes_readback_still_decides(contacts_page):
+    # Клик не дошёл до loading (негидратированная кнопка, #858) или XHR завис:
+    # бюджет исчерпан без единого сигнала — и это тоже не вердикт, факт
+    # добывается readback (здесь значения совпали → updated).
+    contacts_page.settle = "hang"
+    items = [resume_sections.Contact(type="email", value="a@b.c")]
+    outcomes = [RowOutcome("contacts", 0, OUTCOME_PLANNED)]
+
+    errors = _apply_contacts(
+        contacts_page, "test-resume-id", items, dry_run=False, outcomes=outcomes
+    )
+
+    assert errors == []
+    assert [o.status for o in outcomes] == [OUTCOME_UPDATED]
 
 
 def test_contacts_readback_mismatch_marks_rows_uncertain(contacts_page):
@@ -552,7 +620,7 @@ def test_contacts_draft_hidden_phone_does_not_block_email_plan(contacts_page):
     )
 
     assert errors == []
-    assert contacts_page.saved and contacts_page.closed
+    assert contacts_page.saved and contacts_page.editor_closed
     assert [o.status for o in outcomes] == [OUTCOME_UPDATED]
 
 

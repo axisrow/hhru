@@ -33,8 +33,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger("hhru_bot.resume_sections")
 FORM_TIMEOUT_MS = 10_000
 
-# Потолок ожидания закрытия inline-редактора после save (#331).
+# Потолок ожидания окончания save-раундтрипа (#331). #1179: на свежем
+# черновике hh.ru контакт сохраняет, а редактор НЕ закрывает (кнопка уходит
+# в magritte-button_loading и возвращается visible) — закрытие редактора
+# перестаёт быть единственным сигналом успеха, вердикт отдаёт readback полей.
 SAVE_TIMEOUT_MS = 30_000
+
+# Шаг опроса кнопки save в _wait_save_settled: SAVE_TIMEOUT_MS // _SAVE_POLL_MS
+# тактов по 250мс — те же ~30с стены, что у прежнего wait_for(hidden).
+_SAVE_POLL_MS = 250
 
 RESUME_EDIT_BUTTON = {
     "attestations": "[data-qa^='resume-edit-button-attestationEducation-']",
@@ -656,6 +663,39 @@ def _fill_phone_masked(page: Page, field: Locator, value: str) -> None:
     )
 
 
+def _wait_save_settled(page: Page, save: Locator) -> bool:
+    """Дождаться окончания save-раундтрипа; True — редактор закрылся.
+
+    Достаточные сигналы завершения XHR сохранения: закрытие редактора (кнопка
+    исчезла — прежний сигнал #331) ИЛИ возврат кнопки из magritte-button_loading.
+    На свежем черновике hh.ru контакт сохраняет, а редактор НЕ закрывает
+    (#1179, боевой прогон #1165: кнопка resume-partial-edit-save ушла в loading
+    и вернулась visible, hh.ru сохранил email — census черновика), поэтому
+    исчерпание бюджета ошибкой НЕ считается: вердикт в любом случае отдаёт
+    readback полей, а ожидание нужно только чтобы goto readback не убил
+    in-flight XHR навигацией.
+    """
+    loading_seen = False
+    for _ in range(SAVE_TIMEOUT_MS // _SAVE_POLL_MS):
+        try:
+            if not save.first.is_visible():
+                return True
+            # Класс с css-модульным суффиксом (боевой лог #1165:
+            # magritte-button_loading___…), поэтому матч по подстроке.
+            loading = "magritte-button_loading" in (
+                save.first.get_attribute("class", timeout=_SAVE_POLL_MS) or ""
+            )
+        except PlaywrightError:
+            # Страница ушла (навигация после save) — сигнал нечитаем,
+            # факт решит readback.
+            return True
+        loading_seen = loading_seen or loading
+        if loading_seen and not loading:
+            return False
+        page.wait_for_timeout(_SAVE_POLL_MS)
+    return False
+
+
 def _apply_contacts(
     page: Page,
     resume_id: str,
@@ -732,7 +772,7 @@ def _apply_contacts(
         try:
             save.click()
             past_click = True
-            save.wait_for(state="hidden", timeout=SAVE_TIMEOUT_MS)
+            editor_closed = _wait_save_settled(page, save)
         except (PlaywrightError, RuntimeError) as exc:
             raise PlaywrightError(
                 f"сохранение не подтверждено после клика (uncertain): {exc}"
@@ -744,6 +784,14 @@ def _apply_contacts(
         if not _on_contacts_route(page, resume_id):
             raise PlaywrightError("contacts: readback открыл не тот редактор (uncertain)")
         _contacts_ready(page, items)
+        # Боевой маркер #1179: updated, подтверждённый readback без закрытия
+        # редактора (форма черновика), помечается в reason — иначе в бою
+        # неотличим от прежнего close-подтверждённого пути.
+        ok_reason = (
+            "readback совпал"
+            if editor_closed
+            else "readback совпал (редактор не закрылся; подтверждено значением поля)"
+        )
         uncertain: list[int] = []
         details: list[str] = []
         for index, item in enumerate(items):
@@ -772,7 +820,7 @@ def _apply_contacts(
                     "contacts",
                     index,
                     OUTCOME_UPDATED if ok else OUTCOME_UNCERTAIN,
-                    "readback совпал"
+                    ok_reason
                     if ok
                     else f"readback не совпал: ожидалось {item.value!r}, получено {actual!r}",
                 )
