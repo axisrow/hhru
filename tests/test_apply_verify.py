@@ -9,6 +9,7 @@ DOM-fallback при недоступности SSR и терпимость к н
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta
 from html import escape
 from types import SimpleNamespace
 
@@ -401,6 +402,71 @@ def test_not_found_on_clean_ssr_read():
     assert page.wait_for_timeout_calls == [10_000]
 
 
+def _topic_at(topic_id: int, vacancy_id: str, iso: str, resume_id: str | None = None) -> dict:
+    # lastModified несёт серверный офсет (+03:00 в живых дампах #1148) —
+    # сравнение в verify идёт aware-против-aware.
+    return {**_topic(topic_id, vacancy_id, resume_id), "lastModified": iso}
+
+
+def test_not_found_when_all_topics_older_than_fresh_window():
+    # #1181: длинная история (продолжение списка есть), но все темы страницы 0
+    # подтверждённо старше отсечки окна свежести — продолжение не может
+    # содержать тему клика, скан останавливается данными: not_found без чтения
+    # страницы 1 и без потолочного indeterminate. Повторная попытка (polling)
+    # страницу 1 тоже не читает — окно пересчитывается от той же отсечки.
+    old = (datetime.now().astimezone() - timedelta(hours=1)).isoformat()
+    topics = [_topic_at(1, "999999", old), _topic_at(2, "888888", old)]
+    page = FakeNegotiationsPage({NEGOTIATIONS_URL: _ssr_html(topics)})
+    result = verify_response_in_negotiations(page, _V2)
+    assert result.status == "not_found"
+    assert page.goto_calls == [NEGOTIATIONS_URL, NEGOTIATIONS_URL]
+    assert page.wait_for_timeout_calls == [10_000]
+
+
+def test_fresh_modified_topic_defers_window_stop_to_next_page():
+    # Тема, тронутая ПОСЛЕ отсечки (свежий lastModified), не даёт остановиться
+    # на странице 0; страница 1 целиком старше — окно закрывается там
+    # (не_found при двух чтениях, потолок не достигнут).
+    fresh = datetime.now().astimezone().isoformat()
+    old = (datetime.now().astimezone() - timedelta(hours=1)).isoformat()
+    page = FakeNegotiationsPage(
+        {
+            NEGOTIATIONS_URL: _ssr_html([_topic_at(1, "999999", fresh)]),
+            f"{NEGOTIATIONS_URL}?page=1": _ssr_html([_topic_at(2, "888888", old)]),
+        }
+    )
+    result = verify_response_in_negotiations(page, _V2)
+    assert result.status == "not_found"
+    assert page.goto_calls == [
+        NEGOTIATIONS_URL,
+        f"{NEGOTIATIONS_URL}?page=1",
+        NEGOTIATIONS_URL,
+        f"{NEGOTIATIONS_URL}?page=1",
+    ]
+
+
+def test_window_stop_requires_parseable_last_modified():
+    # Непарсящаяся дата — доказательства старости нет (fail-closed в сторону
+    # False): окно не закрывается на странице 0, скан уходит на страницу 1
+    # (пустую — там срабатывает pagerless-стоп «ноль новых»).
+    topics = [_topic_at(1, "999999", "не-дата")]
+    page = FakeNegotiationsPage({NEGOTIATIONS_URL: _ssr_html(topics)})
+    result = verify_response_in_negotiations(page, _V2)
+    assert result.status == "not_found"
+    assert f"{NEGOTIATIONS_URL}?page=1" in page.goto_calls
+
+
+def test_window_end_does_not_mask_incomparable_topic():
+    # Тема целевой вакансии найдена, но не атрибутируема (#212) на странице 0,
+    # а все темы СТАРШЕ отсечки: found-доказательства нет — indeterminate
+    # побеждает, окно не превращает неатрибутируемую тему в not_found.
+    old = (datetime.now().astimezone() - timedelta(hours=1)).isoformat()
+    topics = [_topic_at(1, _V1, old, resume_id="R2")]
+    page = FakeNegotiationsPage({NEGOTIATIONS_URL: _ssr_html(topics)})
+    result = verify_response_in_negotiations(page, _V1, resume_id="96223331")
+    assert result.indeterminate
+
+
 class _DelayedTailPage(FakeNegotiationsPage):
     """Попытка 1: страница 0 без цели, страница 1 пуста. Попытка 2: страница 0
     НЕИЗМЕННА, а опоздавший отклик появился на странице 1 (между поллами)."""
@@ -616,12 +682,14 @@ def test_challenge_after_successful_pagination_navigation_is_terminal(monkeypatc
 
 
 def test_indeterminate_when_pagination_cap_reached_with_next_page():
-    # Страницы 0 и 1 прочитаны чисто (вакансии нет), но страница 1 подтверждает
-    # продолжение — целевая вакансия могла быть на странице 2+. Fail-closed:
-    # indeterminate, а не ложный not_found (#207).
-    page0 = _ssr_html([_topic(7, "999999")], extra="<a data-qa='pager-next'>далее</a>")
-    page1 = _ssr_html([_topic(8, "888888")], extra="<a data-qa='pager-next'>далее</a>")
-    page = FakeNegotiationsPage({NEGOTIATIONS_URL: page0, f"{NEGOTIATIONS_URL}?page=1": page1})
+    # Все страницы до капа прочитаны чисто (вакансии нет), каждая подтверждает
+    # продолжение — целевая вакансия могла быть дальше. Fail-closed:
+    # indeterminate, а не ложный not_found (#207). Темы без lastModified —
+    # окно свежести (#1181) доказательства не даёт, кап остаётся терминатором.
+    pages = {NEGOTIATIONS_URL: _ssr_html([_topic(1, "999999")])}
+    for n in range(1, verify_module.NEGOTIATIONS_VERIFY_MAX_PAGES):
+        pages[f"{NEGOTIATIONS_URL}?page={n}"] = _ssr_html([_topic(n + 1, "999999")])
+    page = FakeNegotiationsPage(pages)
     result = verify_response_in_negotiations(page, _V2)
     assert result.indeterminate
     assert "потолок" in result.detail

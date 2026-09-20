@@ -42,6 +42,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any
 
 from playwright.sync_api import Error as PlaywrightError
@@ -49,7 +50,12 @@ from playwright.sync_api import Page
 
 from ..browser import goto_hh, has_auth_cookie, has_login_form
 from ..negotiations_probe import parse_initial_state
-from ..responses import NEGOTIATIONS_URL, RENDER_TIMEOUT_MS, parse_response_card
+from ..responses import (
+    NEGOTIATIONS_URL,
+    RENDER_TIMEOUT_MS,
+    _topics_all_before_cutoff,
+    parse_response_card,
+)
 from ..selector_groups import negotiations as ns
 from .antibot import raise_for_antibot
 from .steps import _dump_navigation_diagnostics
@@ -70,16 +76,29 @@ logger = logging.getLogger("hhru_bot.apply.verify")
 #: отваливающиеся под DDoS-Guard загрузки списка (goto_hh внутри тоже ретраит).
 NEGOTIATIONS_VERIFY_ATTEMPTS = 2
 NEGOTIATIONS_VERIFY_POLL_INTERVAL_MS = 10_000
-#: Сканируем страницу 0 и, если она принесла новые карточки, страницу 1:
-#: список отсортирован по свежести, только что отправленный отклик был бы на
-#: странице 0 — глубокий скан не нужен. Конец списка доказывается нулём новых
-#: vacancy_id (дрейф 2026-09-09: пейджер из UI удалён, PR #1066/#1067), а не
-#: пейджером; достижение потолка при непустом продолжении — indeterminate, а
-#: не not_found (см. _scan_negotiations).
-#: Инвариант «свежий отклик на странице 0» проверен живой пробой 2026-08-16
-#: (#210): все 14 тем аккаунта строго по creationTime по убыванию, свежайшая —
-#: на странице 0.
-NEGOTIATIONS_VERIFY_MAX_PAGES = 2
+#: Конец списка доказывается данными, а не потолком (#1181): «ноль новых тем»
+#: (дрейф 2026-09-09: пейджер из UI удалён, PR #1066/#1067) или окно свежести
+#: (NEGOTIATIONS_VERIFY_FRESH_WINDOW — страница, где все темы старше отсечки).
+#: Кап — backstop, как max_pages у responses (#1148): достижим только когда
+#: КАЖДАЯ страница до него несёт темы, тронутые ПОСЛЕ отсечки окна; при
+#: непустом продолжении на капе — indeterminate, а не not_found (fail-closed
+#: #207, см. _scan_negotiations). Инвариант «свежий отклик в начале списка»
+#: проверен живой пробой 2026-08-16 (#210): все 14 тем аккаунта строго по
+#: creationTime по убыванию, свежайшая — на странице 0.
+NEGOTIATIONS_VERIFY_MAX_PAGES = 5
+#: Окно свежести серой зоны (#1181): тема, созданная проверяемым кликом, несёт
+#: creationTime >= момента клика, а верификатор вызывается сразу после клик-фазы
+#: отклика (навигация формы + submit — минуты). Отсечка now-минус-окно заведомо
+#: раньше клика, поэтому «все темы страницы подтверждённо старше отсечки»
+#: доказывает: продолжение списка не может содержать тему этого клика — можно
+#: останавливать скан с чистым отсутствием (тот же приём, что stop_before у
+#: responses #1148). Поле сравнения — SSR ``lastModified``: он >= creationTime
+#: (модификация не бывает раньше создания), поэтому остановка корректна и при
+#: сортировке по creationTime (#210), и при сортировке по lastModified. Запись
+#: без lastModified или с непарсящейся датой — «доказательства нет»: скан
+#: продолжается, цена — лишние GET, не потерянная тема (fail-closed в сторону
+#: True не ошибается никогда, как _topics_all_before_cutoff у responses).
+NEGOTIATIONS_VERIFY_FRESH_WINDOW = timedelta(minutes=10)
 #: Окно стабилизации DOM-списка в fallback-пути: карточки могут догружаться
 #: (отложенный/виртуализированный рендер), и чтение count до стабилизации
 #: дало бы ложный not_found. Ждём и перечитываем count (см. _dom_list_stable).
@@ -141,6 +160,10 @@ def verify_response_in_negotiations(
     if not vacancy_id:
         return NegotiationsVerifyResult(INDETERMINATE, "vacancy_id карточки неизвестен")
     wanted = str(vacancy_id)
+    # Окно свежести (#1181): отсечка считается один раз на вызов — она отвечает
+    # на вопрос «могла ли тема этого клика быть создана не раньше», а не
+    # «что изменилось между попытками».
+    cutoff = datetime.now().astimezone() - NEGOTIATIONS_VERIFY_FRESH_WINDOW
     clean_read = False
     confirmed_incomplete = False
     attribution_incomparable = False
@@ -171,7 +194,9 @@ def verify_response_in_negotiations(
                     page, wanted, "сессия не авторизована — список откликов недоступен", run_id
                 )
             found_detail, clean, page_problem, incomplete, page_attribution_incomparable = (
-                _scan_negotiations(page, wanted, resume_id, account_resume_ids, seen_vacancy_ids)
+                _scan_negotiations(
+                    page, wanted, resume_id, account_resume_ids, seen_vacancy_ids, cutoff
+                )
             )
             if found_detail is not None:
                 logger.info("[VERIFY] отклик подтверждён: %s", found_detail)
@@ -233,8 +258,15 @@ def _scan_negotiations(
     resume_id: str | None,
     account_resume_ids: set[str] | None,
     seen_vacancy_ids: set[str],
+    cutoff: datetime,
 ) -> tuple[str | None, bool, str | None, bool, bool]:
-    """Сканирует страницу 0 (+ следующую при подтверждённой пагинации).
+    """Сканирует список с страницы 0 до конца, доказанного данными.
+
+    Конец списка — «ноль новых тем» ИЛИ окно свежести: страница, где все темы
+    подтверждённо старше ``cutoff`` (SSR lastModified), доказывает, что
+    продолжение не может содержать тему проверяемого клика (#1181). Кап
+    NEGOTIATIONS_VERIFY_MAX_PAGES — backstop: достижение потолка при непустом
+    продолжении — indeterminate, а не not_found (fail-closed #207).
 
     Возвращает (detail найденной темы | None, было ли чистое чтение,
     описание проблемы чтения | None, подтверждена ли пагинация, но не дочитана
@@ -281,9 +313,14 @@ def _scan_negotiations(
                 break
             else:
                 raise_for_antibot(page)
-        found_detail, page_clean, page_problem, page_attribution_incomparable, page_keys = (
-            _scan_single_page(page, wanted, resume_id, account_resume_ids, seen_vacancy_ids)
-        )
+        (
+            found_detail,
+            page_clean,
+            page_problem,
+            page_attribution_incomparable,
+            page_keys,
+            window_end,
+        ) = _scan_single_page(page, wanted, resume_id, account_resume_ids, seen_vacancy_ids, cutoff)
         new_keys = page_keys - attempt_keys
         attempt_keys |= page_keys
         attribution_incomparable = attribution_incomparable or page_attribution_incomparable
@@ -313,8 +350,10 @@ def _scan_negotiations(
         # доказывает «страница одна» — иначе отклик на хвосте списка получал
         # ложный not_found с clean=True (нарушение fail-closed серой зоны
         # #207). Страница без НОВЫХ записей (пустая или повтор предыдущей —
-        # сервер, игнорирующий ?page, возвращает те же темы) — конец.
-        if not new_keys:
+        # сервер, игнорирующий ?page, возвращает те же темы) — конец; страница,
+        # где все темы старше отсечки окна свежести, — тоже конец ДЛЯ ЭТОГО
+        # ОКНА (#1181): продолжение не может содержать тему клика.
+        if not new_keys or window_end:
             break
         if page_num == NEGOTIATIONS_VERIFY_MAX_PAGES - 1:
             # Достигли потолка скана, а последняя страница принесла новые
@@ -341,16 +380,19 @@ def _scan_single_page(
     resume_id: str | None,
     account_resume_ids: set[str] | None,
     seen_vacancy_ids: set[str],
-) -> tuple[str | None, bool, str | None, bool, set[str]]:
+    cutoff: datetime,
+) -> tuple[str | None, bool, str | None, bool, set[str], bool]:
     """Пятый элемент — ключи прочитанной страницы (идентичность для
     pagerless-стопа «ноль новых», см. _scan_negotiations): SSR — ключ темы
     (id/chatId), DOM-fallback — ключ вакансии карточки (DOM не различает
     несколько тем одной вакансии — его потолок и так fail-closed по
-    атрибуции)."""
+    атрибуции). Шестой — окно свежести (#1181): True, только если SSR-страница
+    прочитана и ВСЕ её темы подтверждённо старше cutoff (DOM-карточки таймстемпов
+    не несут — там окно недоказуемо и всегда False)."""
     try:
         html = page.content()
     except PlaywrightError as exc:
-        return None, False, f"page.content() упал ({exc})", False, set()
+        return None, False, f"page.content() упал ({exc})", False, set(), False
     topics = _ssr_topic_list(html)
     if topics is not None:
         # SSR — серверная истина; DOM читает те же данные, fallback не нужен.
@@ -391,13 +433,26 @@ def _scan_single_page(
                     f"быть создана предыдущим откликом"
                 )
                 continue
-            return _describe_topic(topic), True, None, False, page_keys
+            return _describe_topic(topic), True, None, False, page_keys, False
+        # Окно свежести (#1181): переиспользует responses._topics_all_before_cutoff —
+        # тема без lastModified/с непарсящейся датой оставляет доказательство
+        # незакрытым, и скан продолжается (цена — лишние GET). id-набор — все
+        # темы с явным id (тема без id не имеет ни ключа, ни даты —
+        # доказательства её старости нет).
+        topic_ids = {str(topic["id"]) for topic in topics if topic.get("id") is not None}
+        modified_map = {
+            str(topic["id"]): str(topic["lastModified"])
+            for topic in topics
+            if topic.get("id") is not None and topic.get("lastModified") is not None
+        }
+        window_end = _topics_all_before_cutoff(topic_ids, modified_map, cutoff)
         return (
             None,
             attribution_problem is None,
             attribution_problem,
             attribution_problem is not None,
             page_keys,
+            window_end,
         )
     dom_ids, cards_seen = _read_dom_vacancy_ids(page)
     seen_vacancy_ids.update(dom_ids)
@@ -416,11 +471,19 @@ def _scan_single_page(
                 "DOM-карточка без атрибуции резюме — исход неопределён",
                 True,
                 dom_keys,
+                False,
             )
-        return "DOM-карточка списка (SSR-состояние недоступно)", True, None, False, dom_keys
+        return "DOM-карточка списка (SSR-состояние недоступно)", True, None, False, dom_keys, False
     if cards_seen:
-        return None, True, None, False, dom_keys
-    return None, False, "список не отрендерился (нет ни SSR-состояния, ни карточек)", False, set()
+        return None, True, None, False, dom_keys, False
+    return (
+        None,
+        False,
+        "список не отрендерился (нет ни SSR-состояния, ни карточек)",
+        False,
+        set(),
+        False,
+    )
 
 
 def _resume_attribution(

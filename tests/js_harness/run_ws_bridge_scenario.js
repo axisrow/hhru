@@ -53,7 +53,7 @@ function makeEnv({ activeTab, tabReply, tabError }) {
         addListener: (fn) => chrome.runtime.onStartup._listeners.push(fn),
       },
       getManifest: () => ({
-        permissions: ['storage'],
+        permissions: ['storage', 'alarms'],
         host_permissions: ['https://hh.ru/*', 'https://*.hh.ru/*'],
       }),
       _listeners: [],
@@ -68,6 +68,14 @@ function makeEnv({ activeTab, tabReply, tabError }) {
         cb(tabReply ?? null);
         chrome.runtime.lastError = null;
       },
+    },
+    // #1181: background.js создаёт reconnect-alarm на старте SW; стаб фиксирует
+    // создание, чтобы манифест-обещание было подкреплено рантаймом.
+    alarms: {
+      create: (name, opts) => {
+        sent.alarmCreated = { name, ...opts };
+      },
+      onAlarm: { addListener: () => {} },
     },
     storage: {
       session: {

@@ -120,7 +120,16 @@ function relayToTab(command, sendResponse) {
     }
     chrome.tabs.sendMessage(tab.id, command, (response) => {
       if (chrome.runtime.lastError) {
-        sendResponse({ ok: false, error: 'content_script_unreachable' });
+        // Two MV3 failure modes must not share one code (battle flake #1181):
+        // "Receiving end does not exist" = the command never reached the
+        // content script (nothing happened — safe to report as refused);
+        // "message port closed before a response was received" = the content
+        // script GOT the command but the answer was lost (the click may have
+        // happened, e.g. the page navigated mid-wait). Collapsing the second
+        // into the first lets the agent re-click an already-executed action.
+        const message = chrome.runtime.lastError.message || '';
+        const lost = /message port closed/i.test(message);
+        sendResponse({ ok: false, error: lost ? 'response_lost' : 'content_script_unreachable' });
         return;
       }
       sendResponse(response ?? { ok: false, error: 'no_response' });
@@ -160,6 +169,24 @@ function scheduleBridgeReconnect() {
   }, bridgeReconnectDelay);
   bridgeReconnectDelay = Math.min(bridgeReconnectDelay * 2, RECONNECT_MAX_MS);
 }
+
+// MV3 SW-idle self-wake (#1181): the service worker dies ~30 s after its last
+// event, and the setTimeout reconnect chain dies with it — a sleeping SW
+// never retries, so the channel only came up if the server was started
+// BEFORE the hh.ru tab woke the SW. A periodic alarm re-fires connectLiveServe
+// from a cold start, so the order stops mattering (the CLI waits up to 120 s
+// for the client). Foreground invariant (#1159) intact: this creates no
+// daemon and no server — the SW wakes, tries one loopback connection and
+// sleeps again; the WS server still lives only inside the CLI process.
+const RECONNECT_ALARM = 'hhru-live-reconnect';
+// MV3 minimum alarm period is 30 s (Chrome >= 120).
+const RECONNECT_ALARM_PERIOD_MIN = 0.5;
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== RECONNECT_ALARM) return;
+  if (!bridgeSocket) connectLiveServe();
+});
+chrome.alarms.create(RECONNECT_ALARM, { periodInMinutes: RECONNECT_ALARM_PERIOD_MIN });
 
 function connectLiveServe() {
   if (bridgeSocket) return;

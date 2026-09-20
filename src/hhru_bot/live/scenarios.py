@@ -41,8 +41,12 @@ WAIT_STATE_HIDDEN = "hidden"
 # неизвестен (коды protocol.py #1159). Ошибка после форварда с таким кодом —
 # честное «действие могло выполниться»; всё остальное (нет клиента, отказ
 # policy-ядра расширения, элемент не найден) — клик НЕ произошёл.
+# response_lost (#1181): background.js доставил команду во вкладку, но ответ
+# потерян («message port closed before a response») — executor мог кликнуть,
+# а страница уйти в навигацию посреди ожидания; content_script_unreachable —
+# команда НЕ доставлена («Receiving end does not exist»), клика не было.
 FORWARD_UNKNOWN_CODES = frozenset(
-    {"timeout", "client_disconnected", "bad_response", "unexpected_message"}
+    {"timeout", "client_disconnected", "bad_response", "unexpected_message", "response_lost"}
 )
 
 # Позитивный маркер успеха (#1161): после реального поднятия hh.ru убирает

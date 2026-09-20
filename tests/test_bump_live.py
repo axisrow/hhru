@@ -132,7 +132,7 @@ def test_action_names_match_s2_contract() -> None:
     )
     assert (WAIT_STATE_VISIBLE, WAIT_STATE_HIDDEN) == ("visible", "hidden")
     assert FORWARD_UNKNOWN_CODES == frozenset(
-        {"timeout", "client_disconnected", "bad_response", "unexpected_message"}
+        {"timeout", "client_disconnected", "bad_response", "unexpected_message", "response_lost"}
     )
 
 

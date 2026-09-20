@@ -369,6 +369,26 @@ def test_hhru_live_relay_reports_content_script_unreachable():
     assert scenario["error"] == "content_script_unreachable"
 
 
+def test_hhru_live_relay_reports_response_lost_when_port_closed():
+    """Боевой флейк #1181: команда ДОСТАВЛЕНА во вкладку, но ответ потерян
+    (клик мог случиться — страница ушла в навигацию посреди ожидания). MV3
+    отдаёт другой текст lastError, и релей обязан ответить response_lost, а не
+    content_script_unreachable (который читается как «клика не было» и
+    приглашает повторный клик)."""
+    scenario = _run_background_scenario("relay_response_port_closed")
+    assert scenario["error"] == "response_lost"
+
+
+def test_hhru_live_relay_alarm_reconnects_disconnected_bridge():
+    """SW-idle (#1181): периодический alarm пересоздаёт соединение после сна SW
+    (reconnect-таймеры умирают вместе с ним) и не плодит соединения, пока сокет
+    ещё жив/подключается."""
+    scenario = _run_background_scenario("alarm_created_and_reconnects")
+    assert scenario["created"]["name"] == "hhru-live-reconnect"
+    assert scenario["created"]["periodInMinutes"] == 0.5
+    assert (scenario["connected"], scenario["afterAlarm"], scenario["still"]) == (1, 2, 2)
+
+
 def test_hhru_live_relay_rejects_foreign_sender_and_unknown_action():
     foreign = _run_background_scenario("relay_rejects_foreign_sender")
     assert foreign["error"] == "sender_not_allowed"
@@ -674,7 +694,7 @@ def test_hhru_live_bridge_announces_hello_diagnostics():
             "fill_element",
         ]
     )
-    assert hello["permissions"] == ["storage"]
+    assert hello["permissions"] == ["storage", "alarms"]
     assert hello["hostPermissions"] == ["https://hh.ru/*", "https://*.hh.ru/*"]
 
 

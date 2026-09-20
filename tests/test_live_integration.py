@@ -264,6 +264,27 @@ def test_client_disconnect_mid_command_is_forwarded_unknown(channel):
     assert exc.value.forwarded is True
 
 
+def test_response_lost_is_forwarded_unknown(channel):
+    # #1181: background.js доставил команду во вкладку, но ответ потерян
+    # (порт закрылся — клик мог случиться, страница ушла в навигацию). Код
+    # response_lost обязан читаться как «исход неизвестен», а не как отказ.
+    client = _connect(channel)
+
+    def lose() -> None:
+        _, payload = client.recv_frame()
+        obj = json.loads(payload)
+        client.send_text(
+            json.dumps({"id": obj["id"], "status": "error", "result": {"error": "response_lost"}})
+        )
+
+    threading.Thread(target=lose, daemon=True).start()
+    with pytest.raises(PrimitiveError) as exc:
+        channel.get_state()
+    client.close()
+    assert exc.value.code == "response_lost"
+    assert exc.value.forwarded is True
+
+
 def test_silent_client_times_out_as_forwarded_unknown(channel):
     client = _connect(channel)
     channel._server.response_timeout = 0.3  # расширение приняло команду и молчит
