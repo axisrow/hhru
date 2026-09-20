@@ -515,9 +515,7 @@ class LiveChannel:
     def wait(self, selector: str, state: str, timeout_ms: int) -> bool:
         """Дождаться состояния селектора; False — бюджет истёк без события."""
         result = self._executor_result(
-            self._call(
-                ACTION_WAIT, {"selector": selector, "state": state, "timeoutMs": timeout_ms}
-            )
+            self._call(ACTION_WAIT, {"selector": selector, "state": state, "timeoutMs": timeout_ms})
         )
         # Ключ ответа — часть контракта S2: исполнитель кладёт факт в wait.met.
         return bool((result.get("wait") or result).get("met", result.get("conditionMet", False)))
