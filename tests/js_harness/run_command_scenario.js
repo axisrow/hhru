@@ -26,6 +26,9 @@ const context = vm.createContext({
   setTimeout,
   clearTimeout,
   console,
+  // No-op keep-alive stub, see run_content_scenario.js (#1187/#1197).
+  setInterval: () => 0,
+  clearInterval: () => {},
 });
 
 runExtensionInContext(context);

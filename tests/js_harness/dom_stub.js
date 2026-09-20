@@ -203,6 +203,9 @@ function makeChrome(sentMessages) {
       id: 'hhru-live-test-extension',
       sendMessage(message) {
         sentMessages.push(message);
+        // MV3 sendMessage always returns a promise for the (optional)
+        // response; content code may rely on that shape (#1203 review).
+        return Promise.resolve({ ok: true });
       },
       onMessage: {
         addListener(fn) {
