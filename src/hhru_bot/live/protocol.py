@@ -102,7 +102,13 @@ def parse_envelope(text: str) -> Command:
     payload = obj.get("payload", {})
     if not isinstance(payload, dict):
         raise ProtocolError(BAD_PAYLOAD, "payload должен быть JSON-объектом", command_id)
-    ALLOWED_ACTIONS[action](payload)
+    try:
+        ALLOWED_ACTIONS[action](payload)
+    except ProtocolError as exc:
+        # Валидатор не знает id envelope'а, а без него ответ об ошибке (id=null)
+        # не коррелируется с командой: вызывающий ждёт timeout вместо
+        # немедленного отказа (#1164, интеграционный тест LiveChannel).
+        raise ProtocolError(exc.code, exc.detail, command_id) from exc
     return Command(id=cast("str | int", command_id), action=action, payload=payload)
 
 
