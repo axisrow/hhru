@@ -20,6 +20,7 @@ import os
 import pytest
 
 from hhru_bot.browser import LOGIN_FORM
+from hhru_bot.commands.bump_live import DEFAULT_LIVE_PORT
 from hhru_bot.live.scenarios import LiveChannel
 
 _LIVE_CONFIG = os.environ.get("HHRU_LIVE_CONFIG")
@@ -38,7 +39,10 @@ pytestmark = [
 
 
 def test_read_page_state_over_real_channel():
-    channel = LiveChannel(client_timeout=CLIENT_TIMEOUT_SECONDS)
+    # Порт — константа расширения (background.js LIVE_SERVE_URL = ws://127.0.0.1:8765,
+    # тот же DEFAULT_LIVE_PORT, что у команды bump-live): ephemeral-порт никогда
+    # не увидит клиента и тест всегда падал бы по wait_client (#1186).
+    channel = LiveChannel(port=DEFAULT_LIVE_PORT, client_timeout=CLIENT_TIMEOUT_SECONDS)
     url = channel.start()
     print(f"[INFO] канал {url} — жду расширение hhru-live (до {CLIENT_TIMEOUT_SECONDS:.0f} с)")
     try:
