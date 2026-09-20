@@ -55,6 +55,9 @@ DEFAULT_RESPONSE_TIMEOUT = 30.0
 # Бюджет на дочитывание одного WS-кадра, когда сокет уже стал читаемым
 # (loopback: кадр приходит целиком за миллисекунды).
 FRAME_TIMEOUT = 5.0
+# Бюджет handshake кандидата-подключения (#1185): дедлайн select-цикла, не
+# блокирующее окно — не-handshake-зонд (скан порта, GET) не задерживает
+# вердикты команд в полёте.
 HANDSHAKE_TIMEOUT = 5.0
 
 
@@ -76,6 +79,10 @@ class LiveServeServer:
         self.response_timeout = response_timeout
         self._listener: socket.socket | None = None
         self._client: WSConnection | None = None
+        # Подключение, дозревающее до WS-handshake (#1185): сокет в общем
+        # select-цикле, HANDSHAKE_TIMEOUT — его дедлайн, не блокировка.
+        self._candidate: WSConnection | None = None
+        self._candidate_deadline = 0.0
         # (command_id, deadline) единственной команды в полёте (single-flight).
         self._pending: tuple[str | int, float] | None = None
         # Последняя handshake-диагностика клиента (#1163): kind-frame "hello"
@@ -95,6 +102,9 @@ class LiveServeServer:
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         listener.bind((self.host, self.port))
         listener.listen(1)
+        # Неблокирующий accept (#1185): подключение без handshake не должно
+        # задерживать select-цикл.
+        listener.setblocking(False)
         self._listener = listener
         self.host, self.port = listener.getsockname()[:2]
 
@@ -115,6 +125,8 @@ class LiveServeServer:
                 # Single-flight: пока команда в полёте, stdin не читаем —
                 # следующая строка подождёт своей очереди в буфере пайпа.
                 wait_fds: list[int | socket.socket] = [self._listener]
+                if self._candidate is not None:
+                    wait_fds.append(self._candidate.sock)
                 if self._client is not None:
                     wait_fds.append(self._client.sock)
                 if stdin_open and self._pending is None:
@@ -124,6 +136,10 @@ class LiveServeServer:
                 except InterruptedError:  # pragma: no cover - PEP 475 ретраит сам
                     continue
                 now = time.monotonic()
+                # Состав fd фиксирован на момент select: кандидат, ставший
+                # клиентом в этой итерации, не читается как клиент (#1185) —
+                # его «читаемость» уже съедена handshake, кадра там нет.
+                client_fd = self._client.sock if self._client is not None else None
 
                 if self._listener in readable:
                     self._accept(out)
@@ -133,7 +149,10 @@ class LiveServeServer:
                         stdin_buf += chunk
                     else:
                         stdin_open = False
-                if self._client is not None and self._client.sock in readable:
+                # Кандидат дозревает по читаемости И закрывается по дедлайну,
+                # даже когда его сокет молчит — поэтому без условия readable.
+                self._progress_handshake(now, out)
+                if client_fd is not None and client_fd in readable:
                     self._recv_client(now, out)
                 # Порция строк обрабатывается всегда, когда сервер свободен:
                 # и после нового куска, и после завершения предыдущей команды.
@@ -150,6 +169,9 @@ class LiveServeServer:
                     break
                 self._check_deadlines(time.monotonic(), out)
         finally:
+            if self._candidate is not None:
+                self._candidate.close()
+                self._candidate = None
             if self._client is not None:
                 self._client.send_close()
                 self._client.close()
@@ -164,9 +186,10 @@ class LiveServeServer:
         listener = self._listener
         if listener is None:  # pragma: no cover - защищает тип
             return
-        if self._client is not None:
-            # Слот один: «лишний» сокет закрывается без handshake — клиент
-            # увидит обрыв и повторит по своему reconnect-циклу.
+        if self._client is not None or self._candidate is not None:
+            # Слот один (включая ещё не завершивший handshake кандидата):
+            # «лишний» сокет закрывается без handshake — клиент увидит обрыв
+            # и повторит по своему reconnect-циклу.
             try:
                 sock, _ = listener.accept()
                 sock.close()
@@ -174,11 +197,35 @@ class LiveServeServer:
                 pass
             return
         try:
-            self._client = WSConnection.accept(listener, HANDSHAKE_TIMEOUT)
-        except (WSError, OSError):
+            sock, _ = listener.accept()
+        except (BlockingIOError, InterruptedError):
+            return  # фантомная читаемость — на следующей итерации
+        except OSError:
+            return  # подключение умерло между select и accept
+        self._candidate = WSConnection(sock)
+        self._candidate_deadline = time.monotonic() + HANDSHAKE_TIMEOUT
+
+    def _progress_handshake(self, now: float, out: TextIO) -> None:
+        """Дозревание кандидата до WS-handshake (#1185), один шаг за итерацию."""
+        candidate = self._candidate
+        if candidate is None:  # pragma: no cover - защищает тип
+            return
+        if now >= self._candidate_deadline:
+            candidate.close()
+            self._candidate = None
+            return
+        try:
+            done = candidate.advance_handshake(self._candidate_deadline)
+        except WSError:
             # Не-handshake-подключение (скан порта, GET в браузере) — не ошибка
             # сценария; слушаем дальше.
+            candidate.close()
+            self._candidate = None
             return
+        if not done:
+            return
+        self._candidate = None
+        self._client = candidate
         self.connections_seen += 1
         self._last_seen = time.monotonic()
         self._next_ping = self._last_seen + self.heartbeat_interval
@@ -290,6 +337,8 @@ class LiveServeServer:
 
     def _select_timeout(self, now: float) -> float | None:
         deadlines = []
+        if self._candidate is not None:
+            deadlines.append(self._candidate_deadline)
         if self._client is not None:
             deadlines.append(self._next_ping)
             deadlines.append(self._last_seen + self.heartbeat_timeout)

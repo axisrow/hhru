@@ -51,6 +51,10 @@ class WSConnection:
     def __init__(self, sock: socket.socket) -> None:
         self._sock = sock
         sock.setblocking(False)
+        # Недочитанный handshake-запрос (#1185): дозревает по неблокирующим
+        # вызовам advance_handshake, пока владелец гоняет свой select-цикл.
+        self._hs_buf = bytearray()
+        self._handshake_done = False
 
     @property
     def sock(self) -> socket.socket:
@@ -58,56 +62,55 @@ class WSConnection:
 
     # -- handshake ---------------------------------------------------------
 
-    @classmethod
-    def accept(cls, server_sock: socket.socket, timeout: float) -> WSConnection:
-        """Принять подключение и провести RFC 6455 handshake (GET + Upgrade)."""
-        server_sock.settimeout(timeout)
-        try:
-            sock, _peer = server_sock.accept()
-        except TimeoutError as exc:
-            raise WSError("accept timeout", close_code=CLOSE_NORMAL) from exc
-        sock.setblocking(False)
-        conn = cls(sock)
-        try:
-            request = conn._read_handshake_request(timeout)
-            headers = _parse_headers(request)
-            if headers.get("upgrade", "").lower() != "websocket":
-                raise WSError("нет Upgrade: websocket")
-            key = headers.get("sec-websocket-key")
-            if not key:
-                raise WSError("нет Sec-WebSocket-Key")
-            accept = base64.b64encode(
-                hashlib.sha1((key + _WS_GUID).encode("ascii")).digest()
-            ).decode("ascii")
-            response = (
-                "HTTP/1.1 101 Switching Protocols\r\n"
-                "Upgrade: websocket\r\n"
-                "Connection: Upgrade\r\n"
-                f"Sec-WebSocket-Accept: {accept}\r\n\r\n"
-            )
-            conn._send_all(response.encode("ascii"), timeout)
-        except WSError:
-            sock.close()
-            raise
-        return conn
+    def advance_handshake(self, deadline: float) -> bool:
+        """Один неблокирующий шаг handshake (GET + Upgrade), #1185.
 
-    def _read_handshake_request(self, timeout: float) -> bytes:
-        deadline = time.monotonic() + timeout
-        buf = bytearray()
-        while b"\r\n\r\n" not in buf:
-            if len(buf) > MAX_HANDSHAKE_BYTES:
-                raise WSError("handshake-запрос слишком большой")
-            try:
-                data = self._sock.recv(MAX_HANDSHAKE_BYTES)
-            except (BlockingIOError, InterruptedError):
-                _wait_readable(self._sock, deadline)
-                continue
-            except OSError as exc:
-                raise WSError(f"обрыв при handshake: {exc}", close_code=CLOSE_NORMAL) from exc
-            if not data:
-                raise WSError("соединение закрыто до handshake", close_code=CLOSE_NORMAL)
-            buf += data
-        return bytes(buf)
+        Вызывается, когда сокет стал читаемым (select-цикл владельца);
+        handshake-запрос дочитывается по мере поступления байт, ответ 101
+        уходит сразу после полного запроса. Дедлайн (monotonic, абсолютный)
+        держит вызывающий и в него же упирает ожидание записи ответа.
+
+        True — handshake завершён, соединение готово к recv_message.
+        WSError — нарушение протокола или обрыв: соединение закрывает
+        вызывающий. Байты после ``\\r\\n\\r\\n`` отбрасываются (как и в
+        прежнем блокирующем accept'е): наш клиент шлёт кадры только после 101.
+        """
+        if self._handshake_done:
+            return True
+        try:
+            data = self._sock.recv(MAX_HANDSHAKE_BYTES - len(self._hs_buf))
+        except (BlockingIOError, InterruptedError):
+            return False
+        except OSError as exc:
+            raise WSError(f"обрыв при handshake: {exc}", close_code=CLOSE_NORMAL) from exc
+        if not data:
+            raise WSError("соединение закрыто до handshake", close_code=CLOSE_NORMAL)
+        self._hs_buf += data
+        if len(self._hs_buf) > MAX_HANDSHAKE_BYTES:
+            raise WSError("handshake-запрос слишком большой")
+        if b"\r\n\r\n" not in self._hs_buf:
+            return False
+        request, self._hs_buf = bytes(self._hs_buf), bytearray()
+        headers = _parse_headers(request)
+        if headers.get("upgrade", "").lower() != "websocket":
+            raise WSError("нет Upgrade: websocket")
+        key = headers.get("sec-websocket-key")
+        if not key:
+            raise WSError("нет Sec-WebSocket-Key")
+        accept_hash = hashlib.sha1((key + _WS_GUID).encode("ascii")).digest()
+        accept = base64.b64encode(accept_hash).decode("ascii")
+        response = (
+            "HTTP/1.1 101 Switching Protocols\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Accept: {accept}\r\n\r\n"
+        )
+        # ponytail: loopback, ~120 байт в пустой send-буфер — select в
+        # _send_all возвращает мгновенно; клиент, читающий ответ 101,
+        # остаётся обязанностью вызывающего через дедлайн.
+        self._send_all(response.encode("ascii"), max(0.0, deadline - time.monotonic()))
+        self._handshake_done = True
+        return True
 
     # -- приём -------------------------------------------------------------
 
