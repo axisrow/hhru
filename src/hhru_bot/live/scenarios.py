@@ -273,12 +273,20 @@ def bump_via_live(channel, resume, dry_run: bool):
     try:
         url = str(channel.get_state().get("url", ""))
         parts = urlsplit(url)
-        if parts.path != "/applicant/resumes" or not _is_hh_ru_host(parts.netloc):
+        # hh.ru мигрировал «Мои резюме»: список открывается и на классическом
+        # /applicant/resumes, и на новом /applicant/profile/me (живой факт
+        # прогона #1162, 2026-09-20: редирект на profile/me, карточки
+        # resume-card-link-* на месте). Селекторы карточек общие.
+        if parts.path.rstrip("/") not in (
+            "/applicant/resumes",
+            "/applicant/profile/me",
+        ) or not _is_hh_ru_host(parts.netloc):
             return BumpResult(
                 resume.id,
                 False,
                 f"живая вкладка не на списке резюме ({url or 'URL не прочитан'}); "
-                f"откройте {RESUMES_LIST_URL} в вкладке с расширением hhru-live",
+                f"откройте {RESUMES_LIST_URL} (или /applicant/profile/me) "
+                "в вкладке с расширением hhru-live",
             )
         login = channel.check(LOGIN_FORM)
         if login.get("found") or login.get("visible"):
