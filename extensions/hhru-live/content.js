@@ -290,4 +290,10 @@ chrome.runtime.sendMessage({ kind: 'connected', url: location.href, observedAt: 
 // lives only as long as the SW does) — alive while this tab is open, so a
 // server started after the browser is still noticed. background.js answers
 // these pings and discards them. 20s < the 30s idle window, by design.
-setInterval(() => chrome.runtime.sendMessage({ kind: 'keepalive' }), 20000);
+const KEEPALIVE_INTERVAL_MS = 20000;
+setInterval(() => {
+  // .catch: after an extension reload/update the orphaned content script
+  // would otherwise log an unhandled rejection every 20s until the next
+  // navigation (#1203 review).
+  chrome.runtime.sendMessage({ kind: 'keepalive' }).catch(() => {});
+}, KEEPALIVE_INTERVAL_MS);

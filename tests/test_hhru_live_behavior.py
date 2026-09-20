@@ -19,6 +19,7 @@ Actions рантаймом), поэтому здесь не требуется �
 """
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -737,8 +738,6 @@ def test_hhru_live_content_script_sends_keepalive_ping():
     """#1187/#1197: пинг живёт в content.js (живёт, пока открыта вкладка),
     а не в background.js (его таймеры умирают вместе с SW). Интервал — под
     30-секундным idle-окном MV3."""
-    from pathlib import Path
-
     root = Path(__file__).parents[1] / "extensions" / "hhru-live"
     content = (root / "content.js").read_text()
     background = (root / "background.js").read_text()
@@ -747,8 +746,6 @@ def test_hhru_live_content_script_sends_keepalive_ping():
     assert "keepalive" in background
     # Пинг чаще idle-окна: 20000 < 30000. Небольшой потолок сверху оставлен
     # явным, чтобы «оптимизация» интервала до 45 с поймалась ревью/тестом.
-    import re
-
-    match = re.search(r"\{ kind: 'keepalive' \}\), (\d+)\)", content)
+    match = re.search(r"KEEPALIVE_INTERVAL_MS = (\d+)", content)
     assert match is not None
     assert int(match.group(1)) < 30000
