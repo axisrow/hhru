@@ -354,11 +354,31 @@ def bump_via_live(channel, resume, dry_run: bool):
 
     # Позитивный маркер успеха (#1161): кулдаун-хинт появился (hh.ru снял
     # кнопку) или хотя бы кнопка исчезла из карточки. Ни один не подтверждён —
-    # выдуманный успех запрещён: acted+uncertain.
+    # выдуманный успех запрещён: acted+uncertain. Исчезновение кнопки ждём
+    # через state=hidden, а не «not wait(visible)»: wait(visible) возвращается
+    # на первом же срезе DOM, где кнопку после клика ещё видно, и снятие
+    # осталось бы незамеченным.
     try:
         if channel.wait(in_scope_hint, WAIT_STATE_VISIBLE, MARKER_TIMEOUT_MS):
+            # Гонка кулдауна #1184: хинт может смонтироваться в окне между
+            # pre-check и кликом (кулдаун наступил ровно сейчас) — hh.ru
+            # оставляет кнопку в карточке disabled, клик ничего не поднимает,
+            # а «хинт виден» метится мгновенно. Успех — только когда кнопка
+            # действительно снята; хинт при оставшейся кнопке не различает
+            # «клик в disabled» от «поднялось, рендер запаздывает» —
+            # fail-closed: acted+uncertain (лимиты/кулдаун его видят, #176).
+            if not channel.wait(in_scope_button, WAIT_STATE_HIDDEN, MARKER_GONE_TIMEOUT_MS):
+                return BumpResult(
+                    resume.id,
+                    False,
+                    "клик выполнен, кулдаун-хинт появился, но кнопка поднятия "
+                    "не снята — поднятие могло не дойти до hh.ru (гонка "
+                    "кулдауна #1184)",
+                    acted=True,
+                    uncertain=True,
+                )
             return BumpResult(resume.id, True, "success", acted=True)
-        if not channel.wait(in_scope_button, WAIT_STATE_VISIBLE, MARKER_GONE_TIMEOUT_MS):
+        if channel.wait(in_scope_button, WAIT_STATE_HIDDEN, MARKER_GONE_TIMEOUT_MS):
             return BumpResult(resume.id, True, "success: кнопка поднятия исчезла", acted=True)
         return BumpResult(
             resume.id,
