@@ -58,6 +58,15 @@ class _FakeLocator:
         # уйти на hh.ru, но ожидание после клика упало).
         self._click_error = click_error
 
+    @property
+    def first(self) -> _FakeLocator:
+        # close_stale_contacts_alert (#1189) адресует элементы через .first.
+        return self
+
+    def is_visible(self) -> bool:
+        # #1189: close_stale_contacts_alert читает видимость попапа через .first.
+        return self._present
+
     def count(self) -> int:
         if self._render_delayed:
             # Немедленное чтение без ожидания — застаёт непрогрузившийся DOM.
@@ -183,6 +192,8 @@ class FakeBumpPage:
         render_after_waits: int = 0,
         other_cards_present: bool = True,
         ssr_anchors: bool = False,
+        stale_alert_present: bool = False,
+        stale_cancel_present: bool | None = None,
     ):
         self.goto_calls: list[str] = []
         self.click_log: list[str] = []
@@ -198,6 +209,14 @@ class FakeBumpPage:
         # #1076 (ревью PR #1079): SSR-якоря списка есть в DOM ещё до
         # гидрации — count() > 0 при не-видимом списке.
         self._ssr_anchors = ssr_anchors
+        # #1189: модалка «Контакты в резюме могли устареть» смонтирована
+        # и видима при заходе на список (живой census 2026-09-20).
+        self._stale_alert_present = stale_alert_present
+        # None — cancel живёт тем же флагом, что и модалка; False отдельно —
+        # для кейса «модалка видима, а dismiss-кнопки нет» (cycle-review #1190).
+        self._stale_cancel_present = (
+            stale_alert_present if stale_cancel_present is None else stale_cancel_present
+        )
         self._wait_calls = 0
 
     @property
@@ -221,6 +240,10 @@ class FakeBumpPage:
             return _FakeCardLink(self)
         if selector == RESUME_LIST_CARD_LINK_PREFIX:
             return _FakeAnyCardLink(self)
+        if selector == resume_page.STALE_CONTACTS_SYNC_ALERT:
+            return _FakeLocator(self._stale_alert_present, self.click_log, "stale-alert")
+        if selector == resume_page.STALE_CONTACTS_SYNC_ALERT_CANCEL:
+            return _FakeLocator(self._stale_cancel_present, self.click_log, "stale-alert-cancel")
         return _FakeLocator(False)
 
 
@@ -508,3 +531,69 @@ def test_bump_ssr_anchors_list_never_visible_is_indeterminate():
     assert "не подтверждено" in result.reason
     assert "удалено" not in result.reason
     assert result.acted is False
+
+
+# --- #1189: модалка «Контакты в резюме могли устареть» ------------------------
+
+
+def test_bump_closes_stale_contacts_alert_before_click():
+    """#1189 (боевой сбой #1161): модалка смонтирована при заходе на список
+    резюме и перехватывает клик поднятия. Обязана закрыться dismiss-кнопкой
+    «Закрыть» ДО клика — тогда успех вместо uncertain и кулдауна 4ч; пометка
+    в reason делает срабатывание видимым."""
+    page = FakeBumpPage(hint_present=False, button_present=True, stale_alert_present=True)
+
+    result = bump_resume(page, _resume(), dry_run=False)
+
+    assert result.success is True
+    assert page.click_log == ["stale-alert-cancel", "button"]
+    assert "модалка контактов закрыта" in result.reason
+
+
+def test_bump_stale_alert_without_visible_cancel_has_no_false_close_mark():
+    """cycle-review #1190: True close обязан означать ФАКТ клика. Модалка видима,
+    но dismiss-кнопка нет (аномальный DOM) — клика не было, пометка «закрыта
+    кликом» в success-reason не появляется."""
+    page = FakeBumpPage(
+        hint_present=False,
+        button_present=True,
+        stale_alert_present=True,
+        stale_cancel_present=False,
+    )
+
+    result = bump_resume(page, _resume(), dry_run=False)
+
+    assert result.success is True
+    assert page.click_log == ["button"]
+    assert result.reason == "success"
+
+
+def test_bump_stale_alert_not_touched_in_dry_run():
+    # dry-run: ноль мутаций страницы — попап не закрывается (выход до боевого блока).
+    page = FakeBumpPage(hint_present=False, button_present=True, stale_alert_present=True)
+
+    result = bump_resume(page, _resume(), dry_run=True)
+
+    assert result.success is True
+    assert page.click_log == []
+
+
+def test_bump_click_error_with_stale_alert_visible_names_it():
+    """#1189: клик упал, модалка видима — исход обязан называть перехват
+    (не безликий «исход неопределён», каким был сбой #1161); модалка
+    закрывается dismiss-кнопкой, чтобы не съесть следующий прогон.
+    Вердикт прежний fail-closed: acted+uncertain."""
+    page = FakeBumpPage(
+        hint_present=False,
+        button_present=True,
+        stale_alert_present=True,
+        button_click_error=True,
+    )
+
+    result = bump_resume(page, _resume(), dry_run=False)
+
+    assert result.success is False
+    assert result.acted is True
+    assert result.uncertain is True
+    assert "видима модалка" in result.reason
+    assert "stale-alert-cancel" in page.click_log

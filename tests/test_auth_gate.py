@@ -170,6 +170,31 @@ def test_census_no_annotation_without_login_form(monkeypatch, tmp_path, capsys):
     assert "ВНИМАНИЕ" not in capsys.readouterr().out
 
 
+# --- подсказка агентскому воркеру в тексте отказа (#1194) ---------------------
+
+
+def test_gate_messages_carry_agent_seed_hint():
+    """Обе ветки гейта направляют воркера к storage_state-рецепту, а не к циклу
+    «login» (#1194): интерактивный вход воркеру недоступен, сессия живёт в
+    файле. Человекная ремедиация `login` в тексте сохранена; ветка с
+    отвергнутым hhtoken честно говорит, что пересев того же файла не поможет."""
+    from hhru_bot.browser import require_authenticated_page
+
+    with pytest.raises(NotAuthenticated) as no_cookie:
+        require_authenticated_page(_LoginPage(cookie=False, login_form=False))
+    message = str(no_cookie.value)
+    assert "login" in message
+    assert "storage_state/hh_session.json" in message
+    assert "add_cookies" in message
+
+    with pytest.raises(NotAuthenticated) as rejected:
+        require_authenticated_page(_LoginPage(cookie=True, login_form=True))
+    message = str(rejected.value)
+    assert "login" in message
+    assert "пересев того же storage_state не поможет" in message
+    assert "import-cookies" in message
+
+
 # --- граница CLI: единое сообщение и exit-код --------------------------------
 
 

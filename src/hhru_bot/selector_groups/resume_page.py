@@ -21,6 +21,19 @@ RESUME_BUMP_BUTTON = _selector("resume_page.RESUME_BUMP_BUTTON")
 RESUME_BUMP_DISABLED_HINT = _selector("resume_page.RESUME_BUMP_DISABLED_HINT")
 RESUME_CARD_LINK_TEMPLATE = _selector("resume_page.RESUME_CARD_LINK_TEMPLATE")
 
+# #1189 (read-only census /applicant/resumes 2026-09-20, аккаунт testing):
+# модалка «Контакты в резюме могли устареть» — Magritte-alert на magritte-overlay,
+# смонтирована и ВИДИМА при простом заходе на список резюме, до любых кликов;
+# перехватывает клик по кнопке поднятия (hit-target check) — боевой сбой #1161:
+# 30с таймаут клика → acted+uncertain и кулдаун 4ч впустую. Кнопки — настоящие
+# <button>: primary accept «Заменить на новые из профиля» (МУТАЦИЯ профиля —
+# кодом не используется никогда) и secondary cancel «Закрыть» (dismiss, не
+# мутация). На странице вакансии модалки нет (census 2026-09-20, 0 вхождений).
+# Инлайн-баннер profile-contacts-sync-banner на той же странице не overlay и
+# клики не перехватывает — кодом не адресуется.
+STALE_CONTACTS_SYNC_ALERT = "[data-qa='profile-contacts-sync-alert']"
+STALE_CONTACTS_SYNC_ALERT_CANCEL = "[data-qa='profile-contacts-sync-alert-cancel']"
+
 # Кандидаты из исходного флоу (#219); на заблокированной копии #225 ни один не
 # присутствовал в живом DOM. Команда обязана проверять count и не угадывать.
 RESUME_PUBLISH_BUTTON = "button:has-text('Опубликовать')"
