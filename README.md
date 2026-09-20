@@ -233,6 +233,8 @@ HHRU_ACCOUNT=marketing scripts/scheduled_run.sh --headless apply --limit 5
    диагностика: сервер, подключение расширения, версия протокола, allowlist,
    permissions. Каждая строка `[FAIL]` печатает подсказку следующего шага;
    сам doctor поднимает свой сервер, держать `live-serve` ради него не нужно.
+5. **Ручной прогон канала.** Чеклист живой проверки (live_read-тест, боевой
+   `bump-live`, apply) — `docs/live-checklist.md`.
 
 ## Автопилот: запуск по расписанию
 
