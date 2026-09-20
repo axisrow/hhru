@@ -284,3 +284,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 chrome.runtime.sendMessage({ kind: 'connected', url: location.href, observedAt: new Date().toISOString() });
+// Keep-alive (#1187, #1197): a content-script message wakes a suspended MV3
+// service worker and resets its ~30s idle timer. Pinging every 20s keeps the
+// worker — and with it the WebSocket reconnect chain (its setTimeout backoff
+// lives only as long as the SW does) — alive while this tab is open, so a
+// server started after the browser is still noticed. background.js answers
+// these pings and discards them. 20s < the 30s idle window, by design.
+setInterval(() => chrome.runtime.sendMessage({ kind: 'keepalive' }), 20000);

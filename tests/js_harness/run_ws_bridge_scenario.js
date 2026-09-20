@@ -294,6 +294,24 @@ const SCENARIOS = {
       heartbeatCount: heartbeatFrames.length,
     };
   },
+
+  // #1187/#1197: the content-script keep-alive ping is what keeps the MV3 SW
+  // (and its setTimeout reconnect chain) alive while an hh.ru tab is open —
+  // each content-script message wakes a suspended worker and resets its idle
+  // timer. The ping must be answered from behind the trusted-sender gate.
+  keepalive_answered: async () => {
+    const env = makeEnv({ activeTab: null });
+    runBridge(env);
+    handshake(env.sockets);
+    const listener = env.chrome.runtime._listeners[0];
+    const response = await new Promise((resolve) => {
+      listener({ kind: 'keepalive' }, { tab: { id: 7, url: 'https://hh.ru/applicant/me' } }, resolve);
+    });
+    const foreign = await new Promise((resolve) => {
+      listener({ kind: 'keepalive' }, { tab: { id: 9, url: 'https://example.com/page' } }, resolve);
+    });
+    return { response, foreign };
+  },
 };
 
 async function main() {

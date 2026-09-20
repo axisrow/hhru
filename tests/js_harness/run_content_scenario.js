@@ -20,6 +20,11 @@ const context = vm.createContext({
   getComputedStyle: env.getComputedStyle,
   location: env.location,
   console,
+  // content.js's keep-alive ping (#1187/#1197) registers a 20s interval at
+  // eval; scenarios finish in milliseconds, so a no-op stub is enough — a
+  // real timer would both tick nothing and keep this process alive forever.
+  setInterval: () => 0,
+  clearInterval: () => {},
 });
 
 // Build a cookie-consent banner already present in the DOM before content.js

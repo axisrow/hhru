@@ -160,7 +160,10 @@ function announceHello() {
 }
 
 // A dropped connection is never a scenario error (#1159): reconnect with
-// capped backoff until the CLI server comes back.
+// capped backoff until the CLI server comes back. The in-memory backoff
+// timer lives only as long as this SW does — the piece that keeps the worker
+// (and with it this chain) alive while an hh.ru tab is open is the
+// content-script keep-alive ping (#1187, #1197), not anything scheduled here.
 function scheduleBridgeReconnect() {
   if (bridgeReconnectTimer) return;
   bridgeReconnectTimer = setTimeout(() => {
@@ -249,6 +252,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (!isTrustedSender(sender)) {
     sendResponse({ ok: false, error: 'sender_not_allowed' });
+    return false;
+  }
+  // Keep-alive ping from the hh.ru tab (#1187, #1197): a content-script
+  // message wakes a suspended MV3 SW (module eval re-runs connectLiveServe)
+  // and resets its ~30s idle timer, so the 20s ping keeps the worker — and
+  // with it the WebSocket reconnect chain — alive while any hh.ru tab is
+  // open. That is what makes "server started after Chrome" recoverable.
+  // Nothing to record: answer and drop.
+  if (message?.kind === 'keepalive') {
+    sendResponse({ ok: true });
     return false;
   }
   if (message?.kind === 'connected' || message?.kind === 'overlay_detected') {

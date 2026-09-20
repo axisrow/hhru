@@ -24,6 +24,9 @@ const context = vm.createContext({
   getComputedStyle: env.getComputedStyle,
   location: env.location,
   console,
+  // No-op keep-alive stub, see run_content_scenario.js (#1187/#1197).
+  setInterval: () => 0,
+  clearInterval: () => {},
 });
 
 // Modal already in the DOM before content.js runs, laid out (non-zero

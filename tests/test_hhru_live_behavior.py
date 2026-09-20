@@ -705,3 +705,37 @@ def test_hhru_live_bridge_reconnects_on_browser_startup():
     scenario = _run_ws_bridge_scenario("startup_reconnect")
     assert scenario["listenerRegistered"] is True
     assert scenario["newSocketCreated"] is True
+
+
+def test_hhru_live_bridge_answers_keepalive_ping():
+    """#1187/#1197: keep-alive пинг контент-скрипта обязан доходить до
+    background и получать ответ. Каждое сообщение контент-скрипта будит
+    заснувший MV3 SW (module eval перезапускает connectLiveServe) и сбрасывает
+    его ~30-секундный idle-таймер, поэтому пинг раз в 20 с держит воркера —
+    и его reconnect-цепочку на setTimeout, — живыми, пока открыта вкладка
+    hh.ru: сервер, поднятый после запуска браузера, больше не пропускается.
+    Чужой origin по-прежнему за гейтом."""
+    scenario = _run_ws_bridge_scenario("keepalive_answered")
+    assert scenario["response"] == {"ok": True}
+    assert scenario["foreign"] == {"ok": False, "error": "sender_not_allowed"}
+
+
+def test_hhru_live_content_script_sends_keepalive_ping():
+    """#1187/#1197: пинг живёт в content.js (живёт, пока открыта вкладка),
+    а не в background.js (его таймеры умирают вместе с SW). Интервал — под
+    30-секундным idle-окном MV3."""
+    from pathlib import Path
+
+    root = Path(__file__).parents[1] / "extensions" / "hhru-live"
+    content = (root / "content.js").read_text()
+    background = (root / "background.js").read_text()
+    assert "setInterval" in content
+    assert "kind: 'keepalive'" in content
+    assert "keepalive" in background
+    # Пинг чаще idle-окна: 20000 < 30000. Небольшой потолок сверху оставлен
+    # явным, чтобы «оптимизация» интервала до 45 с поймалась ревью/тестом.
+    import re
+
+    match = re.search(r"\{ kind: 'keepalive' \}\), (\d+)\)", content)
+    assert match is not None
+    assert int(match.group(1)) < 30000
