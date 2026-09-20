@@ -218,8 +218,12 @@ sender и действию вне allowlist, а также сохранност�
 | Тост «Резюме доставлено» / «Отклик отправлен» | **UNCONFIRMED** | transient UI (#586: popup исчез до снятия); ловить только перехватом сразу после боевого действия |
 
 Permissions минимальны: `storage` (журнал диагностики в `storage.session`,
-переживает рестарт MV3 service worker) + host hh.ru. Диагностика подключения
-— статус в popup + журнал `connected`/`overlay_detected`.
+переживает рестарт MV3 service worker), `alarms` (периодический self-wake SW:
+reconnect-таймеры умирают вместе со спящим SW, alarm пересоздаёт соединение
+к уже запущенному CLI-серверу — порядок «сервер → вкладка» перестаёт быть
+обязательным, #1181; демона нет — foreground-инвариант #1159 цел) + host
+hh.ru. Диагностика подключения — статус в popup + журнал
+`connected`/`overlay_detected`.
 
 ## CLI bridge
 

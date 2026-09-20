@@ -36,8 +36,9 @@ DEFAULT_WAIT_SECONDS = 10.0
 
 # Минимально достаточные permissions манифеста расширения (страж — тест сверяет
 # с extensions/hhru-live/manifest.json): storage — session-хранилище отчётов,
-# host hh.ru — чтение sender.tab.url и content_scripts.
-EXPECTED_PERMISSIONS = frozenset({"storage"})
+# alarms — периодический self-wake SW для reconnect (#1181), host hh.ru —
+# чтение sender.tab.url и content_scripts.
+EXPECTED_PERMISSIONS = frozenset({"storage", "alarms"})
 EXPECTED_HOST_PERMISSIONS = frozenset({"https://hh.ru/*", "https://*.hh.ru/*"})
 
 # Подсказка про подключение расширения — одна для проверок 2-5.

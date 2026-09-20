@@ -32,7 +32,8 @@ def test_hhru_live_extension_manifest_and_detector_contract():
     root = Path(__file__).parents[1] / "extensions" / "hhru-live"
     manifest = json.loads((root / "manifest.json").read_text())
     assert manifest["manifest_version"] == 3
-    assert manifest["permissions"] == ["storage"]
+    # alarms — периодический self-wake SW для reconnect (#1181).
+    assert manifest["permissions"] == ["storage", "alarms"]
     assert manifest["background"]["service_worker"] == "background.js"
     # #929: policy.js обязан грузиться ДО content.js — content.js потребляет
     # его top-level биндинги (классификация) в том же isolated world.

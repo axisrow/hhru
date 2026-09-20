@@ -3,7 +3,7 @@
   "name": "HH.ru Live Overlay Diagnostics",
   "version": "0.2.0",
   "description": "Detects dynamic HH.ru overlays, reports diagnostics, and executes allowlisted agent commands behind the policy core.",
-  "permissions": ["storage"],
+  "permissions": ["storage", "alarms"],
   "host_permissions": ["https://hh.ru/*", "https://*.hh.ru/*"],
   "background": {"service_worker": "background.js", "type": "module"},
   "action": {"default_title": "HH.ru live diagnostics", "default_popup": "popup.html"},

@@ -327,6 +327,22 @@ python3 -m playwright install chromium
              datetime('now'));
      ```
 
+     **`apply` — наоборот, подтверждено ОТСУТСТВИЕ (#1181).** `uncertain`-строка
+     apply дедуплицируется `has_applied()` (status IN success/uncertain, ЛЮБАЯ
+     такая строка блокирует повтор навсегда — поздняя `success`-вставка её не
+     снимает), поэтому процедура здесь — UPDATE самой строки, а не вставка.
+     Сначала подтвердить отсутствие отклика на hh.ru (read-only `responses` /
+     страница вакансии: маркера «уже откликались» нет, темы в negotiations нет),
+     затем:
+     ```sql
+     UPDATE actions SET status = 'failed',
+            reason = 'manual reconciliation: confirmed absent in negotiations'
+     WHERE id = <id> AND status = 'uncertain';
+     ```
+     Писать `failed` можно только после подтверждения отсутствия — та же
+     fail-closed цена, что и у вставки `success`: ошибочная резолюция
+     разрешает повторный отклик (второе письмо работодателю).
+
 7. **Анкеты отвечаются обучаемыми шаблонами, а LLM — только последняя ступень**
    (#482, пакет `questionnaires/`). Цепочка: подтверждённая формулировка →
    ключевые слова → (пустой ML-слот) → LLM → очередь вопросов пользователю.

@@ -18,6 +18,7 @@ def test_browser_command_registry_is_complete() -> None:
         "census",
         "adaptive-resume",
         "apply",
+        "apply-live",
         "areas",
         "bump",
         "call-api",

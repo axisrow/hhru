@@ -27,7 +27,7 @@ function makeEnv({ activeTab, tabReply, tabError }) {
       onConnect: { addListener: () => {} },
       onStartup: { addListener: () => {} },
       getManifest: () => ({
-        permissions: ['storage'],
+        permissions: ['storage', 'alarms'],
         host_permissions: ['https://hh.ru/*', 'https://*.hh.ru/*'],
       }),
       _listeners: [],
@@ -42,6 +42,16 @@ function makeEnv({ activeTab, tabReply, tabError }) {
         cb(tabReply ?? null);
         chrome.runtime.lastError = null;
       },
+    },
+    // #1181: background.js создаёт reconnect-alarm на каждом старте SW и
+    // слушает onAlarm; стаб фиксирует создание, сценарии дёргают слушатель.
+    alarms: {
+      _listeners: [],
+      created: null,
+      create: (_name, opts) => {
+        sent.alarmCreated = { name: _name, ...opts };
+      },
+      onAlarm: { addListener: (fn) => chrome.alarms._listeners.push(fn) },
     },
     storage: {
       session: {
@@ -128,6 +138,58 @@ const SCENARIOS = {
       error: response?.error ?? null,
       sentToTabCount: sent.toTab.length,
     };
+  },
+
+  // Battle flake #1181: the command WAS delivered, but the answer port died
+  // (the executor clicked and the page navigated mid-wait). MV3 surfaces that
+  // as a different lastError message — the relay must report response_lost,
+  // NOT content_script_unreachable (which reads as "nothing happened" and
+  // invites a duplicate click).
+  relay_response_port_closed: async () => {
+    const { chrome, sent } = makeEnv({
+      activeTab: { id: 7, url: 'https://hh.ru/' },
+      tabError: 'The message port closed before a response was received.',
+    });
+    vm.runInContext(source, vm.createContext({ chrome, ...BRIDGE_STUBS }));
+    const response = await deliver(chrome, { kind: 'agent_command', action: 'click_element', selector: '[data-qa="x"]' }, { id: OWN });
+    return {
+      error: response?.error ?? null,
+      sentToTabCount: sent.toTab.length,
+    };
+  },
+
+  // #1181 SW-idle: background.js registers a periodic reconnect alarm on
+  // every SW start; firing it while disconnected opens a new socket, firing
+  // it while a socket is pending must not. Collect-only timer stubs keep the
+  // scheduled reconnect from firing (and node from waiting on it).
+  alarm_created_and_reconnects: async () => {
+    const { chrome, sent } = makeEnv({ activeTab: { id: 7, url: 'https://hh.ru/' } });
+    const sockets = [];
+    function WebSocketStub() {
+      this.readyState = 0;
+      this.send = () => {};
+      sockets.push(this);
+    }
+    vm.runInContext(
+      source,
+      vm.createContext({
+        chrome,
+        WebSocket: WebSocketStub,
+        setTimeout: () => 0,
+        clearTimeout: () => {},
+        setInterval: () => 0,
+        clearInterval: () => {},
+      })
+    );
+    const created = sent.alarmCreated ?? null;
+    const fire = () => chrome.alarms._listeners.forEach((fn) => fn({ name: created?.name ?? 'x' }));
+    const connected = sockets.length; // load-time connectLiveServe
+    sockets[0].onclose(); // bridge drops -> bridgeSocket = null
+    fire();
+    const afterAlarm = sockets.length; // alarm reconnected from a cold state
+    fire();
+    const still = sockets.length; // guard: no double-connect while pending
+    return { created, connected, afterAlarm, still };
   },
 
   // A command from another extension (sender.id mismatch) is rejected before

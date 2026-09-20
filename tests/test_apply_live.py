@@ -1,8 +1,9 @@
-"""Маппинг сценария apply-live на примитивы S2/S4 (#1162): пре-кликовая часть.
+"""Маппинг сценария apply-live на примитивы S2/S4 (#1162).
 
-Сценарий гоняется с FakeChannel — stateful-моделью страницы вакансии (первые
-PR стека: гейты до клика + dry-run). Вердикты серой зоны #207, форма, письмо
-и submit покрываются вторым PR стека на той же модели с флагами формы.
+Сценарий гоняется с FakeChannel — stateful-моделью страницы вакансии и формы
+отклика (click мутирует флаги: модалка/панель/textarea/marкеры submit, как
+реальный DOM после кликов). Вердикты серой зоны #207 проверяются по контракту
+apply.verify: found/not_found/indeterminate — словарь не расширяется.
 """
 
 from __future__ import annotations
@@ -18,6 +19,8 @@ from hhru_bot.live.scenarios import (
     ACTION_GET_STATE,
     ACTION_WAIT,
     FORM_WAIT_TIMEOUT_MS,
+    PAGE_FORM_WAIT_TIMEOUT_MS,
+    SUBMIT_WAIT_TIMEOUT_MS,
     ApplyLiveResult,
     PrimitiveError,
     apply_via_live,
@@ -65,6 +68,7 @@ class FakeFormChannel:
         question_text: str = "Ваш опыт с LLM?",
         picker_present: bool = True,
         option_present: bool = True,
+        option_click_lost: bool = False,
         panel_closes: bool = True,
         toggle_present: bool = True,
         textarea_after_click: bool = True,
@@ -72,6 +76,7 @@ class FakeFormChannel:
         submit_markers: bool = True,
         apply_click_error: PrimitiveError | None = None,
         submit_click_error: PrimitiveError | None = None,
+        fill_error: PrimitiveError | None = None,
     ) -> None:
         self.url = url
         self.login_found = login_found
@@ -90,9 +95,14 @@ class FakeFormChannel:
         self.submit_markers = submit_markers
         self.apply_click_error = apply_click_error
         self.submit_click_error = submit_click_error
+        self.fill_error = fill_error
         self.apply_clicked = False
         self.toggle_clicked = False
         self.option_clicked = False
+        # Выбор не подтверждён, пока click по опции его не выставил; клик может
+        # потеряться в окне гидрации (#858) — option_click_lost это моделирует.
+        self.option_selected = False
+        self.option_click_lost = option_click_lost
         self.panel_open = False
         self.submitted = False
         self.filled_text: str | None = None
@@ -130,6 +140,8 @@ class FakeFormChannel:
                 self.panel_open = True
         elif "magritte-select-option-" in selector:
             self.option_clicked = True
+            if not self.option_click_lost:
+                self.option_selected = True
         elif "add-cover-letter" in selector or "letter-toggle" in selector:
             if self.toggle_present:
                 self.toggle_clicked = True
@@ -153,6 +165,8 @@ class FakeFormChannel:
 
     def fill(self, selector: str, text: str) -> dict:
         self.calls.append((ACTION_FILL, {"selector": selector, "text": text}))
+        if self.fill_error is not None:
+            raise self.fill_error
         self.filled_text = text if self.fill_ok else None
         return {"filled": self.fill_ok, "length": len(text) if self.fill_ok else 0}
 
@@ -175,6 +189,9 @@ class FakeFormChannel:
             )
         if "resume-title" in selector:
             return self.picker_present and self._form_open(), "", 1
+        if "aria-selected" in selector:
+            # Факт выбора опции: aria-selected="true" через атрибутный матчинг.
+            return self.option_selected, "", 1
         if "magritte-select-option-" in selector:
             return self.option_present and self.panel_open, "", 1
         if "drop-base" in selector:
@@ -251,7 +268,32 @@ def test_action_names_and_budgets_guard() -> None:
     from hhru_bot.live.scenarios import ACTION_FILL
 
     assert ACTION_FILL == "fill_element"
-    assert FORM_WAIT_TIMEOUT_MS < 30_000
+    assert max(FORM_WAIT_TIMEOUT_MS, PAGE_FORM_WAIT_TIMEOUT_MS, SUBMIT_WAIT_TIMEOUT_MS) < 30_000
+
+
+def test_success_modal_path_maps_to_primitives() -> None:
+    channel = FakeFormChannel()
+    result = _run(channel, require_resume_select=False)
+
+    assert (result.success, result.acted, result.uncertain, result.skipped) == (
+        True,
+        True,
+        False,
+        False,
+    )
+    assert "подтверждён" in result.reason
+    # Клик кнопки отклика и submit идут с явной авторизацией apply-шага.
+    clicks = [payload for action, payload in channel.calls if action == ACTION_CLICK]
+    assert all(payload["allowApply"] for payload in clicks)
+    assert channel.apply_clicked and channel.submitted
+    assert channel.filled_text == "Здравствуйте!"
+    # waitFor submit-клика — композит success-маркеров (только позитивные).
+    submit_wait = clicks[-1]["waitFor"]
+    assert SUBMIT_MARKER in submit_wait["selector"]
+    assert "vacancy-response-link-top" not in submit_wait["selector"]
+    assert submit_wait["timeoutMs"] == SUBMIT_WAIT_TIMEOUT_MS
+    # Один клик на шаг: кнопка отклика, submit (пикер выключен — sole-resume).
+    assert len(clicks) == 2
 
 
 def test_dry_run_stops_before_any_click() -> None:
@@ -304,26 +346,241 @@ def test_lookalike_host_fails_url_gate() -> None:
     assert "не на странице вакансии" in result.reason
 
 
+def test_page_shape_reached_when_modal_absent() -> None:
+    # Модалки нет — hh.ru открыл полную страницу /applicant/vacancy_response.
+    channel = FakeFormChannel(modal_after_click=False, page_form=True)
+    result = _run(channel, require_resume_select=False)
+
+    assert (result.success, result.acted) == (True, True)
+    waits = [payload for action, payload in channel.calls if action == ACTION_WAIT]
+    assert any(
+        payload["timeoutMs"] == PAGE_FORM_WAIT_TIMEOUT_MS and "letter-input" in payload["selector"]
+        for payload in waits
+    )
+
+
+def _grey_case(modal: bool, page: bool, verify, *, expect):
+    channel = FakeFormChannel(modal_after_click=modal, page_form=page)
+    result = _run(channel, verify=verify, require_resume_select=False)
+    assert (result.success, result.acted, result.uncertain) == expect
+    assert not channel.submitted
+    return result, channel
+
+
+def test_grey_zone_no_form_not_found_is_failed_not_uncertain() -> None:
+    # one-click не ушёл (not_found): вердикт сайта снимает неопределённость,
+    # acted остаётся (кнопка кликнута — пауза троттла заслужена).
+    result, channel = _grey_case(False, False, _verify_of("not_found"), expect=(False, True, False))
+    assert "отклика в /applicant/negotiations нет" in result.reason
+    assert channel.verdicts == []
+
+
+def test_grey_zone_no_form_found_reconciles_success() -> None:
+    # one-click реально отправил отклик: внешний источник подтверждает success.
+    result, _channel = _grey_case(False, False, _verify_of("found"), expect=(True, True, False))
+    assert "подтвердила отклик" in result.reason
+
+
+def test_grey_zone_no_form_indeterminate_is_uncertain() -> None:
+    result, _channel = _grey_case(
+        False, False, _verify_of("indeterminate"), expect=(False, True, True)
+    )
+    assert "исход неопределён" in result.reason
+
+
+def test_grey_zone_without_verifier_is_uncertain_acting() -> None:
+    result, _channel = _grey_case(False, False, None, expect=(False, True, True))
+
+
+def test_questions_skip_and_queue_channel_never_answers() -> None:
+    channel = FakeFormChannel(question_count=2)
+    result = _run(channel, require_resume_select=False)
+
+    assert (result.success, result.skipped, result.acted) == (False, True, False)
+    assert result.skip_reason == SKIP_REASONS.HAS_QUESTIONS
+    assert result.question_texts == ["Ваш опыт с LLM?"]
+    assert channel.filled_text is None and not channel.submitted
+    assert "вопросы в очередь" in result.reason
+
+
+def test_picker_option_missing_blocks_submit() -> None:
+    channel = FakeFormChannel(option_present=False)
+    result = _run(channel, verify=_verify_of("not_found"))
+
+    assert (result.success, result.uncertain) == (False, False)
+    assert "нет в пикере" in result.reason
+    assert not channel.submitted
+
+
+def test_panel_must_close_before_submit() -> None:
+    # Панель перекрывает submit физически: не закрылась — отправка запрещена.
+    channel = FakeFormChannel(panel_closes=False)
+    result = _run(channel, verify=_verify_of("not_found"))
+
+    assert (result.success, result.acted) == (False, False)
+    assert "не закрылась" in result.reason
+    assert not channel.submitted
+
+
+def test_picker_flow_clicks_option_and_closes_panel() -> None:
+    channel = FakeFormChannel()
+    result = _run(channel, verify=_verify_of("found"))
+
+    assert result.success
+    clicks = [payload for action, payload in channel.calls if action == ACTION_CLICK]
+    # Кнопка отклика → триггер(открыть) → опция → триггер(закрыть) → submit.
+    assert "vacancy-response-link-top" in clicks[0]["selector"]
+    assert "resume-title" in clicks[1]["selector"]
+    assert f"magritte-select-option-{RESUME_ID}" in clicks[2]["selector"]
+    assert "resume-title" in clicks[3]["selector"]
+    close_wait = clicks[3]["waitFor"]
+    assert close_wait["state"] == "hidden" and "drop-base" in close_wait["selector"]
+
+
+def test_sole_resume_account_skips_picker() -> None:
+    channel = FakeFormChannel(picker_present=False)
+    result = _run(channel, require_resume_select=False)
+    assert result.success
+    assert not any(
+        "resume-title" in payload["selector"] for a, payload in channel.calls if a == ACTION_CHECK
+    )
+
+
+def test_letter_toggle_expanded_when_textarea_absent() -> None:
+    channel = FakeFormChannel(textarea_after_click=False)
+    result = _run(channel, require_resume_select=False)
+
+    assert (result.success, channel.filled_text) == (True, "Здравствуйте!")
+    assert channel.toggle_clicked
+
+
+def test_no_textarea_anywhere_is_fail_closed_before_submit() -> None:
+    # Ни textarea, ни тоггла: отклик без письма не отправляем — fail-closed
+    # ДО submit, финализирует внешний источник.
+    channel = FakeFormChannel(textarea_after_click=False, toggle_present=False)
+    result = _run(channel, verify=_verify_of("not_found"))
+
+    assert (result.success, result.uncertain) == (False, False)
+    assert "fail-closed" in result.reason
+    assert not channel.submitted and channel.filled_text is None
+
+
+def test_fill_read_back_mismatch_blocks_submit() -> None:
+    channel = FakeFormChannel(fill_ok=False)
+    result = _run(channel, verify=_verify_of("not_found"))
+
+    assert (result.success, result.uncertain) == (False, False)
+    assert "read-back" in result.reason
+    assert not channel.submitted
+
+
+def test_fill_refusal_keeps_flags_clean() -> None:
+    # Не-forwarded отказ записи (оба textarea в DOM → ambiguous): hh.ru ничего
+    # не получил — флаги чистые, решает вердикт сайта, а не acted+uncertain.
+    channel = FakeFormChannel(
+        fill_error=PrimitiveError("ambiguous_target", "2 совпадения", forwarded=False)
+    )
+    result = _run(channel, verify=_verify_of("not_found"))
+
+    assert (result.success, result.acted, result.uncertain) == (False, False, False)
+    assert not channel.submitted and channel.filled_text is None
+
+
+def test_unconfirmed_resume_selection_blocks_submit() -> None:
+    # Клик по опции потерялся (окно гидрации #858): aria-selected не появится —
+    # submit запрещён, решает внешний источник (иначе hh.ru приложил бы
+    # дефолтное резюме, 11/11 боевых фактов #1144).
+    channel = FakeFormChannel(option_click_lost=True)
+    result = _run(channel, verify=_verify_of("not_found"))
+
+    assert (result.success, result.acted) == (False, False)
+    assert "не подтверждён" in result.reason
+    assert not channel.submitted
+
+
+def test_selection_confirmed_by_aria_selected_read() -> None:
+    # Факт выбора читается атрибутным селектором до submit — клик по опции и
+    # скрытие панели выбор не доказывают.
+    channel = FakeFormChannel()
+    result = _run(channel, verify=_verify_of("found"))
+
+    assert result.success
+    checks = [
+        str(payload.get("selector", ""))
+        for action, payload in channel.calls
+        if action == ACTION_CHECK
+    ]
+    # Факт выбора читается атрибутным матчингом aria-selected на опции.
+    assert f"[data-qa='magritte-select-option-{RESUME_ID}'][aria-selected='true']" in checks
+
+
+def test_submit_channel_death_is_uncertain_acting() -> None:
+    # Отказ канала при submit (#176): команда ушла в браузер — acted+uncertain;
+    # внешний not_found снимает неопределённость, но acted остаётся.
+    channel = FakeFormChannel(
+        submit_click_error=PrimitiveError("timeout", "нет ответа", forwarded=True)
+    )
+    result = _run(channel, verify=_verify_of("not_found"))
+    assert (result.success, result.acted, result.uncertain) == (False, True, False)
+
+    channel = FakeFormChannel(
+        submit_click_error=PrimitiveError("timeout", "нет ответа", forwarded=True)
+    )
+    result = _run(channel, verify=None)
+    assert (result.acted, result.uncertain) == (True, True)
+    assert "исход неопределён" in result.reason
+
+
+def test_apply_click_channel_death_goes_to_grey_zone() -> None:
+    channel = FakeFormChannel(
+        apply_click_error=PrimitiveError("client_disconnected", "обрыв", forwarded=True)
+    )
+    result = _run(channel, verify=_verify_of("found"))
+
+    assert (result.success, result.acted) == (True, True)
+
+
+def test_apply_click_policy_refusal_is_plain_fail_without_verify() -> None:
+    # Отказ исполнителя ДО клика: отклик физически невозможен — обычный fail,
+    # внешний источник не нужен.
+    calls: list[str] = []
+
+    def verify(vacancy_id: str, resume_id: str):
+        calls.append(vacancy_id)
+        return Verdict("found")
+
+    channel = FakeFormChannel(
+        apply_click_error=PrimitiveError("policy_refused", "dangerous", forwarded=False)
+    )
+    result = _run(channel, verify=verify)
+
+    assert (result.success, result.acted, result.uncertain) == (False, False, False)
+    assert "не выполнен" in result.reason
+    assert calls == []
+
+
+def test_grey_zone_verifier_crash_is_uncertain() -> None:
+    def verify(vacancy_id: str, resume_id: str):
+        raise RuntimeError("negotiations не прочитаны")
+
+    channel = FakeFormChannel(modal_after_click=False, page_form=False)
+    result = _run(channel, verify=verify, require_resume_select=False)
+
+    assert (result.success, result.acted, result.uncertain) == (False, True, True)
+    assert "внешняя проверка упала" in result.reason
+
+
 def test_result_is_progress_compatible() -> None:
-    # ApplyProgress.finish() классифицирует по структурным флагам —
-    # ApplyLiveResult обязан работать с ним без адаптеров.
+    # ApplyProgress.finish() классифицирует по структурным флагам.
     from hhru_bot.commands.supervision import ApplyProgress
 
-    progress = ApplyProgress()
-    progress.begin_attempt()
-    assert (
-        progress.finish(ApplyLiveResult(RESUME_ID, VACANCY_ID, True, "ok", acted=True)) == "success"
-    )
-    progress.begin_attempt()
-    assert (
-        progress.finish(
-            ApplyLiveResult(RESUME_ID, VACANCY_ID, False, "x", acted=True, uncertain=True)
-        )
-        == "uncertain"
-    )
-    progress.begin_attempt()
-    assert (
-        progress.finish(
+    cases = [
+        (ApplyLiveResult(RESUME_ID, VACANCY_ID, True, "ok", acted=True), "success"),
+        (
+            ApplyLiveResult(RESUME_ID, VACANCY_ID, False, "x", acted=True, uncertain=True),
+            "uncertain",
+        ),
+        (
             ApplyLiveResult(
                 RESUME_ID,
                 VACANCY_ID,
@@ -331,8 +588,12 @@ def test_result_is_progress_compatible() -> None:
                 "x",
                 skipped=True,
                 skip_reason=SKIP_REASONS.HAS_QUESTIONS,
-            )
-        )
-        == "skipped"
-    )
+            ),
+            "skipped",
+        ),
+    ]
+    progress = ApplyProgress()
+    for result, expected in cases:
+        progress.begin_attempt()
+        assert progress.finish(result) == expected
     assert (progress.applied_count, progress.uncertain_count, progress.skipped_count) == (1, 1, 1)
