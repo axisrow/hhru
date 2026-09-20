@@ -66,12 +66,12 @@ def _check_click_element(payload: dict) -> None:
     allow_apply = payload.get("allowApply")
     if allow_apply is not None and not isinstance(allow_apply, bool):
         _reject(payload, "поле allowApply должно быть булевым")
+    # waitFor обязателен уже на транспорте: исполнитель отклоняет клик без
+    # объявленного post-click условия (wait_required) — ошибка должна быть
+    # видна вызывающему сразу, а не после пересылки в браузер.
     wait_for = payload.get("waitFor")
-    if wait_for is None:
-        return
     if not isinstance(wait_for, dict):
-        _reject(payload, "поле waitFor должно быть объектом")
-    # Условие post-click валидируется как wait_element: цель + state + timeoutMs.
+        _reject(payload, "поле waitFor обязательно (объект: цель, state, timeoutMs)")
     _check_wait_element(wait_for)
 
 
