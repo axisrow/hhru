@@ -321,3 +321,38 @@ def test_verification_discrepancy_lists_diff_lines(capsys, tmp_path, monkeypatch
     out = capsys.readouterr().out
     assert result is False  # расхождение — не сбой команды, только [WARN]
     assert "расхождение: " in out
+
+
+def test_role_from_export_drives_creation_area(capsys, tmp_path, monkeypatch):
+    """Роль из экспорта (#1167) — area создания; title остаётся заголовком."""
+    payload = json.loads(json.dumps(PAYLOAD))
+    payload["position"] = {
+        **payload["position"],
+        "role": {"id": "37", "name": "Руководитель группы разработки"},
+    }
+    created = []
+
+    def _create(page, **kwargs):
+        created.append(kwargs)
+        return _ok_create_result()
+
+    result, _, _ = _run_import(
+        monkeypatch,
+        tmp_path,
+        payload,
+        impls={"hhru_bot.create_resume.create_resume_on_hh": _create},
+    )
+    out = capsys.readouterr().out
+    assert result is False
+    assert created
+    assert created[0]["area"] == "Руководитель группы разработки"
+    assert created[0]["title"] == "Python-разработчик"
+    assert "[INFO] роль из экспорта: «Руководитель группы разработки» (id 37)" in out
+
+
+def test_missing_role_warns_title_proxy(capsys, tmp_path, monkeypatch):
+    """Экспорт без профессии (v1/ранний v2) — прежнее поведение с WARN."""
+    result, _, _ = _run_import(monkeypatch, tmp_path, PAYLOAD)
+    out = capsys.readouterr().out
+    assert result is False
+    assert "[WARN] роль: в экспорте нет профессии — роль резолвится по title" in out

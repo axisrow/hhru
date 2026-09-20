@@ -25,6 +25,11 @@ function makeEnv({ activeTab, tabReply, tabError }) {
       sendMessage: () => {},
       onMessage: { addListener: (fn) => chrome.runtime._listeners.push(fn) },
       onConnect: { addListener: () => {} },
+      onStartup: { addListener: () => {} },
+      getManifest: () => ({
+        permissions: ['storage'],
+        host_permissions: ['https://hh.ru/*', 'https://*.hh.ru/*'],
+      }),
       _listeners: [],
     },
     tabs: {

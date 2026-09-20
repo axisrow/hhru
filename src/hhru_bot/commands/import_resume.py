@@ -37,7 +37,8 @@ def register(subparsers: Any) -> None:
         description=(
             "Читает JSON-файл команды export-resume и в ТЕКУЩЕМ аккаунте "
             "(--account) создаёт резюме: каркас через визард создания, роль — "
-            "по title экспорта, затем секции — позиция (editor-режим), опыт, "
+            "по профессии из экспорта v2 (position.role; в экспортах без неё — "
+            "по title), затем секции — позиция (editor-режим), опыт, "
             "образование, навыки, языки, о себе, фото, а также блоки из "
             "экспорта v2: контакты, сертификаты и портфолио (per-row исходы; "
             "фото портфолио загружаются в галерею аккаунта, ссылки-строки "
@@ -86,11 +87,20 @@ def _print_plan(
     unavailable: list[str],
     blocks,  # noqa: ANN001 - BlocksImportPlan (#1123)
 ) -> None:
-    from ..import_resume import parse_salary_text
+    from ..import_resume import parse_salary_text, payload_role
 
     src = payload.get("position") or {}
+    role = payload_role(payload)
     print(f"[INFO] Источник: resume_id {payload.get('resume_id')} ({payload.get('slug')})")
-    print(f"[INFO] Создание: create-resume area/title = «{src.get('title')}»")
+    area = role["name"] if role else src.get("title")
+    print(f"[INFO] Создание: create-resume area = «{area}», title = «{src.get('title')}»")
+    if role:
+        print(
+            f"[INFO] Роль из экспорта: «{role['name']}» (id {role['id']}) — "
+            "профессия резолвится по ней, title только заголовок позиции"
+        )
+    else:
+        print("[WARN] роль: в экспорте нет профессии — роль резолвится по title")
     salary, currency = parse_salary_text(src.get("salary_text"))
     if salary:
         print(f"[INFO] Позиция: salary={salary} currency={currency or 'не распознана'}")
