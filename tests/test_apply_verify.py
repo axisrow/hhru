@@ -467,6 +467,20 @@ def test_window_end_does_not_mask_incomparable_topic():
     assert result.indeterminate
 
 
+def test_window_end_requires_explicit_id_on_every_topic():
+    # Ревью #1204 (fail-closed дырка вакуумного True): тема без явного id
+    # (только chatId) не имеет доказуемой даты, а границу свежести продолжения
+    # задаёт минимальная свежесть страницы — одна недоказанная тема запрещает
+    # остановку окна: скан уходит на страницу 1 (там pagerless-стоп), а не
+    # останавливается «чистым» not_found по нулю доказательств.
+    old = (datetime.now().astimezone() - timedelta(hours=1)).isoformat()
+    idless = {"chatId": 5, "vacancyId": "999999", "lastModified": old}
+    page = FakeNegotiationsPage({NEGOTIATIONS_URL: _ssr_html([idless])})
+    result = verify_response_in_negotiations(page, _V2)
+    assert result.status == "not_found"
+    assert f"{NEGOTIATIONS_URL}?page=1" in page.goto_calls
+
+
 class _DelayedTailPage(FakeNegotiationsPage):
     """Попытка 1: страница 0 без цели, страница 1 пуста. Попытка 2: страница 0
     НЕИЗМЕННА, а опоздавший отклик появился на странице 1 (между поллами)."""

@@ -436,16 +436,21 @@ def _scan_single_page(
             return _describe_topic(topic), True, None, False, page_keys, False
         # Окно свежести (#1181): переиспользует responses._topics_all_before_cutoff —
         # тема без lastModified/с непарсящейся датой оставляет доказательство
-        # незакрытым, и скан продолжается (цена — лишние GET). id-набор — все
-        # темы с явным id (тема без id не имеет ни ключа, ни даты —
-        # доказательства её старости нет).
+        # незакрытым, и скан продолжается (цена — лишние GET). Гейт
+        # len(topic_ids) == len(topics) закрывает вакуумное True (ревью #1204):
+        # тема без явного id (в т.ч. только с chatId — её учитывает page_keys)
+        # не имеет доказуемой даты, а границу свежести продолжения задаёт
+        # МИНИМАЛЬНАЯ свежесть страницы — одна недоказанная тема запрещает
+        # остановку всего окна.
         topic_ids = {str(topic["id"]) for topic in topics if topic.get("id") is not None}
         modified_map = {
             str(topic["id"]): str(topic["lastModified"])
             for topic in topics
             if topic.get("id") is not None and topic.get("lastModified") is not None
         }
-        window_end = _topics_all_before_cutoff(topic_ids, modified_map, cutoff)
+        window_end = len(topic_ids) == len(topics) and _topics_all_before_cutoff(
+            topic_ids, modified_map, cutoff
+        )
         return (
             None,
             attribution_problem is None,
