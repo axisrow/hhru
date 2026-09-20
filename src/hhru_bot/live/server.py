@@ -25,6 +25,7 @@ hhru-live в живой вкладке Chrome. Сервер единственн
 
 from __future__ import annotations
 
+import json
 import os
 import select
 import socket
@@ -77,6 +78,10 @@ class LiveServeServer:
         self._client: WSConnection | None = None
         # (command_id, deadline) единственной команды в полёте (single-flight).
         self._pending: tuple[str | int, float] | None = None
+        # Последняя handshake-диагностика клиента (#1163): kind-frame "hello"
+        # с версией протокола/allowlist/permissions расширения. Читает
+        # live-doctor; для командного пути значения не имеет.
+        self.client_hello: dict | None = None
         self._last_seen = 0.0
         self._next_ping = 0.0
         self.connections_seen = 0
@@ -193,6 +198,17 @@ class LiveServeServer:
             return
         if kind == "close":
             self._drop_client("клиент закрыл соединение", out)
+            return
+        # kind-namespaced кадры — диагностика клиента (hello #1163, heartbeat),
+        # не ответы на команды: зеркало того же правила на стороне расширения.
+        # Ошибкой не считаются, на исход pending не влияют.
+        try:
+            diagnostic = json.loads(payload)
+        except ValueError:
+            diagnostic = None
+        if isinstance(diagnostic, dict) and isinstance(diagnostic.get("kind"), str):
+            if diagnostic["kind"] == "hello":
+                self.client_hello = diagnostic
             return
         try:
             response = parse_response(payload)

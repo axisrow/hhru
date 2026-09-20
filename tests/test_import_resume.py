@@ -16,6 +16,7 @@ from hhru_bot.import_resume import (
     load_export,
     parse_period,
     parse_salary_text,
+    payload_role,
     plan_education,
     plan_experience,
     plan_languages,
@@ -124,6 +125,55 @@ def test_diff_export_flags_currency_mismatch():
     assert any("валюта" in d for d in diffs)
 
 
+def test_payload_role_reads_v2_key_and_tolerates_absence():
+    with_role = {
+        **PAYLOAD,
+        "position": {
+            **PAYLOAD["position"],
+            "role": {"id": "37", "name": "Руководитель группы разработки"},
+        },
+    }
+    assert payload_role(with_role) == {
+        "id": "37",
+        "name": "Руководитель группы разработки",
+    }
+    # Экспорт без ключа (v1/ранний v2), не-словарь и неполная роль — None.
+    assert payload_role(PAYLOAD) is None
+    broken = json.loads(json.dumps(with_role))
+    broken["position"]["role"] = {"name": "без id"}
+    assert payload_role(broken) is None
+
+
+def test_plan_position_ignores_role_key():
+    # Роль не входит в план позиции (ставится визардом создания, #1167) и не
+    # создаёт unavailable-шума.
+    payload = {
+        **PAYLOAD,
+        "position": {
+            **PAYLOAD["position"],
+            "role": {"id": "37", "name": "Руководитель группы разработки"},
+        },
+    }
+    plan, unavailable = plan_position(payload)
+    assert plan.title == PAYLOAD["position"]["title"]
+    assert unavailable == []
+
+
+def test_diff_export_compares_role_only_when_source_has_it():
+    src = json.loads(json.dumps(PAYLOAD))
+    src["position"]["role"] = {"id": "37", "name": "Руководитель группы разработки"}
+    same = json.loads(json.dumps(src))
+    assert not any("роль" in d for d in diff_export(src, same))
+    other = json.loads(json.dumps(src))
+    other["position"]["role"] = {"id": "3", "name": "SMM-менеджер, контент-менеджер"}
+    assert any("роль: «Руководитель группы разработки»" in d for d in diff_export(src, other))
+    lost = json.loads(json.dumps(src))
+    del lost["position"]["role"]
+    assert any("«нет»" in d for d in diff_export(src, lost))
+    # Источник без роли (title-прокси режим) роль не сравнивает вовсе.
+    assert not any("роль" in d for d in diff_export(PAYLOAD, PAYLOAD))
+
+
 def test_plan_position_maps_display_texts():
     plan, unavailable = plan_position(PAYLOAD)
     assert plan.title == "Python-разработчик"
@@ -176,6 +226,15 @@ def test_parse_period_closed_and_current():
 
 def test_parse_salary_text_refuses_range():
     # Диапазон не переносится: склейка цифр дала бы мусорное число.
+    assert parse_salary_text("от 150 000 до 200 000 ₽") == (None, None)
+
+
+def test_parse_salary_text_strips_unicode_space_separators():
+    # Разделитель тысяч hh.ru — юникод-пробел, не обычный (#1166): NBSP (U+00A0)
+    # и тонкий пробел (U+2009, боевой экспорт «180 000 ₽ на руки») — одна сумма,
+    # а не диапазон; настоящий диапазон отказывает по-прежнему.
+    assert parse_salary_text("300\u00a0000 ₽ на руки") == (300000, "RUR")
+    assert parse_salary_text("180\u2009000 ₽ на руки") == (180000, "RUR")
     assert parse_salary_text("от 150 000 до 200 000 ₽") == (None, None)
 
 
