@@ -770,8 +770,7 @@ class LiveChannel:
             payload["waitFor"] = wait_for
         if allow_apply:
             payload["allowApply"] = True
-        result = self._call(ACTION_CLICK, payload)
-        return result
+        return self._executor_result(self._call(ACTION_CLICK, payload))
 
     def click_wait_met(self, selector: str, wait_for: dict, allow_apply: bool = False) -> bool:
         """Клик + факт исполнения объявленного post-click условия (wait.met)."""
@@ -780,15 +779,23 @@ class LiveChannel:
 
     def fill(self, selector: str, text: str) -> dict:
         """Записать текст в поле (native setter + input/change; read-back в ответе)."""
-        return self._call(ACTION_FILL, {"selector": selector, "text": text})
+        return self._executor_result(self._call(ACTION_FILL, {"selector": selector, "text": text}))
 
     def wait(self, selector: str, state: str, timeout_ms: int) -> bool:
         """Дождаться состояния селектора; False — бюджет истёк без события."""
-        result = self._call(
-            ACTION_WAIT, {"selector": selector, "state": state, "timeoutMs": timeout_ms}
+        result = self._executor_result(
+            self._call(ACTION_WAIT, {"selector": selector, "state": state, "timeoutMs": timeout_ms})
         )
         # Ключ ответа — часть контракта S2: исполнитель кладёт факт в wait.met.
         return bool((result.get("wait") or result).get("met", result.get("conditionMet", False)))
+
+    @staticmethod
+    def _executor_result(result: dict) -> dict:
+        """Снять обёртку 'result' ответов исполнителя (#1160): content.js кладёт
+        структурированный итог в {result: {...}}, мост удаляет только флаг ok —
+        клиент получает ДВОЙНОЙ уровень вложенности, stage-1 ответы (page/
+        element) — одноуровневые."""
+        return result.get("result", result)
 
     def close(self) -> None:
         """EOF в stdin сервера — цикл завершается (foreground-семантика #1159).
