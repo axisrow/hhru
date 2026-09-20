@@ -31,18 +31,19 @@
 
 Создание и управление локальными профилями аккаунтов hh.ru.
 
-- (без аргументов)
+- `<ACCOUNT_COMMAND>` (обязательный)
 
 #### `account create`
 
 Создать data/accounts/<name>/ и скопировать туда шаблон конфига.
 
-- (без аргументов)
+- `<NAME>` — Имя нового аккаунта (обязательный)
 
 #### `account delete`
 
 Показать, что будет удалено в data/accounts/<name>/, а с --force выполнить необратимое удаление.
 
+- `<NAME>` — Имя удаляемого аккаунта (обязательный)
 - `--dry-run` — Показать план и ничего не удалять (это поведение по умолчанию)
 - `--force` — Выполнить удаление (необратимо; уносит конфиг, историю и сессию)
 
@@ -86,10 +87,12 @@
 
 ### `blacklist`
 
-- (без аргументов)
+- `<BLACKLIST_COMMAND>` (обязательный)
 
 #### `blacklist add`
 
+- `<TYPE>` (обязательный)
+- `<VALUE>` (обязательный)
 - `--reason`
 - `--by` (по умолчанию: 'cli')
 
@@ -99,7 +102,8 @@
 
 #### `blacklist remove`
 
-- (без аргументов)
+- `<TYPE>` (обязательный)
+- `<VALUE>` (обязательный)
 
 ### `bump`
 
@@ -118,7 +122,7 @@
 
 Создание события только по явно подтверждённым --start/--end. Автоматического триггера из responses нет.
 
-- (без аргументов)
+- `<CALENDAR_ACTION>` (обязательный)
 
 #### `calendar auth`
 
@@ -140,6 +144,8 @@
 
 ### `call-api`
 
+- `<ENDPOINT>` — Путь или полный URL на hh.ru/api.hh.ru (обязательный)
+- `<key=value>` (обязательный)
 - `-m, --method` — HTTP-метод (разрешён только GET) (по умолчанию: 'GET')
 
 ### `census`
@@ -195,7 +201,7 @@
 
 READ hh.ru: competitors collect --text QUERY [--search-in SCOPE] [--max-pages N]; локальный отчёт: competitors report [--text QUERY] [--search-in SCOPE] [--auth-mode MODE] [--top N].
 
-- (без аргументов)
+- `<COMPETITORS_COMMAND>` (обязательный)
 
 #### `competitors collect`
 
@@ -277,7 +283,7 @@ READ hh.ru: competitors collect --text QUERY [--search-in SCOPE] [--max-pages N]
 
 ### `diagnostics`
 
-- (без аргументов)
+- `<DIAGNOSTICS_COMMAND>` (обязательный)
 
 #### `diagnostics doctor`
 
@@ -460,11 +466,12 @@ READ hh.ru: competitors collect --text QUERY [--search-in SCOPE] [--max-pages N]
 
 Установить, показать или удалить ручные ответы профиля.
 
-- (без аргументов)
+- `<PROFILE_COMMAND>` (обязательный)
 
 #### `profile set`
 
-- (без аргументов)
+- `<LABEL>` — Текст вопроса или подпись поля (обязательный)
+- `<VALUE>` — Значение ответа (обязательный)
 
 #### `profile show`
 
@@ -472,7 +479,7 @@ READ hh.ru: competitors collect --text QUERY [--search-in SCOPE] [--max-pages N]
 
 #### `profile unset`
 
-- (без аргументов)
+- `<LABEL>` — Текст вопроса или подпись поля (обязательный)
 
 ### `publish-resume`
 
@@ -486,6 +493,7 @@ READ hh.ru: competitors collect --text QUERY [--search-in SCOPE] [--max-pages N]
 
 Исполнить SELECT к history.db и вывести ASCII-таблицу или CSV. Только read-only (SELECT/WITH) — история меняется только через бот.
 
+- `<SQL>` — SQL-запрос (SELECT / WITH ... SELECT)
 - `--csv` — Вывести CSV вместо ASCII-таблицы
 - `-o` — Записать результат в файл вместо stdout
 
@@ -493,7 +501,7 @@ READ hh.ru: competitors collect --text QUERY [--search-in SCOPE] [--max-pages N]
 
 Показать очередь, аудит и шаблоны, задать ответ или обучить шаблон.
 
-- (без аргументов)
+- `<QUESTIONNAIRE_COMMAND>` (обязательный)
 
 #### `questionnaire audit`
 
@@ -522,6 +530,7 @@ READ hh.ru: competitors collect --text QUERY [--search-in SCOPE] [--max-pages N]
 
 static — готовое значение; contextual — инструкция для LLM.
 
+- `<TEMPLATE>` — Имя шаблона, например salary (обязательный)
 - `--mode` — static (значение) или contextual (инструкция)
 - `--answer` — Готовый ответ (для --mode static)
 - `--instruction` — Инструкция для LLM (для --mode contextual)
@@ -539,6 +548,7 @@ static — готовое значение; contextual — инструкция 
 
 Удаляет шаблон только из своего скоупа.
 
+- `<TEMPLATE>` — Имя шаблона (обязательный)
 - `--resume` — Снять только переопределение этого резюме
 
 ### `refresh-token`
@@ -598,6 +608,7 @@ Account-wide ответы в чатах: план из локальной ист
 
 ### `restore`
 
+- `<ARCHIVE>` — Путь к tar/tar.gz (обязательный)
 - `--apply` — Выполнить восстановление (без флага — только показать состав)
 
 ### `resume-pool`
@@ -660,15 +671,17 @@ Account-wide ответы в чатах: план из локальной ист
 
 ### `review`
 
-- (без аргументов)
+- `<REVIEW_ACTION>` (обязательный)
 
 #### `review approve`
 
+- `<ID>` (обязательный)
 - `--ttl TTL` (по умолчанию: 900)
 
 #### `review edit`
 
-- (без аргументов)
+- `<ID>` (обязательный)
+- `<LETTER>` (обязательный)
 
 #### `review list`
 
@@ -676,11 +689,11 @@ Account-wide ответы в чатах: план из локальной ист
 
 #### `review requeue`
 
-- (без аргументов)
+- `<ID>` (обязательный)
 
 #### `review skip`
 
-- (без аргументов)
+- `<ID>` (обязательный)
 
 ### `robot-mark`
 
@@ -746,11 +759,18 @@ Account-wide ответы в чатах: план из локальной ист
 - `--dry-run` — Показать библиотеку фото, ничего не назначая
 - `--force` — Подтвердить боевое назначение
 
+### `session-seed`
+
+Переносит сессию hh.ru файлом: читает storage_state аккаунта (--account как у остальных команд) и сеет куки в указанный каталог профиля браузера (user-data-dir) через launch_persistent_context + add_cookies. Без единого запроса к hh.ru — интерактивный login это не заменяет (#1195). Без hhtoken в storage_state профиль не мутируется (fail-closed, как import-cookies).
+
+- `<PROFILE_DIR>` — Каталог профиля браузера (user-data-dir); создаётся при отсутствии (обязательный)
+
 ### `settings`
 
 Показать все настройки, получить значение или установить ключ.
 
-- (без аргументов)
+- `<KEY>` — Ключ настройки
+- `<VALUE>` — Новое значение настройки
 
 ### `skipped`
 
@@ -773,11 +793,11 @@ Account-wide ответы в чатах: план из локальной ист
 
 ### `uncertain`
 
-- (без аргументов)
+- `<UNCERTAIN_COMMAND>` (обязательный)
 
 #### `uncertain inspect`
 
-- (без аргументов)
+- `<ID>` (обязательный)
 
 #### `uncertain list`
 
@@ -785,7 +805,7 @@ Account-wide ответы в чатах: план из локальной ист
 
 #### `uncertain reconcile`
 
-- (без аргументов)
+- `<ID>` (обязательный)
 
 ### `update`
 

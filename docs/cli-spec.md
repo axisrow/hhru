@@ -64,7 +64,7 @@ Codex на macOS не может запустить Playwright Chromium внут
 
 | Режим | Требует Chromium |
 |-------|------------------|
-| `login`, `login-code`, `search`, `areas`, `apply`, `bump`, `run`, `probe`, `responses`, `refresh-token`, `call-api`, `fill-form` | всегда |
+| `login`, `login-code`, `search`, `areas`, `apply`, `bump`, `run`, `probe`, `responses`, `refresh-token`, `call-api`, `fill-form`, `session-seed` | всегда |
 | Создание, копирование, переименование, публикация, удаление и браузерное редактирование резюме | всегда |
 | `clear-negotiations` | только `--account-wide` или боевой `--topic`; plan-only фильтры и `--topic --dry-run` — без браузера |
 | `list-resumes` | да, кроме `--local` |
@@ -156,6 +156,7 @@ hh.ru), начинающимся ровно с `[FAIL]`, перевернёт у
 | `login`     | ручной вход, сохранение сессии               | WRITE-local    | `[INFO]` + текстовые подсказки |
 | `login-code`| единый вход по одноразовому коду             | WRITE-local    | `[OK]`/ошибка                  |
 | `import-cookies` | импорт куки hh.ru из Chrome в storage_state | WRITE-local | `[OK]`/`[FAIL]`/`[INFO]` |
+| `session-seed` | посев кук из storage_state в произвольный профиль браузера, без запросов к hh.ru (#1195) | WRITE-local | `[OK]`/`[FAIL]`/`[INFO]` |
 | `refresh-token` | проверка/пересохранение сессии            | READ / WRITE-local (`--force`) | `[INFO]`/`[OK]`/`[FAIL]` |
 | `search`    | поиск вакансий по фильтрам (без откликов)    | READ / WRITE-hh-ru (`--save --force`) | `[candidate]`/`[skip]`/`[DRY-RUN]` |
 | `areas`     | резолвер названия города/региона в area-id каталога | READ    | `[OK]` / ASCII-таблица + `[FAIL]` |

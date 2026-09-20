@@ -96,6 +96,7 @@ BROWSER_COMMANDS = frozenset(
         "run",
         "search",
         "select-photo",
+        "session-seed",
         "upload-photo",
         "upload-portfolio-image",
         "wizard-next",

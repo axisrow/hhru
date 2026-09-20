@@ -56,6 +56,7 @@ def test_browser_command_registry_is_complete() -> None:
         "run",
         "search",
         "select-photo",
+        "session-seed",
         "upload-photo",
         "upload-portfolio-image",
         "delete-photo",

@@ -66,6 +66,25 @@ def _fmt_opt(action: argparse.Action, *, trim_help: bool = False) -> str:
     return f"`{flag}{meta}`{description}{default}"
 
 
+def _positionals(parser: argparse.ArgumentParser) -> list[argparse.Action]:
+    """Позиционные аргументы парсера (без option_strings), кроме служебных.
+
+    dest="command" — это само имя команды (top-level subparsers), в доку не
+    попадает; вложенные subparsers (dest="account_command" и т.п.) остаются.
+    """
+    return [
+        a for a in parser._actions if not a.option_strings and a.dest not in ("help", "command")
+    ]
+
+
+def _fmt_positional(action: argparse.Action) -> str:
+    name = getattr(action, "metavar", None) or action.dest.upper()
+    help_text = action.help or ""
+    description = f" — {help_text}" if help_text else ""
+    required = "" if action.nargs == "?" else " (обязательный)"
+    return f"`<{name}>`{description}{required}"
+
+
 def _subparsers(parser: argparse.ArgumentParser) -> argparse._SubParsersAction | None:
     return next(
         (action for action in parser._actions if isinstance(action, argparse._SubParsersAction)),
@@ -97,7 +116,10 @@ def render() -> str:
             lines.append(desc)
         lines.append("")
         opts = _opts(sub)
-        if opts:
+        positionals = _positionals(sub)
+        if opts or positionals:
+            for a in positionals:
+                lines.append(f"- {_fmt_positional(a)}")
             for a in opts:
                 lines.append(f"- {_fmt_opt(a)}")
         else:
@@ -114,7 +136,10 @@ def render() -> str:
                     lines.append(nested_desc)
                 lines.append("")
                 nested_opts = _opts(nested_parser)
-                if nested_opts:
+                nested_positionals = _positionals(nested_parser)
+                if nested_opts or nested_positionals:
+                    for a in nested_positionals:
+                        lines.append(f"- {_fmt_positional(a)}")
                     for a in nested_opts:
                         lines.append(f"- {_fmt_opt(a, trim_help=True)}")
                 else:
