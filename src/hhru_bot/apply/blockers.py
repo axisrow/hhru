@@ -16,7 +16,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
 from ..history import SKIP_REASONS
-from ..selector_groups import vacancy_page
+from ..selector_groups import resume_page, vacancy_page
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +143,7 @@ def _wait_for_any_blocker(page: Page, timeout_ms: int) -> None:
             vacancy_page.VACANCY_RESPONSE_REJECT_WARNING,
             vacancy_page.VACANCY_RESPONSE_ERROR,
             vacancy_page.VACANCY_SIMILAR_VACANCIES_CLOSE,
+            resume_page.STALE_CONTACTS_SYNC_ALERT,
         )
     )
     try:
@@ -161,6 +162,59 @@ def relocation_popup_visible(page: Page) -> bool:
     """
 
     return _visible(page, vacancy_page.VACANCY_RELOCATION_CONFIRM)
+
+
+def close_stale_contacts_alert(page: Page, wait_ms: int = 3_000, render_wait_ms: int = 0) -> bool:
+    """Закрыть модалку «Контакты в резюме могли устареть» кликом «Закрыть» (#1189).
+
+    Cancel-кнопка — secondary «Закрыть» (dismiss): отказ от замены контактов,
+    НЕ мутация профиля (живой census 2026-09-20). Замена — отдельная primary
+    accept-кнопка, кодом не адресуется никогда. Возвращает True, если модалка
+    была видима и cancel кликнут; False — «модалки нет, ничего не делали».
+
+    ``render_wait_ms`` — короткий бюджет ожидания монтажа (CLAUDE.md п.4):
+    боевой прогон 2026-09-20 показал, что к моменту close-проверки bump
+    (~5-я секунда) попап ещё не смонтирован, а в census-визите на 6-й секунде
+    он уже виден, — без бюджета быстрый прогон обгоняет монтаж и кликает
+    «впритык» до перехвата. 0 — «не ждать» (пост-клик проход в
+    ``handle_post_click_blockers`` уже сделал общий ``_wait_for_any_blocker``).
+    """
+
+    if render_wait_ms > 0:
+        try:
+            page.locator(resume_page.STALE_CONTACTS_SYNC_ALERT).first.wait_for(
+                state="visible", timeout=render_wait_ms
+            )
+        except (PlaywrightError, AttributeError):
+            return False
+    if not _visible(page, resume_page.STALE_CONTACTS_SYNC_ALERT):
+        return False
+    # Клик cancel напрямую, не через _close_specific: возврат обязан означать
+    # ФАКТ клика (cycle-review #1190) — success-reason в actions не должен
+    # получать «закрыта кликом» без клика. Невидимый cancel/ошибка Playwright —
+    # честный False: клик поднятия упрётся в оставшийся overlay и получит
+    # диагностичный uncertain, а не ложную пометку в success.
+    try:
+        cancel = page.locator(resume_page.STALE_CONTACTS_SYNC_ALERT_CANCEL).first
+        if not cancel.is_visible():
+            return False
+        cancel.click()
+    except (PlaywrightError, AttributeError):
+        return False
+    logger.info(
+        "Модалка «Контакты в резюме могли устареть» закрыта dismiss-кнопкой «Закрыть» (#1189)"
+    )
+    # Dismiss-клик снимает overlay анимацией: клики по кнопкам под ним возможны
+    # только после скрытия (CLAUDE.md п.4 — строгие проверки по неотстоявшемуся
+    # DOM). Ожидание best-effort: дольше живущей анимации таймаутить не нужно,
+    # скрытие — штатный и почти мгновенный исход.
+    try:
+        page.locator(resume_page.STALE_CONTACTS_SYNC_ALERT).first.wait_for(
+            state="hidden", timeout=wait_ms
+        )
+    except (PlaywrightError, AttributeError):
+        pass
+    return True
 
 
 def handle_post_click_blockers(
@@ -219,6 +273,22 @@ def handle_post_click_blockers(
     # verify по #207 для отказа лимита не имеет смысла.
     if limit_refusal_visible(page):
         return limit_refusal_blocker()
+
+    # #1189: аккаунтовая модалка контактов может перехватить клик отклика так
+    # же, как перехватывает bump (#1161). Закрываем dismiss-кнопкой (не мутация,
+    # чтобы попап не перехватывал и следующие вакансии прогона) и отдаём явный
+    # вердикт — не безликий form-timeout uncertain. post_navigation
+    # наследуется: увиденная после навигации модалка уходит в «серую зону»
+    # #207, где ушёл ли отклик решает внешняя проверка. Ветка после лимит-проверок:
+    # stop_run аккаунта не глушится попапом при одновременной видимости.
+    if close_stale_contacts_alert(page):
+        return PostClickBlocker(
+            "stale_contacts_alert",
+            "модалка «Контакты в резюме могли устареть» перехватила клик; "
+            "закрыта dismiss-кнопкой «Закрыть», замена контактов не выполнялась",
+            SKIP_REASONS.STALE_CONTACTS_ALERT,
+            post_navigation=post_navigation,
+        )
 
     if _visible(page, vacancy_page.VACANCY_DIRECT_APPLICATION_CANCEL):
         alert_text = _text(page, vacancy_page.VACANCY_DIRECT_APPLICATION_ALERT)

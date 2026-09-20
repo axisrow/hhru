@@ -4325,6 +4325,49 @@ selectors:
     last_verified_at: '2026-09-04'
     verified_flow: authenticated_resume_editor_modal_read_only
     verified_by: hhru-461
+  resume_page.STALE_CONTACTS_SYNC_ALERT:
+    value: '[data-qa=''profile-contacts-sync-alert'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:34
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:34
+      note: '#1189: модалка «Контакты в резюме могли устареть» (Magritte-alert на magritte-overlay) — смонтирована и видима
+        при простом заходе на /applicant/resumes, до любых кликов; перехватывает клик поднятия резюме (боевой сбой #1161).
+        Read-only census 2026-09-20 (аккаунт testing, --wait-ms 6000): login_form=false, контейнер data-qa подтверждён. Accept-кнопка
+        внутри («Заменить на новые из профиля») — мутация профиля, кодом не адресуется.'
+    last_verified_at: '2026-09-20'
+    verified_flow: authenticated_resumes_list_read_only (census --wait-ms 6000, /applicant/resumes)
+    verified_by: claude
+  resume_page.STALE_CONTACTS_SYNC_ALERT_CANCEL:
+    value: '[data-qa=''profile-contacts-sync-alert-cancel'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:35
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:35
+      note: '#1189: secondary-кнопка «Закрыть» модалки контактов — dismiss, НЕ мутация профиля (замена — отдельная primary
+        accept-кнопка profile-contacts-sync-alert-accept). Подтверждено живым read-only census 2026-09-20: текст кнопки «Закрыть»,
+        mode-secondary.'
+    last_verified_at: '2026-09-20'
+    verified_flow: authenticated_resumes_list_read_only (census --wait-ms 6000, /applicant/resumes)
+    verified_by: claude
   resume_photo.RESUME_AVATAR_BLOCK:
     value: '[data-qa=''resume-avatar'']'
     criticality: read
