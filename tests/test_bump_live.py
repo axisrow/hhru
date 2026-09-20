@@ -119,10 +119,11 @@ def _actions(channel: FakeChannel) -> list[str]:
 
 
 def test_action_names_match_s2_contract() -> None:
-    # Страж единой точки маппинга: при расхождении имён с реальным S2 правится
-    # и таблица в scenarios.py, и этот тест (одним коммитом на перебазировке).
+    # Страж единой точки маппинга: имена — как их объявляет расширение
+    # (content.js ACTION_ALLOWLIST). При расхождении правится и таблица в
+    # scenarios.py, и этот тест (одним коммитом).
     assert (ACTION_GET_STATE, ACTION_CHECK, ACTION_CLICK, ACTION_WAIT) == (
-        "get_state",
+        "get_page_state",
         "check_element",
         "click_element",
         "wait_element",

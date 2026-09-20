@@ -22,10 +22,10 @@ import time
 from urllib.parse import urlsplit
 
 # --- Маппинг сценария на действия канала (единая точка контракта S2). ------
-# check_element уже существует в этапе 1 (#930); get_state/click_element/
-# wait_element — ожидаемые примитивы #1160 (клик по селектору, чтение
-# URL/DOM, ожидание появления/исчезновения с таймаутом).
-ACTION_GET_STATE = "get_state"
+# Имена — как их объявляет расширение (content.js ACTION_ALLOWLIST,
+# background.js RELAY_ACTIONS): get_page_state/check_element/click_element/
+# wait_element. Расхождение ловит тест-страж рядом (test_action_names_match_s2_contract).
+ACTION_GET_STATE = "get_page_state"
 ACTION_CHECK = "check_element"
 ACTION_CLICK = "click_element"
 ACTION_WAIT = "wait_element"
@@ -298,10 +298,11 @@ class LiveChannel:
     def wait(self, selector: str, state: str, timeout_ms: int) -> bool:
         """Дождаться состояния селектора; False — бюджет истёк без события."""
         result = self._call(
-            ACTION_WAIT, {"selector": selector, "state": state, "timeout_ms": timeout_ms}
+            ACTION_WAIT, {"selector": selector, "state": state, "timeoutMs": timeout_ms}
         )
-        # Ключ ответа — часть контракта S2: при расхождении правится здесь.
-        return bool(result.get("conditionMet", result.get("met", False)))
+        # Ключ ответа — часть контракта S2 (executor.js waitElement отвечает
+        # result.wait.met): при расхождении правится здесь.
+        return bool((result.get("wait") or {}).get("met", False))
 
     def close(self) -> None:
         """EOF в stdin сервера — цикл завершается (foreground-семантика #1159)."""

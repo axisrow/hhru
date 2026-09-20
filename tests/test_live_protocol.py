@@ -100,19 +100,116 @@ class TestEnvelope:
 
 
 class TestAllowlist:
-    def test_allowlist_mirrors_stage1_extension_exactly(self):
-        # Транспорт не расширяет allowlist молча: ровно три действия
-        # extensions/hhru-live/content.js (ACTION_ALLOWLIST) этапа 1.
+    def test_allowlist_mirrors_extension_exactly(self):
+        # Транспорт не расширяет allowlist молча: ровно шесть действий
+        # extensions/hhru-live/content.js (ACTION_ALLOWLIST, этапы 1-2).
         assert set(ALLOWED_ACTIONS) == {
             "list_overlays",
             "dismiss_overlay",
             "check_element",
+            "get_page_state",
+            "click_element",
+            "wait_element",
         }
 
     def test_list_overlays_rejects_any_payload(self):
         with pytest.raises(ProtocolError) as exc:
             parse_envelope(_envelope(payload={"selector": "div"}))
         assert exc.value.code == BAD_PAYLOAD
+
+    def test_get_page_state_rejects_any_payload(self):
+        with pytest.raises(ProtocolError) as exc:
+            parse_envelope(_envelope(action="get_page_state", payload={"url": "x"}))
+        assert exc.value.code == BAD_PAYLOAD
+
+    def test_get_page_state_accepts_empty(self):
+        cmd = parse_envelope(_envelope(action="get_page_state"))
+        assert cmd.action == "get_page_state"
+
+    def test_wait_element_accepts_contract_payload(self):
+        # camelCase timeoutMs — имя поля сообщения исполнителя (executor.js).
+        cmd = parse_envelope(
+            _envelope(
+                action="wait_element",
+                payload={"selector": "[data-qa='x']", "state": "visible", "timeoutMs": 1500},
+            )
+        )
+        assert cmd.payload["timeoutMs"] == 1500
+
+    def test_wait_element_rejects_snake_case_timeout(self):
+        # Фикс дрейфа #1160: сервер шлет только camelCase-контракт исполнителя.
+        with pytest.raises(ProtocolError) as exc:
+            parse_envelope(
+                _envelope(
+                    action="wait_element",
+                    payload={"selector": "x", "state": "visible", "timeout_ms": 1500},
+                )
+            )
+        assert exc.value.code == BAD_PAYLOAD
+
+    def test_wait_element_requires_valid_state(self):
+        with pytest.raises(ProtocolError) as exc:
+            parse_envelope(
+                _envelope(
+                    action="wait_element",
+                    payload={"selector": "x", "state": "attached", "timeoutMs": 100},
+                )
+            )
+        assert exc.value.code == BAD_PAYLOAD
+
+    def test_wait_element_requires_positive_timeout(self):
+        for bad in (0, -5, True, "1500", None):
+            with pytest.raises(ProtocolError) as exc:
+                parse_envelope(
+                    _envelope(
+                        action="wait_element",
+                        payload={"selector": "x", "state": "visible", "timeoutMs": bad},
+                    )
+                )
+            assert exc.value.code == BAD_PAYLOAD
+
+    def test_wait_element_requires_exactly_one_target(self):
+        for payload in (
+            {"state": "visible", "timeoutMs": 100},
+            {"selector": "a", "dataQa": "b", "state": "visible", "timeoutMs": 100},
+            {"selector": "", "state": "visible", "timeoutMs": 100},
+        ):
+            with pytest.raises(ProtocolError) as exc:
+                parse_envelope(_envelope(action="wait_element", payload=payload))
+            assert exc.value.code == BAD_PAYLOAD
+
+    def test_click_element_accepts_contract_payload(self):
+        cmd = parse_envelope(
+            _envelope(
+                action="click_element",
+                payload={
+                    "dataQa": "resume-update-button",
+                    "waitFor": {"state": "hidden", "timeoutMs": 500, "dataQa": "hint"},
+                },
+            )
+        )
+        assert cmd.payload["waitFor"]["timeoutMs"] == 500
+
+    def test_click_element_requires_wait_for(self):
+        # Исполнитель отклоняет клик без объявленного условия (wait_required).
+        with pytest.raises(ProtocolError) as exc:
+            parse_envelope(_envelope(action="click_element", payload={"selector": "a"}))
+        assert exc.value.code == BAD_PAYLOAD
+
+    def test_click_element_wait_for_requires_target_and_state(self):
+        for wait_for in (
+            {"timeoutMs": 500},
+            {"state": "visible", "timeoutMs": 500},
+            {"state": "nope", "timeoutMs": 500, "selector": "x"},
+        ):
+            with pytest.raises(ProtocolError) as exc:
+                parse_envelope(
+                    _envelope(
+                        action="click_element",
+                        payload={"selector": "a", "waitFor": wait_for},
+                    )
+                )
+            assert exc.value.code == BAD_PAYLOAD
 
     def test_dismiss_overlay_requires_overlay_id(self):
         with pytest.raises(ProtocolError) as exc:
