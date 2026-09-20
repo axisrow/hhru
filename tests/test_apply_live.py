@@ -76,6 +76,7 @@ class FakeFormChannel:
         submit_markers: bool = True,
         apply_click_error: PrimitiveError | None = None,
         submit_click_error: PrimitiveError | None = None,
+        fill_error: PrimitiveError | None = None,
     ) -> None:
         self.url = url
         self.login_found = login_found
@@ -94,6 +95,7 @@ class FakeFormChannel:
         self.submit_markers = submit_markers
         self.apply_click_error = apply_click_error
         self.submit_click_error = submit_click_error
+        self.fill_error = fill_error
         self.apply_clicked = False
         self.toggle_clicked = False
         self.option_clicked = False
@@ -163,6 +165,8 @@ class FakeFormChannel:
 
     def fill(self, selector: str, text: str) -> dict:
         self.calls.append((ACTION_FILL, {"selector": selector, "text": text}))
+        if self.fill_error is not None:
+            raise self.fill_error
         self.filled_text = text if self.fill_ok else None
         return {"filled": self.fill_ok, "length": len(text) if self.fill_ok else 0}
 
@@ -468,6 +472,18 @@ def test_fill_read_back_mismatch_blocks_submit() -> None:
     assert (result.success, result.uncertain) == (False, False)
     assert "read-back" in result.reason
     assert not channel.submitted
+
+
+def test_fill_refusal_keeps_flags_clean() -> None:
+    # Не-forwarded отказ записи (оба textarea в DOM → ambiguous): hh.ru ничего
+    # не получил — флаги чистые, решает вердикт сайта, а не acted+uncertain.
+    channel = FakeFormChannel(
+        fill_error=PrimitiveError("ambiguous_target", "2 совпадения", forwarded=False)
+    )
+    result = _run(channel, verify=_verify_of("not_found"))
+
+    assert (result.success, result.acted, result.uncertain) == (False, False, False)
+    assert not channel.submitted and channel.filled_text is None
 
 
 def test_unconfirmed_resume_selection_blocks_submit() -> None:

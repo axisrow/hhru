@@ -212,14 +212,26 @@ def apply_via_live(
     def _read(selector: str) -> dict:
         try:
             return channel.check(selector)
-        except (ChannelError, PrimitiveError) as exc:
-            raise _ScenarioInterrupted(f"чтение не выполнено ({exc})") from exc
+        except PrimitiveError as exc:
+            # Не-forwarded отказ (цель/policy) — действия не было; в серой
+            # зоне он не должен стоить acted+uncertain, как _click.
+            if exc.forwarded:
+                raise _ScenarioInterrupted(f"чтение не выполнено ({exc})") from exc
+            raise _RefusedBeforeAction(str(exc)) from exc
+        except ChannelError as exc:
+            raise _ScenarioInterrupted(f"канал: {exc}") from exc
 
     def _fill(selector: str, text: str) -> dict:
         try:
             return channel.fill(selector, text)
-        except (ChannelError, PrimitiveError) as exc:
-            raise _ScenarioInterrupted(f"запись письма не выполнена ({exc})") from exc
+        except PrimitiveError as exc:
+            # Та же классификация: отказ записи (ambiguous/policy) — мутации
+            # hh.ru не было, fail-closed решает вердикт сайта, не uncertain.
+            if exc.forwarded:
+                raise _ScenarioInterrupted(f"запись письма не выполнена ({exc})") from exc
+            raise _RefusedBeforeAction(str(exc)) from exc
+        except ChannelError as exc:
+            raise _ScenarioInterrupted(f"канал: {exc}") from exc
 
     def _grey_zone(reason: str, *, acted: bool, uncertain: bool):
         """Финализация fail-исхода ПОСЛЕ клика по кнопке отклика (#207).
