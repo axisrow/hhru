@@ -76,9 +76,13 @@ echo "[INFO] Профиль: $PROFILE_DIR"
 mkdir -p "$PROFILE_DIR"
 
 # exec: браузер становится процессом скрипта; Ctrl-C в терминале закрывает его.
+# --disable-features: с M137 фича DisableLoadExtensionCommandLineSwitch
+# молча игнорирует --load-extension (боевой факт: CfT 151, 2026-09-20 —
+# расширение не загружалось, SW не появлялся); флаг возвращает загрузку.
 exec "$BINARY" \
   --user-data-dir="$PROFILE_DIR" \
   --load-extension="$EXT_DIR" \
+  --disable-features=DisableLoadExtensionCommandLineSwitch \
   --no-first-run \
   --no-default-browser-check \
   "$URL" "$@"
