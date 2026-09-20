@@ -78,7 +78,11 @@ class WSConnection:
         if self._handshake_done:
             return True
         try:
-            data = self._sock.recv(MAX_HANDSHAKE_BYTES - len(self._hs_buf))
+            # +1: первый байт ЗА лимитом делает переполнение различимым —
+            # без него буфер физически не может превысить MAX, ветка ниже
+            # мертва, а 8193 байта без \r\n\r\n ловились бы как «закрыто
+            # до handshake» или молча по дедлайну (ревью PR #1202).
+            data = self._sock.recv(MAX_HANDSHAKE_BYTES + 1 - len(self._hs_buf))
         except (BlockingIOError, InterruptedError):
             return False
         except OSError as exc:

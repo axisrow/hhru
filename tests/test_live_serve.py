@@ -21,6 +21,7 @@ import pytest
 
 from hhru_bot.live import PROTOCOL_VERSION, LiveServeServer
 from hhru_bot.live import server as live_server
+from hhru_bot.live.ws import MAX_HANDSHAKE_BYTES
 
 pytestmark = pytest.mark.integration
 
@@ -619,5 +620,20 @@ def test_handshake_probe_closed_after_deadline_frees_slot(monkeypatch):
             assert json.loads(payload)["id"] == "c1"
         finally:
             client.close()
+    finally:
+        harness.stop()
+
+
+def test_oversized_handshake_request_closed_immediately():
+    harness = ServerHarness()
+    try:
+        probe = socket.create_connection(("127.0.0.1", harness.server.port), timeout=5)
+        # MAX_HANDSHAKE_BYTES + 1 байт без \r\n\r\n: лимит handshake обязан
+        # сработать сразу («слишком большой»), а не держать кандидата до
+        # дедлайна или ждать «закрытия до handshake» следующего байта.
+        probe.sendall(b"a" * (MAX_HANDSHAKE_BYTES + 1))
+        probe.settimeout(1.0)
+        assert probe.recv(1) == b"", "переполненный handshake не закрыт сразу"
+        probe.close()
     finally:
         harness.stop()
