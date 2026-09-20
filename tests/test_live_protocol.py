@@ -101,16 +101,120 @@ class TestEnvelope:
 
 class TestAllowlist:
     def test_allowlist_mirrors_extension_exactly(self):
-        # Транспорт не расширяет allowlist молча: ровно шесть действий
-        # extensions/hhru-live/content.js (ACTION_ALLOWLIST, этапы 1-2).
+        # Транспорт не расширяет allowlist молча: ровно те действия, что в
+        # extensions/hhru-live/content.js (ACTION_ALLOWLIST) — три этапа 1
+        # (#930) + три примитива исполнителя #1160 + fill_element (#1162).
         assert set(ALLOWED_ACTIONS) == {
             "list_overlays",
             "dismiss_overlay",
             "check_element",
             "get_page_state",
-            "click_element",
             "wait_element",
+            "click_element",
+            "fill_element",
         }
+
+    def test_get_page_state_takes_no_payload(self):
+        with pytest.raises(ProtocolError) as exc:
+            parse_envelope(_envelope(action="get_page_state", payload={"x": 1}))
+        assert exc.value.code == BAD_PAYLOAD
+
+    def test_wait_element_requires_single_target_state_timeout(self):
+        base = {"state": "visible", "timeoutMs": 1000}
+        with pytest.raises(ProtocolError):
+            parse_envelope(_envelope(action="wait_element", payload=base))
+        with pytest.raises(ProtocolError):
+            parse_envelope(
+                _envelope(
+                    action="wait_element",
+                    payload={**base, "selector": "a", "dataQa": "b"},
+                )
+            )
+        ok = parse_envelope(_envelope(action="wait_element", payload={**base, "selector": "a"}))
+        assert ok.payload["timeoutMs"] == 1000
+
+    @pytest.mark.parametrize("bad_timeout", [0, -1, True, 1.5, "1000", None])
+    def test_wait_element_rejects_bad_timeout(self, bad_timeout):
+        with pytest.raises(ProtocolError) as exc:
+            parse_envelope(
+                _envelope(
+                    action="wait_element",
+                    payload={"selector": "a", "state": "visible", "timeoutMs": bad_timeout},
+                )
+            )
+        assert exc.value.code == BAD_PAYLOAD
+
+    def test_wait_element_state_is_closed_vocabulary(self):
+        with pytest.raises(ProtocolError):
+            parse_envelope(
+                _envelope(
+                    action="wait_element",
+                    payload={"selector": "a", "state": "attached", "timeoutMs": 1000},
+                )
+            )
+
+    def test_click_element_validates_wait_for_and_allow_apply(self):
+        target = {"selector": "button", "allowApply": True}
+        ok = parse_envelope(
+            _envelope(
+                action="click_element",
+                payload={
+                    **target,
+                    "waitFor": {"dataQa": "x", "state": "hidden", "timeoutMs": 2000},
+                },
+            )
+        )
+        assert ok.payload["allowApply"] is True
+        # waitFor без таймаута / с двумя целями / allowApply не-булево — отказ.
+        with pytest.raises(ProtocolError):
+            parse_envelope(
+                _envelope(
+                    action="click_element",
+                    payload={**target, "waitFor": {"dataQa": "x", "state": "hidden"}},
+                )
+            )
+        with pytest.raises(ProtocolError):
+            parse_envelope(
+                _envelope(
+                    action="click_element",
+                    payload={
+                        **target,
+                        "waitFor": {
+                            "dataQa": "x",
+                            "selector": "y",
+                            "state": "hidden",
+                            "timeoutMs": 2000,
+                        },
+                    },
+                )
+            )
+        with pytest.raises(ProtocolError):
+            parse_envelope(
+                _envelope(action="click_element", payload={**target, "allowApply": "yes"})
+            )
+
+    def test_fill_element_requires_text_and_single_target(self):
+        ok = parse_envelope(
+            _envelope(action="fill_element", payload={"selector": "textarea", "text": "письмо"})
+        )
+        assert ok.payload["text"] == "письмо"
+        with pytest.raises(ProtocolError):
+            parse_envelope(_envelope(action="fill_element", payload={"selector": "textarea"}))
+        with pytest.raises(ProtocolError):
+            parse_envelope(
+                _envelope(
+                    action="fill_element",
+                    payload={"selector": "a", "text": "x", "state": "visible"},
+                )
+            )
+        with pytest.raises(ProtocolError) as long_exc:
+            parse_envelope(
+                _envelope(
+                    action="fill_element",
+                    payload={"selector": "a", "text": "x" * 10_001},
+                )
+            )
+        assert long_exc.value.code == BAD_PAYLOAD
 
     def test_list_overlays_rejects_any_payload(self):
         with pytest.raises(ProtocolError) as exc:
@@ -296,10 +400,13 @@ class TestCommandRegistration:
         assert ns.port == 8765
         assert callable(ns.func)
 
-    def test_default_port_is_ephemeral(self):
+    def test_default_port_matches_extension_bridge(self):
+        # LIVE_SERVE_URL расширения захардкожен (background.js): дефолт
+        # ephemeral 0 давал канал, который клиент никогда не увидит.
         from hhru_bot.cli import build_parser
+        from hhru_bot.commands.live_serve import LIVE_SERVE_DEFAULT_PORT
 
-        assert build_parser().parse_args(["live-serve"]).port == 0
+        assert build_parser().parse_args(["live-serve"]).port == LIVE_SERVE_DEFAULT_PORT == 8765
 
     @pytest.mark.parametrize("bad_port", ["99999", "-1", "65536"])
     def test_port_out_of_range_rejected_at_argparse(self, bad_port, capsys):

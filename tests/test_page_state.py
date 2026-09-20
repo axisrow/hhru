@@ -72,10 +72,11 @@ def test_hhru_live_extension_transport_allowlist_is_exact():
     background = (root / "background.js").read_text()
     allowlist = (
         "new Set(['list_overlays', 'dismiss_overlay', 'check_element', "
-        "'click_element', 'wait_element', 'get_page_state'])"
+        "'click_element', 'wait_element', 'get_page_state', 'fill_element'])"
     )
-    # Шесть действий после #1160 (три MVP + три примитива исполнителя);
-    # всё прочее — action_not_allowed. Обе копии — дословно.
+    # Семь действий после #1162 (шесть после #1160 + fill_element — текстовый
+    # примитив сценария отклика); всё прочее — action_not_allowed. Обе копии —
+    # дословно.
     assert allowlist in content
     assert allowlist in background, (
         "RELAY_ACTIONS в background.js должен зеркалить ACTION_ALLOWLIST "

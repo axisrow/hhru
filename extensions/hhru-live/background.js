@@ -14,7 +14,7 @@ function isTrustedSender(sender) {
 // content.js rejects anything else anyway (fail-closed), this set only
 // stops commands from reaching the tab. A guard test asserts the two
 // literals match.
-const RELAY_ACTIONS = new Set(['list_overlays', 'dismiss_overlay', 'check_element', 'click_element', 'wait_element', 'get_page_state']);
+const RELAY_ACTIONS = new Set(['list_overlays', 'dismiss_overlay', 'check_element', 'click_element', 'wait_element', 'get_page_state', 'fill_element']);
 
 // --- Agent bridge over the loopback WebSocket (stage 2, #1160). The server
 // side is the CLI `live-serve` command (issue #1159); this is the extension
@@ -29,7 +29,8 @@ const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 // Scalar payload fields copied onto the content-script command; anything
 // else in a payload is dropped — the bridge never forwards unlisted shapes.
-const COMMAND_FIELDS = ['id', 'selector', 'dataQa', 'label', 'state', 'timeoutMs'];
+// text/allowApply — примитивы сценария отклика S4 (#1162).
+const COMMAND_FIELDS = ['id', 'selector', 'dataQa', 'label', 'state', 'timeoutMs', 'text', 'allowApply'];
 const WAIT_FIELDS = ['selector', 'dataQa', 'label', 'state', 'timeoutMs'];
 
 let bridgeSocket = null;
@@ -104,8 +105,15 @@ function handleEnvelope(envelope) {
 // Shared tab relay: the popup path (#931) and the WebSocket bridge both land
 // here. `command` is already shaped for content.js; content responses pass
 // through untouched (the bridge maps ok -> status itself).
+//
+// Target = ANY hh.ru tab (active one first), not the active tab of the last
+// focused window: the agent's runs survive the user working in other
+// windows — active-tab-only made every primitive poll a foreign DOM
+// (battle run #1162, 2026-09-20). URL-scoped query needs only the
+// host_permissions the manifest already declares.
 function relayToTab(command, sendResponse) {
-  chrome.tabs.query({ active: true, lastFocusedWindow: true }, ([tab]) => {
+  chrome.tabs.query({ url: ['https://hh.ru/*', 'https://*.hh.ru/*'] }, (tabs) => {
+    const tab = tabs.find((t) => t.active) ?? tabs[0];
     if (!tab || !isTrustedSender({ tab })) {
       sendResponse({ ok: false, error: 'no_hhru_tab' });
       return;

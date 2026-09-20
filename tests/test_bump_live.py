@@ -79,21 +79,19 @@ class FakeChannel:
         self.calls.append((ACTION_CHECK, {"selector": selector}))
         return {"found": self.login_found, "visible": self.login_found}
 
-    def click(self, selector: str, wait_for: dict) -> dict:
-        self.calls.append((ACTION_CLICK, {"selector": selector, "waitFor": wait_for}))
+    def click(self, selector: str, wait_for: dict | None = None, allow_apply: bool = False) -> dict:
+        self.calls.append(
+            (ACTION_CLICK, {"selector": selector, "waitFor": wait_for, "allowApply": allow_apply})
+        )
         if self.click_error is not None:
             raise self.click_error
         self._clicked = True
         self.hint_present, self.button_present = self.post_click
-        # Исполнитель сам держит бюджет объявленного условия и отвечает
-        # result.wait.met (executor.js waitForCondition).
-        present = self._present(wait_for["selector"])
-        met = present if wait_for["state"] == WAIT_STATE_VISIBLE else not present
-        return {"clicked": True, "wait": {"met": met}}
+        return {"clicked": True, "wait": {"met": bool(wait_for)}}
 
     def wait(self, selector: str, state: str, timeout_ms: int) -> bool:
         self.calls.append(
-            (ACTION_WAIT, {"selector": selector, "state": state, "timeout_ms": timeout_ms})
+            (ACTION_WAIT, {"selector": selector, "state": state, "timeoutMs": timeout_ms})
         )
         if self.wait_error is not None and self._clicked:
             raise self.wait_error
@@ -123,9 +121,9 @@ def _actions(channel: FakeChannel) -> list[str]:
 
 
 def test_action_names_match_s2_contract() -> None:
-    # Страж единой точки маппинга: имена — как их объявляет расширение
-    # (content.js ACTION_ALLOWLIST). При расхождении правится и таблица в
-    # scenarios.py, и этот тест (одним коммитом).
+    # Страж единой точки маппинга: при расхождении имён с реальным S2 правится
+    # и таблица в scenarios.py, и этот тест (одним коммитом на перебазировке).
+    # get_page_state — имя действия этапа 1 (#930) в ACTION_ALLOWLIST расширения.
     assert (ACTION_GET_STATE, ACTION_CHECK, ACTION_CLICK, ACTION_WAIT) == (
         "get_page_state",
         "check_element",
@@ -149,10 +147,9 @@ def test_success_path_maps_to_primitives_in_battle_order() -> None:
         False,
     )
     # Порядок боевого bump.py: URL -> форма входа -> список -> карточка ->
-    # hint -> кнопка -> клик (с объявленным пост-клик условием). Селекторы
-    # кнопки/hint скоупятся карточкой резюме (мульти-резюме аккаунта).
+    # hint -> кнопка -> клик -> позитивный маркер. Селекторы кнопки/hint
+    # скоупятся карточкой резюме (мульти-резюме аккаунта).
     waits = [payload for action, payload in channel.calls if action == ACTION_WAIT]
-    clicks = [payload for action, payload in channel.calls if action == ACTION_CLICK]
     assert _actions(channel) == [
         ACTION_GET_STATE,
         ACTION_CHECK,
@@ -161,14 +158,11 @@ def test_success_path_maps_to_primitives_in_battle_order() -> None:
         ACTION_WAIT,
         ACTION_WAIT,
         ACTION_CLICK,
+        ACTION_WAIT,
     ]
-    # Последнее ожидание до клика — кнопка; пост-клик условие объявлено
-    # самим кликом (executor.js wait_required) и ждёт кулдаун-хинт.
-    assert waits[-1]["timeout_ms"] == BUMP_TIMEOUT_MS
+    assert waits[-1]["timeoutMs"] == MARKER_TIMEOUT_MS
     assert "resume-update-button" in channel.calls[-2][1]["selector"]
     assert "resume-card-link-abc123" in channel.calls[-2][1]["selector"]
-    assert clicks[0]["waitFor"]["timeoutMs"] == MARKER_TIMEOUT_MS
-    assert "resume-update-button-disabled" in clicks[0]["waitFor"]["selector"]
 
 
 def test_dry_run_stops_before_click() -> None:
@@ -266,12 +260,10 @@ def test_marker_absent_button_still_there_is_uncertain() -> None:
 
 
 def test_post_click_transport_failure_is_uncertain() -> None:
-    # Обрыв после клика: объявленное условие не метнулось (хинта нет), а
-    # добивочное чтение отказывает — подтверждение не прочитано, исход
-    # обязан быть uncertain независимо от факта клика.
+    # Обрыв после клика: wait отказывает — подтверждение не прочитано,
+    # исход обязан быть uncertain независимо от факта клика.
     channel = FakeChannel(
-        post_click=(False, True),
-        wait_error=PrimitiveError("client_disconnected", "соединение потеряно", forwarded=True),
+        wait_error=PrimitiveError("client_disconnected", "соединение потеряно", forwarded=True)
     )
     result = bump_via_live(channel, _resume(), dry_run=False)
 
@@ -309,3 +301,13 @@ def test_marker_timeouts_documented_budgets() -> None:
     # Пост-клик бюджет шире боевого ожидания карточки: сеть + гидрация.
     assert MARKER_TIMEOUT_MS > BUMP_TIMEOUT_MS
     assert 0 < MARKER_GONE_TIMEOUT_MS <= BUMP_HINT_TIMEOUT_MS * 10
+
+
+def test_default_port_matches_extension_bridge() -> None:
+    # Расширение подключается только к ws://127.0.0.1:8765 (LIVE_SERVE_URL,
+    # background.js): дефолт ephemeral 0 дал бы канал, которого клиент никогда
+    # не увидит, и каждый запуск сгорал бы в 120-секундном wait_client.
+    from hhru_bot.commands.bump_live import DEFAULT_LIVE_PORT
+    from hhru_bot.commands.live_serve import LIVE_SERVE_DEFAULT_PORT
+
+    assert DEFAULT_LIVE_PORT == LIVE_SERVE_DEFAULT_PORT == 8765

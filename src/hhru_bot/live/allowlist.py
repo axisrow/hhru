@@ -1,24 +1,22 @@
-"""Allowlist действий live-канала — зеркало этапов 1 и 2 (#1159, #1160).
+"""Allowlist действий live-канала — зеркало расширения hhru-live (S1+S2+S4).
 
-Ровно шесть действий расширения hhru-live (extensions/hhru-live/content.js,
+Семь действий расширения (extensions/hhru-live/content.js,
 ``ACTION_ALLOWLIST`` / background.js ``RELAY_ACTIONS``)::
 
     list_overlays                  — payload: {}
     dismiss_overlay {id, selector?} — закрыть safe-overlay (id = "overlay-N")
     check_element   {selector}      — found/visible + obstruction-проба
-    get_page_state  {}              — url/title/readyState вкладки
-    click_element   {selector|dataQa|label, waitFor} — клик через policy-ядро
-    wait_element    {selector|dataQa|label, state, timeoutMs}
+    get_page_state                  — URL/title/readyState вкладки
+    wait_element {dataQa|label|selector, state, timeoutMs}
+    click_element {dataQa|label|selector, waitFor?, allowApply?}
+    fill_element  {dataQa|label|selector, text}
 
 Транспорт НЕ расширяет allowlist молча: новое действие сначала появляется в
 расширении, затем здесь. Каждый валидатор строг к форме payload: чужие ключи,
 чужие типы, пустые значения — ProtocolError(BAD_PAYLOAD), команда не
-пересылается. Формы click_element/wait_element повторяют resolver'ы
-extensions/hhru-live/executor.js (resolveTargets/resolveWait/resolveTimeout):
-ровно один непустой способ адресации, состояние visible|hidden, положительный
-числовой timeoutMs (camelCase — имена полей сообщения исполнителя). Семантику
-(какая политика классификации, что безопасно закрывать/кликать) канал не
-решает — это остаётся в policy.js/content.js.
+пересылается. Семантика (какая политика классификации, что безопасно закрывать,
+когда разрешён apply-клик) каналу не принадлежит — policy.js/executor.js решают
+в браузере; allowApply здесь только честно переносит явную авторизацию сценария.
 """
 
 from __future__ import annotations
@@ -28,20 +26,13 @@ from typing import NoReturn
 
 from .protocol import BAD_PAYLOAD, ProtocolError
 
-# Способы адресации элемента (executor.js resolveTargets: ровно один).
-_ADDRESSING_FIELDS = ("selector", "dataQa", "label")
-# Состояния ожидания (executor.js: state_required).
-_WAIT_STATES = ("visible", "hidden")
+#: Потолок текста fill_element: сопроводительное письмо — порядок килобайта;
+#: всё длиннее — ошибка конфигурации, а не текст для формы.
+FILL_TEXT_MAX_LEN = 10_000
 
 
 def _reject(payload: dict, detail: str) -> NoReturn:
     raise ProtocolError(BAD_PAYLOAD, detail)
-
-
-def _reject_unknown(payload: dict, known: tuple[str, ...]) -> None:
-    unknown = sorted(set(payload) - set(known))
-    if unknown:
-        _reject(payload, f"неизвестные поля payload: {', '.join(unknown)}")
 
 
 def _check_list_overlays(payload: dict) -> None:
@@ -62,60 +53,61 @@ def _check_check_element(payload: dict) -> None:
     _require_fields(payload, required=(("selector", str),), optional=())
 
 
-def _check_one_target(payload: dict, context: str) -> None:
-    """Ровно один непустой строковый способ адресации (executor.js: target_required).
-
-    Чужие ключи здесь не проверяются: набор известных полей у каждого
-    действия свой, их отвергает валидатор действия до этого вызова.
-    """
-    filled = [
-        name
-        for name in _ADDRESSING_FIELDS
-        if isinstance(payload.get(name), str) and payload[name].strip()
-    ]
-    if len(filled) != 1:
-        _reject(
-            payload,
-            f"{context}: ровно один способ адресации "
-            f"({', '.join(_ADDRESSING_FIELDS)} — непустой строкой)",
-        )
-
-
-def _check_timeout_ms(payload: dict) -> None:
-    value = payload.get("timeoutMs")
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
-        _reject(payload, "timeoutMs обязателен (положительное число миллисекунд)")
-
-
 def _check_wait_element(payload: dict) -> None:
-    _reject_unknown(payload, (*_ADDRESSING_FIELDS, "state", "timeoutMs"))
-    _check_one_target(payload, "wait_element")
-    if payload.get("state") not in _WAIT_STATES:
-        _reject(payload, "state обязателен: 'visible' или 'hidden'")
+    _check_target(payload, extra_known=("state", "timeoutMs"))
+    state = payload.get("state")
+    if state not in ("visible", "hidden"):
+        _reject(payload, "поле state должно быть 'visible' или 'hidden'")
     _check_timeout_ms(payload)
 
 
-def _check_wait_for(wait_for: object) -> None:
-    """Объявленное пост-клик условие; без него клик не проходит (wait_required)."""
-    if not isinstance(wait_for, dict):
-        _reject({}, "waitFor должен быть JSON-объектом")
-    _reject_unknown(wait_for, (*_ADDRESSING_FIELDS, "state", "timeoutMs"))
-    if wait_for.get("state") not in _WAIT_STATES:
-        _reject(wait_for, "waitFor.state обязателен: 'visible' или 'hidden'")
-    _check_timeout_ms(wait_for)
-    _check_one_target(wait_for, "waitFor")
-
-
 def _check_click_element(payload: dict) -> None:
-    _reject_unknown(payload, (*_ADDRESSING_FIELDS, "waitFor"))
-    _check_one_target(payload, "click_element")
-    if "waitFor" not in payload:
+    _check_target(payload, extra_known=("state", "timeoutMs", "waitFor", "allowApply"))
+    allow_apply = payload.get("allowApply")
+    if allow_apply is not None and not isinstance(allow_apply, bool):
+        _reject(payload, "поле allowApply должно быть булевым")
+    # waitFor обязателен уже на транспорте: исполнитель отклоняет клик без
+    # объявленного post-click условия (wait_required) — ошибка должна быть
+    # видна вызывающему сразу, а не после пересылки в браузер.
+    wait_for = payload.get("waitFor")
+    if not isinstance(wait_for, dict):
+        _reject(payload, "поле waitFor обязательно (объект: цель, state, timeoutMs)")
+    _check_wait_element(wait_for)
+
+
+def _check_fill_element(payload: dict) -> None:
+    _check_target(payload, extra_known=("text",))
+    text = payload.get("text")
+    if not isinstance(text, str) or not text:
+        _reject(payload, "поле text обязательно (непустая строка)")
+    if len(text) > FILL_TEXT_MAX_LEN:
+        _reject(payload, f"поле text длиннее {FILL_TEXT_MAX_LEN} символов")
+
+
+def _check_target(payload: dict, *, extra_known: tuple[str, ...]) -> None:
+    """Ровно один режим адресации — контракт executor.resolveTargets (fail-closed:
+    оба или ни одного — ошибка, а не догадка о приоритете)."""
+    modes = []
+    for name in ("dataQa", "label", "selector"):
+        value = payload.get(name)
+        if isinstance(value, str) and value.strip():
+            modes.append(name)
+    if len(modes) != 1:
         _reject(
             payload,
-            "click_element требует waitFor — клик без объявленного "
-            "пост-клик условия отклоняется исполнителем (wait_required)",
+            "ровно одно поле адресации dataQa|label|selector (непустая строка)"
+            f", передано: {', '.join(modes) or 'ничего'}",
         )
-    _check_wait_for(payload["waitFor"])
+    unknown = sorted(set(payload) - {"dataQa", "label", "selector", *extra_known})
+    if unknown:
+        _reject(payload, f"неизвестные поля payload: {', '.join(unknown)}")
+
+
+def _check_timeout_ms(payload: dict) -> None:
+    timeout = payload.get("timeoutMs")
+    # Строго int: bool исключён (True == 1), float — не таймаут протокола.
+    if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout <= 0:
+        _reject(payload, "поле timeoutMs обязательно (целое число > 0)")
 
 
 def _require_fields(
@@ -142,6 +134,7 @@ ALLOWED_ACTIONS: dict[str, Callable[[dict], None]] = {
     "dismiss_overlay": _check_dismiss_overlay,
     "check_element": _check_check_element,
     "get_page_state": _check_get_page_state,
-    "click_element": _check_click_element,
     "wait_element": _check_wait_element,
+    "click_element": _check_click_element,
+    "fill_element": _check_fill_element,
 }

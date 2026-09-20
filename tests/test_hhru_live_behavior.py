@@ -428,11 +428,37 @@ def test_hhru_live_executor_click_dangerous_refused_without_click():
 
 
 def test_hhru_live_executor_click_apply_step_refused_without_click():
-    """apply-сигналы (data-qa vacancy-response) — отказ без клика: сценарий
-    отклика не входит в примитивы исполнителя, это S3/S4 (#1161/#1162)."""
+    """apply-сигналы (data-qa vacancy-response) — отказ без клика БЕЗ явной
+    авторизации: ключ сценария отклика — allowApply команды агента (#1162)."""
     scenario = _run_executor_scenario("click_apply_step_refused")
     assert scenario["error"] == "policy_refused" and scenario["reason"] == "apply_step"
     assert scenario["clickCount"] == 0
+
+
+def test_hhru_live_executor_allow_apply_clicks_only_apply_step():
+    """#1162: allowApply понижает ТОЛЬКО apply_step-отказ цели (context
+    apply_flow, клик выполняется); якорь опасности и ambiguous-предок
+    отказывают и с allowApply — гейты этапа 1 не ослаблены."""
+    scenario = _run_executor_scenario("click_apply_allowed_only_with_permission")
+    assert scenario["allowedOk"] and scenario["allowedContext"] == "apply_flow"
+    assert scenario["allowedClicked"] and scenario["clickedApply"]
+    assert scenario["dangerError"] == "policy_refused" and scenario["dangerReason"] == "dangerous"
+
+
+def test_hhru_live_executor_fill_element_sets_value():
+    """#1162: текст письма проходит через native setter и читается обратно;
+    расхождение — ok:false, а не молчаливая полузаполненная форма."""
+    scenario = _run_executor_scenario("fill_element_sets_value")
+    assert scenario["ok"] and scenario["filled"]
+    assert scenario["valueInField"] and scenario["length"] == len(scenario["valueInField"])
+
+
+def test_hhru_live_executor_fill_element_dangerous_refused():
+    """Пустой input meanings в атрибутах: data-qa с captcha — отказ без
+    записи значения, гейт опасности у fill сильнее текстового скана."""
+    scenario = _run_executor_scenario("fill_element_dangerous_refused")
+    assert scenario["error"] == "policy_refused" and scenario["reason"] == "dangerous"
+    assert scenario["untouched"]
 
 
 def test_hhru_live_executor_click_ambiguous_overlay_refused():
@@ -454,11 +480,25 @@ def test_hhru_live_executor_click_without_wait_refused():
 
 
 def test_hhru_live_executor_click_ambiguous_target_refused():
-    """Неоднозначная адресация не кликает «первый» молча: matchCount
-    возвращается агенту, кликов 0."""
+    """Дубликаты одного data-qa (шапка + липкая панель hh.ru, прогон #1162) —
+    один контрол в нескольких местах: кликается первый видимый — и по dataQa,
+    и по чистому [data-qa='X']. Неточный селектор ([data-qa*='...']) остаётся
+    ambiguous (fail-closed)."""
     scenario = _run_executor_scenario("click_ambiguous_target")
-    assert scenario["error"] == "ambiguous_target" and scenario["matchCount"] == 2
-    assert scenario["clickCount"] == 0
+    assert scenario["sameQaClicked"] is True and scenario["sameQaText"] == "Один"
+    assert scenario["cssClicked"] is True
+    assert scenario["fuzzyError"] == "ambiguous_target" and scenario["fuzzyMatchCount"] == 2
+    assert scenario["clickCount"] == 2
+
+
+def test_hhru_live_executor_apply_modal_overlay_allowed_with_permission():
+    """Боевой факт #1162: ответная модалка классифицируется apply_step, а
+    пикер/письмо/submit сидят внутри неё — allowApply понижает и apply_step
+    оверлея-предка (apply_flow_overlay). Без флага — отказ без клика."""
+    scenario = _run_executor_scenario("click_apply_modal_overlay_allowed_with_permission")
+    assert scenario["allowedContext"] == "apply_flow_overlay"
+    assert scenario["allowedClicked"] is True
+    assert scenario["noFlagError"] == "policy_refused" and scenario["noFlagReason"] == "apply_step"
 
 
 def test_hhru_live_executor_click_invisible_target_refused():
@@ -631,6 +671,7 @@ def test_hhru_live_bridge_announces_hello_diagnostics():
             "click_element",
             "wait_element",
             "get_page_state",
+            "fill_element",
         ]
     )
     assert hello["permissions"] == ["storage"]

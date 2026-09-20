@@ -116,7 +116,9 @@ const SCENARIOS = {
   },
 
   // Apply-flow signals refuse without any click: the executor never enters
-  // the apply scenario — that is S3/S4 territory (#1161/#1162).
+  // the apply scenario on its own — an EXPLICIT allowApply command (#1162)
+  // is the only key. Danger anchors outrank it: a dangerous target refuses
+  // even with allowApply=true.
   click_apply_step_refused: async () => {
     const apply = el('a', { 'data-qa': 'vacancy-response-link' }, 'Откликнуться');
     append(apply);
@@ -129,6 +131,100 @@ const SCENARIOS = {
       error: response.error ?? null,
       reason: response.policy?.reason ?? null,
       clickCount: env.clicks.length,
+    };
+  },
+
+  click_apply_allowed_only_with_permission: async () => {
+    const apply = el('a', { 'data-qa': 'vacancy-response-link-top' }, 'Откликнуться');
+    const danger = el('button', { 'data-qa': 'withdraw-button' }, 'Отозвать отклик');
+    append(apply, danger);
+    const allowed = await send({
+      action: 'click_element',
+      dataQa: 'vacancy-response-link-top',
+      allowApply: true,
+      waitFor: { state: 'hidden', dataQa: 'vacancy-response-link-top', timeoutMs: 1000 },
+    });
+    const dangerRefused = await send({
+      action: 'click_element',
+      dataQa: 'withdraw-button',
+      allowApply: true,
+      waitFor: { state: 'hidden', dataQa: 'withdraw-button', timeoutMs: 1000 },
+    });
+    return {
+      allowedOk: allowed.ok ?? null,
+      allowedContext: allowed.result?.policy?.context ?? null,
+      allowedClicked: allowed.result?.clicked ?? null,
+      clickedApply: env.clicks.includes(apply),
+      dangerError: dangerRefused.error ?? null,
+      dangerReason: dangerRefused.policy?.reason ?? null,
+    };
+  },
+
+  // Боевой факт #1162 (testing, 2026-09-20): сама ответная модалка
+  // классифицируется apply_step (структурные якоря), а пикер/письмо/submit
+  // сидят ВНУТРИ неё — allowApply понижает и apply_step оверлея-предка
+  // (context apply_flow_overlay). Без флага — отказ; ambiguous- и опасные
+  // оверлеи не пускаются и с флагом.
+  click_apply_modal_overlay_allowed_with_permission: async () => {
+    const form = el('form', { id: 'RESPONSE_MODAL_FORM_ID' });
+    const picker = el('button', { 'data-qa': 'resume-title' }, 'Резюме');
+    const letter = el('textarea', { 'data-qa': 'vacancy-response-popup-form-letter-input' });
+    form.appendChild(picker);
+    form.appendChild(letter);
+    const modal = el('div', { class: 'magritte-modal' }, '');
+    modal.appendChild(form);
+    append(modal);
+    const allowed = await send({
+      action: 'click_element',
+      dataQa: 'resume-title',
+      allowApply: true,
+      waitFor: { state: 'visible', dataQa: 'resume-title', timeoutMs: 1000 },
+    });
+    const noFlag = await send({
+      action: 'click_element',
+      dataQa: 'resume-title',
+      waitFor: { state: 'visible', dataQa: 'resume-title', timeoutMs: 1000 },
+    });
+    return {
+      allowedContext: allowed.result?.policy?.context ?? null,
+      allowedClicked: allowed.result?.clicked ?? null,
+      noFlagError: noFlag.error ?? null,
+      noFlagReason: noFlag.policy?.reason ?? null,
+    };
+  },
+
+  // fill_element (#1162): the letter text lands in the field through the
+  // native setter path and is read back; a mismatch is ok:false, never a
+  // silent half-filled form.
+  fill_element_sets_value: async () => {
+    const letter = el('textarea', { 'data-qa': 'vacancy-response-popup-form-letter-input' });
+    append(letter);
+    const response = await send({
+      action: 'fill_element',
+      dataQa: 'vacancy-response-popup-form-letter-input',
+      text: 'Здравствуйте! Готов обсудить задачу.',
+    });
+    return {
+      ok: response.ok ?? null,
+      filled: response.result?.filled ?? null,
+      length: response.result?.length ?? null,
+      valueInField: letter.value,
+    };
+  },
+
+  // A captcha-shaped field is never filled: danger anchors gate fill too.
+  fill_element_dangerous_refused: async () => {
+    const captcha = el('input', { 'data-qa': 'account-captcha-input' });
+    append(captcha);
+    const response = await send({
+      action: 'fill_element',
+      dataQa: 'account-captcha-input',
+      text: '1234',
+    });
+    return {
+      error: response.error ?? null,
+      reason: response.policy?.reason ?? null,
+      untouched: captcha.value === undefined,
     };
   },
 
@@ -166,18 +262,34 @@ const SCENARIOS = {
     };
   },
 
-  // An ambiguous selector must not silently click "the first" match.
+  // Одинаковый data-qa во всех матчах — один контрол в нескольких местах
+  // страницы (шапка + липкая панель hh.ru, боевой прогон #1162): кликается
+  // первый видимый — и по явному dataQa, и по чистому [data-qa='X'].
+  // Неточный селектор ([data-qa*='...']) остаётся ambiguous.
   click_ambiguous_target: async () => {
     append(el('button', { 'data-qa': 'dup-button' }, 'Один'));
     append(el('button', { 'data-qa': 'dup-button' }, 'Два'));
-    const response = await send({
+    const sameQa = await send({
       action: 'click_element',
       dataQa: 'dup-button',
       waitFor: { state: 'hidden', dataQa: 'dup-button', timeoutMs: 1000 },
     });
+    const css = await send({
+      action: 'click_element',
+      selector: '[data-qa="dup-button"]',
+      waitFor: { state: 'hidden', dataQa: 'dup-button', timeoutMs: 1000 },
+    });
+    const fuzzy = await send({
+      action: 'click_element',
+      selector: "[data-qa*='dup-']",
+      waitFor: { state: 'hidden', dataQa: 'dup-button', timeoutMs: 1000 },
+    });
     return {
-      error: response.error ?? null,
-      matchCount: response.matchCount ?? null,
+      sameQaClicked: sameQa.result?.clicked ?? null,
+      sameQaText: sameQa.result?.target?.text ?? null,
+      cssClicked: css.result?.clicked ?? null,
+      fuzzyError: fuzzy.error ?? null,
+      fuzzyMatchCount: fuzzy.matchCount ?? null,
       clickCount: env.clicks.length,
     };
   },

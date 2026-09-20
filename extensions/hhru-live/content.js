@@ -16,7 +16,7 @@
 // executor.js (loaded between policy.js and this file) behind their own
 // single click site and the same policy core.
 
-const ACTION_ALLOWLIST = new Set(['list_overlays', 'dismiss_overlay', 'check_element', 'click_element', 'wait_element', 'get_page_state']);
+const ACTION_ALLOWLIST = new Set(['list_overlays', 'dismiss_overlay', 'check_element', 'click_element', 'wait_element', 'get_page_state', 'fill_element']);
 // Detection surface (what counts as a potential overlay at all) is
 // observation, not policy — it stays here. #932, live DOM 2026-09-05
 // (анонимная главная): информер cookies — это
@@ -265,7 +265,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   // Stage-2 executor commands (#1160): click_element/wait_element answer
   // asynchronously after their declared wait budget; the policy gate and
-  // the single click site live in executor.js.
+  // the single click site live in executor.js. fill_element (#1162) is the
+  // text primitive of the apply scenario (synchronous).
   if (message.action === 'click_element') {
     clickElement(message, sendResponse);
     return true;
@@ -273,6 +274,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'wait_element') {
     waitElement(message, sendResponse);
     return true;
+  }
+  if (message.action === 'fill_element') {
+    fillElement(message, sendResponse);
+    return false;
   }
   // dismiss_overlay answers asynchronously after the close click + re-check.
   dismissOverlay(message.id, message, sendResponse);

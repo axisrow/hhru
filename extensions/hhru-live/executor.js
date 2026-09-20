@@ -4,9 +4,10 @@
 // this file never talks to the network itself.
 //
 // Three commands, dispatched from content.js's single onMessage listener:
-//   click_element  {dataQa|label|selector, waitFor: {state, timeoutMs, dataQa|label|selector}}
+//   click_element  {dataQa|label|selector, waitFor: {state, timeoutMs, dataQa|label|selector}, allowApply?}
 //   wait_element   {dataQa|label|selector, state: 'visible'|'hidden', timeoutMs}
 //   get_page_state {}
+//   fill_element   {dataQa|label|selector, text}   (#1162: letter textarea)
 //
 // Policy: EVERY click passes the #929 policy core (policy.js) BEFORE the
 // click happens — danger anchors over the target's own subtree text and
@@ -16,6 +17,13 @@
 // inside it). dangerous / apply_step / ambiguous refuse WITHOUT any click;
 // only a safe context clicks. This file adds no anchors and never widens
 // the stage-1 gates — it reuses them verbatim.
+//
+// #1162 (S4 apply scenario): an explicit command MAY carry allowApply=true —
+// the agent's own decision to run the apply flow, the same way it explicitly
+// names the target. It downgrades ONLY the apply_step refusal of the target
+// itself (context 'apply_flow'); DANGEROUS_TEXT and an ambiguous-overlay
+// ancestor still refuse without any click. Stage-1 auto-dismiss semantics
+// (no allowApply) are unchanged.
 //
 // The ONLY click in this file is target.click() inside clickElement(), the
 // same confirmed click method dismissOverlay() uses (a real DOM click, no
@@ -91,19 +99,28 @@ function findOverlayContext(node) {
 
 // The #929 policy core applied to a click target. Same fail-closed priority
 // as classifyDisposition: danger anchors outrank apply signals, both refuse.
-function evaluateClickPolicy(target) {
+// allowApply (#1162) downgrades apply_step refusals — the target's own AND
+// its overlay ancestor's (the response modal IS the apply flow: picker,
+// letter toggle and submit all sit inside it and match the structural
+// anchors). DANGEROUS targets and ambiguous/dangerous overlays still refuse
+// exactly as before; without the flag nothing changes (#929 stage-1).
+function evaluateClickPolicy(target, allowApply) {
   const text = collectText(target);
   if (DANGEROUS_TEXT.some((re) => re.test(text))) {
     return { verdict: 'refused', reason: 'dangerous', targetText: text.slice(0, 200) };
   }
-  if (hasApplySignal(target, text)) {
+  const targetApply = hasApplySignal(target, text);
+  if (targetApply && allowApply !== true) {
     return { verdict: 'refused', reason: 'apply_step' };
   }
   const overlay = findOverlayContext(target);
-  if (!overlay) return { verdict: 'allowed', context: 'page' };
+  if (!overlay) return { verdict: 'allowed', context: targetApply ? 'apply_flow' : 'page' };
   const info = classify(overlay);
   const disposition = classifyDisposition(overlay, info);
   if (disposition !== 'safe') {
+    if (allowApply === true && disposition === 'apply_step') {
+      return { verdict: 'allowed', context: 'apply_flow_overlay' };
+    }
     return { verdict: 'refused', reason: disposition, overlay: info };
   }
   return { verdict: 'allowed', context: 'safe_overlay', disposition, overlayType: info.type };
@@ -180,15 +197,39 @@ function clickElement(params, sendResponse) {
     return;
   }
   if (resolved.matches.length > 1) {
-    sendResponse({ ok: false, error: 'ambiguous_target', matchCount: resolved.matches.length });
-    return;
+    // Одинаковый data-qa на ВСЕХ матчах — один контрол в нескольких местах
+    // страницы (hh.ru дублирует «Откликнуться» в шапке и липкой панели,
+    // боевой прогон #1162): берём первый видимый, как first_locator
+    // боевого пути. Распознаётся и явный dataQa, и чистый селектор вида
+    // [data-qa='X'] — оба называют контрол семантически. Прочие селекторы
+    // остаются ambiguous (fail-closed, никакого «кликнем первый молча»).
+    let identityQa = null;
+    if (typeof params.dataQa === 'string' && params.dataQa.trim() !== '') {
+      identityQa = params.dataQa;
+    } else if (typeof params.selector === 'string') {
+      const m = params.selector.match(/^\[data-qa=['"]([^'"]+)['"]\]$/);
+      if (m) identityQa = m[1];
+    }
+    const sameQa = identityQa !== null
+      && resolved.matches.every((el) => el.getAttribute('data-qa') === identityQa);
+    if (sameQa) {
+      const visibleMatch = resolved.matches.find((el) => isVisible(el));
+      if (!visibleMatch) {
+        sendResponse({ ok: false, error: 'element_not_visible' });
+        return;
+      }
+      resolved.matches = [visibleMatch];
+    } else {
+      sendResponse({ ok: false, error: 'ambiguous_target', matchCount: resolved.matches.length });
+      return;
+    }
   }
   const target = resolved.matches[0];
   if (!isVisible(target)) {
     sendResponse({ ok: false, error: 'element_not_visible' });
     return;
   }
-  const policy = evaluateClickPolicy(target);
+  const policy = evaluateClickPolicy(target, params.allowApply === true);
   if (policy.verdict !== 'allowed') {
     sendResponse({ ok: false, error: 'policy_refused', policy });
     return;
@@ -217,6 +258,68 @@ function clickElement(params, sendResponse) {
         }
       }
     });
+  });
+}
+
+// #1162 (S4): text input primitive — the letter textarea of the response
+// form. React-controlled fields ignore plain value assignment, so the value
+// goes through the native prototype setter followed by input+change events
+// (the standard React-visible path). Gates: exactly one visible match and NO
+// danger anchor over the subtree (a captcha input is never filled); apply
+// signals are intentionally NOT a refusal here — filling the response letter
+// is this primitive's whole purpose, same authorization model as
+// click_element allowApply (the scenario's explicit command). The value is
+// read back and reported; a value that did not stick is ok:false, never a
+// silent half-filled form.
+function fillElement(params, sendResponse) {
+  const resolved = resolveTargets(params);
+  if (resolved.error) { sendResponse({ ok: false, error: resolved.error, modes: resolved.modes ?? null }); return; }
+  if (resolved.matches.length === 0) {
+    sendResponse({ ok: false, error: 'element_not_found' });
+    return;
+  }
+  if (resolved.matches.length > 1) {
+    sendResponse({ ok: false, error: 'ambiguous_target', matchCount: resolved.matches.length });
+    return;
+  }
+  const target = resolved.matches[0];
+  if (!isVisible(target)) {
+    sendResponse({ ok: false, error: 'element_not_visible' });
+    return;
+  }
+  const text = collectText(target);
+  // Inputs carry their meaning in attributes, not text content (an empty
+  // <input data-qa="...captcha-input"> has no text to match) — the danger
+  // gate reads both, the same /captcha|не робот/ anchors as DANGEROUS_TEXT.
+  const attrs = `${target.getAttribute('data-qa') || ''} ${target.getAttribute('id') || ''} ${target.getAttribute('aria-label') || ''}`;
+  const dangerous = DANGEROUS_TEXT.some((re) => re.test(text)) || /captcha|не робот/i.test(attrs);
+  if (dangerous) {
+    sendResponse({ ok: false, error: 'policy_refused', policy: { verdict: 'refused', reason: 'dangerous', targetText: text.slice(0, 200) } });
+    return;
+  }
+  const wanted = String(params.text ?? '');
+  const proto = Object.getPrototypeOf(target);
+  const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+  if (descriptor && typeof descriptor.set === 'function') {
+    descriptor.set.call(target, wanted);
+  } else {
+    target.value = wanted;
+  }
+  ['input', 'change'].forEach((type) => {
+    if (typeof document.createEvent === 'function' && typeof target.dispatchEvent === 'function') {
+      target.dispatchEvent(new Event(type, { bubbles: true }));
+    }
+  });
+  const matches = target.value === wanted;
+  sendResponse({
+    ok: matches,
+    result: {
+      action: 'fill_element',
+      target: describeTarget(target),
+      filled: matches,
+      length: target.value.length,
+      finalState: { url: location.href }
+    }
   });
 }
 

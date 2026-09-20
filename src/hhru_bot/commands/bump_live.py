@@ -23,6 +23,8 @@ from ._common import ApplyProgress, add_common_args, resumes_from_args, run_supe
 # Как долго ждать подключения расширения к каналу (расширение reconnect'ится
 # само; пользователь может открыть вкладку уже после старта команды).
 CLIENT_TIMEOUT_SECONDS = 120.0
+# LIVE_SERVE_URL расширения (background.js) подключается только сюда.
+DEFAULT_LIVE_PORT = 8765
 
 
 def register(subparsers: Any) -> None:
@@ -37,8 +39,11 @@ def register(subparsers: Any) -> None:
     p.add_argument(
         "--port",
         type=int,
-        default=0,
-        help="Порт канала на 127.0.0.1 (0 — свободный ephemeral, печатается при старте)",
+        # Расширение подключается к ws://127.0.0.1:8765 жёстко (LIVE_SERVE_URL,
+        # background.js) — ephemeral 0 дал бы URL, который клиенту не сказать:
+        # дефолт согласован с расширением.
+        default=DEFAULT_LIVE_PORT,
+        help=f"Порт канала на 127.0.0.1 (расширение слушает {DEFAULT_LIVE_PORT})",
     )
     p.set_defaults(func=run)
 
