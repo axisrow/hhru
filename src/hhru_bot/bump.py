@@ -30,6 +30,12 @@ BUMP_HINT_TIMEOUT_MS = 1_500
 # другой экран (CLAUDE.md п.4).
 STALE_ALERT_RENDER_WAIT_MS = 1_500
 
+# #1188: бюджет ожидания состояния кулдауна на карточке после сбоя клика.
+# Если поднятие всё же ушло, SPA перерисовывает карточку (кнопка → hint)
+# быстро; полный BUMP_TIMEOUT_MS не нужен — верификатор работает только в
+# сбоевом пути и завершается, как только виден любой из двух сигналов.
+BUMP_POST_CLICK_STATE_WAIT_MS = 5_000
+
 # Живой факт 2026-09-08 (census /applicant/resumes): кнопка поднятия мигрировала
 # со СТРАНИЦЫ резюме на СПИСОК резюме и живёт внутри карточки конкретного резюме
 # (div[data-qa='resume'] > a[data-qa='resume-card-link-<id>']). Прежний поток
@@ -93,6 +99,53 @@ class BumpResult:
     # гарантированно писала action со статусом 'uncertain' (кулдаун 4ч и
     # дневной лимит его видят) и выдерживала троттл-паузу.
     uncertain: bool = False
+
+
+def _post_click_verdict(
+    card: Locator, resume_id: str, exc: PlaywrightError, reason_suffix: str = ""
+) -> BumpResult | None:
+    """Вердикт после исключения Playwright в момент клика поднятия (#1188).
+
+    Тот же паттерн внешнего источника истины, что post-click верификация
+    отклика (#207): исключение само по себе ничего не доказывает (клик мог
+    уйти, мог быть перехвачен модалкой контактов #1161). Состояние кулдауна
+    на карточке — серверное состояние hh.ru:
+
+    - hint «поднимать рано» отрисован → поднятие засчитано (success);
+    - кнопка поднятия активна → hh.ru клик не засчитывал (перехваченный
+      клик он не видел, кулдаун не начался) → определённый failed: без
+      uncertain и без кулдауна 4ч, съедавшего по действию за прогон;
+      ложный failed здесь безопасен — повторный bump hh.ru отклонит
+      «рано поднимать» (анти-фрод решает сам).
+    - не подтвердился ни один сигнал → состояние страницы не прочитано:
+      None → вызывающий код держит прежний fail-closed uncertain (#176).
+
+    ``reason_suffix`` — пометка о закрытой модалке контактов, если она была.
+    """
+
+    state = card.locator(sel.RESUME_BUMP_DISABLED_HINT).or_(card.locator(sel.RESUME_BUMP_BUTTON))
+    try:
+        # Гонка рендера (CLAUDE.md п.4): строгие проверки — только после
+        # явного ожидания любого из двух сигналов.
+        state.first.wait_for(state="visible", timeout=BUMP_POST_CLICK_STATE_WAIT_MS)
+        bumped = card.locator(sel.RESUME_BUMP_DISABLED_HINT).first.is_visible()
+    except PlaywrightError:
+        return None
+    if bumped:
+        return BumpResult(
+            resume_id,
+            True,
+            "success; поднятие подтверждено состоянием карточки после сбоя клика — "
+            "hint кулдауна отрисован" + reason_suffix + f" (Playwright: {exc})",
+            acted=True,
+        )
+    return BumpResult(
+        resume_id,
+        False,
+        "клик поднятия упал с исключением; карточка после сбоя подтверждена: кнопка "
+        "поднятия активна — hh.ru поднятие не засчитывал" + reason_suffix + f" (Playwright: {exc})",
+        acted=True,
+    )
 
 
 def bump_resume(page: Page, resume: ResumeConfig, dry_run: bool) -> BumpResult:
@@ -205,18 +258,28 @@ def bump_resume(page: Page, resume: ResumeConfig, dry_run: bool) -> BumpResult:
         # #1189: если клик перехватила модалка контактов, исход обязан это
         # называть — бездиагностный uncertain (#1161) повторяется на каждом
         # следующем запуске. Модалку закрываем dismiss-кнопкой, чтобы она не
-        # съела и следующий прогон; вердикт прежний fail-closed. Формулировка
-        # честная: фиксируем ВИДИМОСТЬ модалки в момент сбоя, а не доказанный
-        # перехват (клик мог уйти и по другой причине). render-wait — тот же,
-        # что на pre-click пути: модалка может монтироваться сразу ПОСЛЕ
-        # исключения (cycle-review #1190), мгновенный is_visible её не увидит.
-        if close_stale_contacts_alert(page, render_wait_ms=STALE_ALERT_RENDER_WAIT_MS):
+        # съела и следующий прогон; render-wait — тот же, что на pre-click
+        # пути: модалка может монтироваться сразу ПОСЛЕ исключения
+        # (cycle-review #1190), мгновенный is_visible её не увидит.
+        stale_closed = close_stale_contacts_alert(page, render_wait_ms=STALE_ALERT_RENDER_WAIT_MS)
+        suffix = (
+            "; модалка «Контакты в резюме могли устареть» закрыта кликом «Закрыть»"
+            if stale_closed
+            else ""
+        )
+        # #1188: пост-клик вердикт по внешнему источнику истины (состояние
+        # кулдауна на карточке) — перехваченный клик больше не слепой
+        # uncertain; None = состояние не прочитано, fail-closed #176 ниже.
+        verdict = _post_click_verdict(card, resume.id, exc, suffix)
+        if verdict is not None:
+            return verdict
+        if stale_closed:
             return BumpResult(
                 resume.id,
                 False,
                 "в момент сбоя была видима модалка «Контакты в резюме могли "
-                "устареть» (закрыта кликом «Закрыть»); исход неопределён "
-                f"(Playwright: {exc})",
+                "устареть» (закрыта кликом «Закрыть»); состояние кулдауна на "
+                f"карточке не подтвердилось, исход неопределён (Playwright: {exc})",
                 acted=True,
                 uncertain=True,
             )

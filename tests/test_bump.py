@@ -81,6 +81,10 @@ class _FakeLocator:
         if not self._present:
             raise PlaywrightTimeoutError(f"{self._name} not visible")
 
+    def or_(self, other: _FakeLocator) -> _FakeOrLocator:
+        # #1188: пост-клик вердикт ждёт «hint ИЛИ кнопка» через locator.or_.
+        return _FakeOrLocator(self, other)
+
     def click(
         self,
         *,
@@ -88,12 +92,34 @@ class _FakeLocator:
         force: bool | None = None,
         no_wait_after: bool | None = None,
     ) -> None:  # noqa: ARG002
+        # Лог клика пишется и при click_error: пост-клик вердикт (#1188) читает
+        # состояние страницы ПОСЛЕ сбоя, фейк должен знать, что клик был.
+        if self._click_log is not None:
+            self._click_log.append(self._name)
         if self._click_error:
             # #176: клик «выполняется», но Playwright падает — как navigation
             # timeout/target closed уже после отправки действия на hh.ru.
             raise PlaywrightError(f"click on {self._name} failed after dispatch")
-        if self._click_log is not None:
-            self._click_log.append(self._name)
+
+
+class _FakeOrLocator:
+    """locator.or_(...) для пост-клик вердикта #1188: виден, если виден хоть
+    один из двух сигналов кулдауна (hint или активная кнопка)."""
+
+    def __init__(self, left: _FakeLocator, right: _FakeLocator):
+        self._left = left
+        self._right = right
+
+    @property
+    def first(self) -> _FakeOrLocator:
+        return self
+
+    def wait_for(self, *, timeout: float = 0, state: str = "visible") -> None:  # noqa: ARG002
+        if not (self._left._present or self._right._present):
+            raise PlaywrightTimeoutError("neither hint nor bump button visible")
+
+    def is_visible(self) -> bool:
+        return self._left._present or self._right._present
 
 
 class _FakeCard:
@@ -104,16 +130,27 @@ class _FakeCard:
 
     def locator(self, selector: str):
         if selector == resume_page.RESUME_BUMP_DISABLED_HINT:
+            # #1188: hint, появляющийся ТОЛЬКО после сбоя клика (поднятие
+            # ушло, карточка перерисовалась) — виден пост-клик вердикту,
+            # но не pre-click чеку кулдауна.
+            present = self._page._hint_present or (
+                self._page._hint_appears_after_click and "button" in self._page.click_log
+            )
             return _FakeLocator(
-                self._page._hint_present,
+                present,
                 self._page.click_log,
                 "hint",
                 render_delayed=self._page._hint_render_delayed,
                 wait_error=self._page._hint_wait_error,
             )
         if selector == resume_page.RESUME_BUMP_BUTTON:
+            # #1188: кнопка, исчезающая после сбоя клика (карточка
+            # перерисовалась, состояние кулдауна не подтверждается).
+            present = self._page._button_present and not (
+                self._page._button_gone_after_click_error and "button" in self._page.click_log
+            )
             return _FakeLocator(
-                self._page._button_present,
+                present,
                 self._page.click_log,
                 "button",
                 click_error=self._page._button_click_error,
@@ -194,6 +231,8 @@ class FakeBumpPage:
         ssr_anchors: bool = False,
         stale_alert_present: bool = False,
         stale_cancel_present: bool | None = None,
+        hint_appears_after_click: bool = False,
+        button_gone_after_click_error: bool = False,
     ):
         self.goto_calls: list[str] = []
         self.click_log: list[str] = []
@@ -204,6 +243,9 @@ class FakeBumpPage:
         self._hint_render_delayed = hint_render_delayed
         self._hint_wait_error = hint_wait_error
         self._button_click_error = button_click_error
+        # #1188: пост-клик состояние карточки для вердикта после сбоя клика.
+        self._hint_appears_after_click = hint_appears_after_click
+        self._button_gone_after_click_error = button_gone_after_click_error
         self._render_after_waits = render_after_waits
         self._other_cards_present = other_cards_present
         # #1076 (ревью PR #1079): SSR-якоря списка есть в DOM ещё до
@@ -370,10 +412,17 @@ def test_bump_login_form_is_checked_after_navigation(monkeypatch):
 def test_bump_click_error_is_uncertain_acted_not_traceback():
     """#176: Playwright упал в момент клика поднятия (клик мог уйти на hh.ru).
     Раньше исключение пробрасывалось наружу: bump_resume не возвращал BumpResult,
-    командный цикл валился трейсбеком ДО record_action/throttle.wait — поднятие
-    происходило, но история/кулдаун 4ч о нём не узнали бы. Fail-closed: возвращаем
-    acted+uncertain, команда по ним пишет action 'uncertain' и ждёт паузу."""
-    page = FakeBumpPage(hint_present=False, button_present=True, button_click_error=True)
+    командный цикл валился трейсбеком ДО record_action/throttle.wait. Fail-closed:
+    возвращаем acted+uncertain, команда по ним пишет action 'uncertain' и ждёт
+    паузу. #1188: uncertain остаётся только когда пост-клик вердикт НЕ смог
+    подтвердить состояние кулдауна (кнопка исчезла, hint не появился); когда
+    состояние читается — вердикт определённый (см. тесты ниже)."""
+    page = FakeBumpPage(
+        hint_present=False,
+        button_present=True,
+        button_click_error=True,
+        button_gone_after_click_error=True,
+    )
 
     result = bump_resume(page, _resume(), dry_run=False)
 
@@ -381,6 +430,90 @@ def test_bump_click_error_is_uncertain_acted_not_traceback():
     assert result.acted is True
     assert result.uncertain is True
     assert "неопределён" in result.reason
+
+
+# --- #1188: пост-клик вердикт по состоянию кулдауна после сбоя клика ----------
+
+
+def test_bump_click_error_button_active_is_certain_failed():
+    """#1188 (суть #1161): клик упал, но карточка после сбоя подтверждена —
+    кнопка поднятия активна, hint кулдауна нет. hh.ru перехваченный клик не
+    видел, поднятия не было: определённый failed вместо uncertain — кулдаун
+    4ч больше не съедает действие за прогон (uncertain в last_action_at
+    держал повтор до старения строки)."""
+    page = FakeBumpPage(hint_present=False, button_present=True, button_click_error=True)
+
+    result = bump_resume(page, _resume(), dry_run=False)
+
+    assert result.success is False
+    assert result.acted is True
+    assert result.uncertain is False
+    assert "кнопка поднятия активна" in result.reason
+    assert "неопределён" not in result.reason
+
+
+def test_bump_click_error_hint_appeared_is_confirmed_success():
+    """#1188: клик упал (navigation/target closed после диспетча), но hint
+    кулдауна после сбоя отрисован — hh.ru поднятие засчитал: success вместо
+    потерянного uncertain, acted=True (реальное действие было)."""
+    page = FakeBumpPage(
+        hint_present=False,
+        button_present=True,
+        button_click_error=True,
+        hint_appears_after_click=True,
+    )
+
+    result = bump_resume(page, _resume(), dry_run=False)
+
+    assert result.success is True
+    assert result.acted is True
+    assert result.uncertain is False
+    assert "поднятие подтверждено" in result.reason
+
+
+def test_bump_click_error_with_stale_alert_and_unreadable_state_is_uncertain():
+    """#1188 fallback: модалка видима при сбое и закрыта dismiss-кнопкой, но
+    состояние кулдауна после сбоя НЕ подтвердилось (кнопка исчезла, hint не
+    появился) — прежний fail-closed uncertain (#176), reason называет и
+    модалку, и непрочитанное состояние. Прямой тест ветки bump.py:276-285."""
+    page = FakeBumpPage(
+        hint_present=False,
+        button_present=True,
+        stale_alert_present=True,
+        button_click_error=True,
+        button_gone_after_click_error=True,
+    )
+
+    result = bump_resume(page, _resume(), dry_run=False)
+
+    assert result.success is False
+    assert result.acted is True
+    assert result.uncertain is True
+    assert "не подтвердилось" in result.reason
+    assert "модалка" in result.reason
+    assert "stale-alert-cancel" in page.click_log
+
+
+def test_bump_click_error_with_stale_alert_certain_failed_names_it():
+    """#1188 + #1189: перехват модалкой контактов при активной кнопке после
+    сбоя — определённый failed, reason называет и модалку (закрыта dismiss-кнопкой,
+    замены контактов не было), и активную кнопку; модалка не съедает ни этот
+    вердикт, ни следующий прогон."""
+    page = FakeBumpPage(
+        hint_present=False,
+        button_present=True,
+        stale_alert_present=True,
+        button_click_error=True,
+    )
+
+    result = bump_resume(page, _resume(), dry_run=False)
+
+    assert result.success is False
+    assert result.acted is True
+    assert result.uncertain is False
+    assert "модалка" in result.reason
+    assert "кнопка поднятия активна" in result.reason
+    assert "stale-alert-cancel" in page.click_log
 
 
 # --- поток 2026-09-08: кнопка поднятия на СПИСКЕ резюме -----------------------
@@ -576,24 +709,3 @@ def test_bump_stale_alert_not_touched_in_dry_run():
 
     assert result.success is True
     assert page.click_log == []
-
-
-def test_bump_click_error_with_stale_alert_visible_names_it():
-    """#1189: клик упал, модалка видима — исход обязан называть перехват
-    (не безликий «исход неопределён», каким был сбой #1161); модалка
-    закрывается dismiss-кнопкой, чтобы не съесть следующий прогон.
-    Вердикт прежний fail-closed: acted+uncertain."""
-    page = FakeBumpPage(
-        hint_present=False,
-        button_present=True,
-        stale_alert_present=True,
-        button_click_error=True,
-    )
-
-    result = bump_resume(page, _resume(), dry_run=False)
-
-    assert result.success is False
-    assert result.acted is True
-    assert result.uncertain is True
-    assert "видима модалка" in result.reason
-    assert "stale-alert-cancel" in page.click_log
