@@ -194,13 +194,21 @@ function clickElement(params, sendResponse) {
     return;
   }
   if (resolved.matches.length > 1) {
-    // Одинаковый dataQa на ВСЕХ матчах — один контрол в нескольких местах
+    // Одинаковый data-qa на ВСЕХ матчах — один контрол в нескольких местах
     // страницы (hh.ru дублирует «Откликнуться» в шапке и липкой панели,
     // боевой прогон #1162): берём первый видимый, как first_locator
-    // боевого пути. Сырой CSS-селектор и разные data-qa — ambiguous
-    // (fail-closed, никакого «кликнем первый молча»).
-    const sameQa = typeof params.dataQa === 'string' && params.dataQa.trim() !== ''
-      && resolved.matches.every((el) => el.getAttribute('data-qa') === params.dataQa);
+    // боевого пути. Распознаётся и явный dataQa, и чистый селектор вида
+    // [data-qa='X'] — оба называют контрол семантически. Прочие селекторы
+    // остаются ambiguous (fail-closed, никакого «кликнем первый молча»).
+    let identityQa = null;
+    if (typeof params.dataQa === 'string' && params.dataQa.trim() !== '') {
+      identityQa = params.dataQa;
+    } else if (typeof params.selector === 'string') {
+      const m = params.selector.match(/^\[data-qa=['"]([^'"]+)['"]\]$/);
+      if (m) identityQa = m[1];
+    }
+    const sameQa = identityQa !== null
+      && resolved.matches.every((el) => el.getAttribute('data-qa') === identityQa);
     if (sameQa) {
       const visibleMatch = resolved.matches.find((el) => isVisible(el));
       if (!visibleMatch) {
