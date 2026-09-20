@@ -535,7 +535,7 @@ def test_hhru_live_bridge_relays_envelope_and_answers():
     assert scenario["sentToTabCount"] == 1
     assert scenario["sentAction"] == "check_element"
     assert scenario["sentSelector"] == '[data-qa="x"]'
-    assert scenario["frames"] == [
+    assert scenario["envelopes"] == [
         {
             "id": "c1",
             "status": "ok",
@@ -547,7 +547,7 @@ def test_hhru_live_bridge_relays_envelope_and_answers():
 def test_hhru_live_bridge_rejects_unknown_version_without_tab():
     scenario = _run_ws_bridge_scenario("unsupported_version_rejected")
     assert scenario["sentToTabCount"] == 0
-    assert scenario["frames"] == [
+    assert scenario["envelopes"] == [
         {
             "id": "c2",
             "status": "error",
@@ -559,8 +559,8 @@ def test_hhru_live_bridge_rejects_unknown_version_without_tab():
 def test_hhru_live_bridge_rejects_unknown_action_without_tab():
     scenario = _run_ws_bridge_scenario("unknown_action_rejected")
     assert scenario["sentToTabCount"] == 0
-    assert scenario["frames"][0]["status"] == "error"
-    assert scenario["frames"][0]["result"]["code"] == "action_not_allowed"
+    assert scenario["envelopes"][0]["status"] == "error"
+    assert scenario["envelopes"][0]["result"]["code"] == "action_not_allowed"
 
 
 def test_hhru_live_bridge_whitelists_payload_fields():
@@ -583,13 +583,13 @@ def test_hhru_live_bridge_reconnects_after_drop():
     assert scenario["secondSocket"] is True
     assert scenario["firstReadyState"] == 3
     assert scenario["sentToTabCount"] == 1
-    assert scenario["frames"] == [{"id": "c5", "status": "ok", "result": {"overlays": []}}]
+    assert scenario["envelopes"] == [{"id": "c5", "status": "ok", "result": {"overlays": []}}]
 
 
 def test_hhru_live_bridge_maps_relay_errors_into_envelope():
     scenario = _run_ws_bridge_scenario("no_hhru_tab_ws")
     assert scenario["sentToTabCount"] == 0
-    assert scenario["frames"] == [
+    assert scenario["envelopes"] == [
         {
             "id": "c6",
             "status": "error",
@@ -602,3 +602,36 @@ def test_hhru_live_bridge_heartbeats_only_when_open():
     scenario = _run_ws_bridge_scenario("heartbeat_only_when_open")
     assert scenario["framesBeforeOpen"] == 0
     assert scenario["heartbeatCount"] >= 1
+
+
+def test_hhru_live_bridge_announces_hello_diagnostics():
+    """Handshake-диагностика (#1163): первым кадром после open идёт hello с
+    версией протокола, allowlist и permissions манифеста — источник live-doctor
+    для проверок версии/allowlist/permissions."""
+    scenario = _run_ws_bridge_scenario("hello_announced_on_open")
+    hello = scenario["hello"]
+    assert scenario["helloIsFirstFrame"] is True
+    assert hello is not None
+    assert hello["v"] == 1
+    # Sorted: сервер и doctor сравнивают множества, порядок — детерминизм кадра.
+    assert hello["actions"] == sorted(
+        [
+            "list_overlays",
+            "dismiss_overlay",
+            "check_element",
+            "click_element",
+            "wait_element",
+            "get_page_state",
+        ]
+    )
+    assert hello["permissions"] == ["storage"]
+    assert hello["hostPermissions"] == ["https://hh.ru/*", "https://*.hh.ru/*"]
+
+
+def test_hhru_live_bridge_reconnects_on_browser_startup():
+    """onStartup будит SW и подключает канал (#1163): без слушателя SW стартует
+    только по install/сообщению контент-скрипта, и live-doctor/bump-live,
+    запущенные до открытия вкладки hh.ru, расширения не видят."""
+    scenario = _run_ws_bridge_scenario("startup_reconnect")
+    assert scenario["listenerRegistered"] is True
+    assert scenario["newSocketCreated"] is True

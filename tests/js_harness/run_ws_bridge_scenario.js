@@ -48,6 +48,14 @@ function makeEnv({ activeTab, tabReply, tabError }) {
       sendMessage: () => {},
       onMessage: { addListener: (fn) => chrome.runtime._listeners.push(fn) },
       onConnect: { addListener: () => {} },
+      onStartup: {
+        _listeners: [],
+        addListener: (fn) => chrome.runtime.onStartup._listeners.push(fn),
+      },
+      getManifest: () => ({
+        permissions: ['storage'],
+        host_permissions: ['https://hh.ru/*', 'https://*.hh.ru/*'],
+      }),
       _listeners: [],
     },
     tabs: {
@@ -99,6 +107,13 @@ function sentFrames(sent) {
   return sent.frames.map((frame) => JSON.parse(frame));
 }
 
+// kind-namespaced frames (hello #1163, heartbeat) are diagnostics, not
+// command envelopes; scenarios below assert on envelopes only and read the
+// hello explicitly where it matters.
+function sentEnvelopes(sent) {
+  return sentFrames(sent).filter((frame) => typeof frame.kind !== 'string');
+}
+
 const ACTIVE_HHRU_TAB = { id: 7, url: 'https://hh.ru/applicant/me' };
 
 const SCENARIOS = {
@@ -114,9 +129,8 @@ const SCENARIOS = {
     env.sockets[0]._message(JSON.stringify({
       v: 1, id: 'c1', action: 'check_element', payload: { selector: '[data-qa="x"]' },
     }));
-    const frames = sentFrames(env.sent);
     return {
-      frames,
+      envelopes: sentEnvelopes(env.sent),
       sentToTabCount: env.sent.toTab.length,
       sentAction: env.sent.toTab[0]?.action ?? null,
       sentSelector: env.sent.toTab[0]?.selector ?? null,
@@ -130,9 +144,8 @@ const SCENARIOS = {
     runBridge(env);
     handshake(env.sockets);
     env.sockets[0]._message(JSON.stringify({ v: 99, id: 'c2', action: 'list_overlays' }));
-    const frames = sentFrames(env.sent);
     return {
-      frames,
+      envelopes: sentEnvelopes(env.sent),
       sentToTabCount: env.sent.toTab.length,
     };
   },
@@ -144,9 +157,8 @@ const SCENARIOS = {
     runBridge(env);
     handshake(env.sockets);
     env.sockets[0]._message(JSON.stringify({ v: 1, id: 'c3', action: 'close_all_windows' }));
-    const frames = sentFrames(env.sent);
     return {
-      frames,
+      envelopes: sentEnvelopes(env.sent),
       sentToTabCount: env.sent.toTab.length,
     };
   },
@@ -190,7 +202,7 @@ const SCENARIOS = {
     return {
       secondSocket: true,
       firstReadyState: env.sockets[0].readyState,
-      frames: sentFrames(env.sent),
+      envelopes: sentEnvelopes(env.sent),
       sentToTabCount: env.sent.toTab.length,
     };
   },
@@ -205,10 +217,41 @@ const SCENARIOS = {
     runBridge(env);
     handshake(env.sockets);
     env.sockets[0]._message(JSON.stringify({ v: 1, id: 'c6', action: 'list_overlays' }));
-    const frames = sentFrames(env.sent);
     return {
-      frames,
+      envelopes: sentEnvelopes(env.sent),
       sentToTabCount: env.sent.toTab.length,
+    };
+  },
+
+  // Handshake diagnostics (#1163): the bridge announces its protocol
+  // version, allowlist and manifest permissions as the FIRST frame on open,
+  // so live-doctor can verify both sides without sending any command.
+  hello_announced_on_open: async () => {
+    const env = makeEnv({ activeTab: null });
+    runBridge(env);
+    handshake(env.sockets);
+    const all = sentFrames(env.sent);
+    return {
+      hello: all.find((frame) => frame.kind === 'hello') ?? null,
+      helloIsFirstFrame: all[0]?.kind === 'hello',
+    };
+  },
+
+  // Browser startup must wake the SW and connect (#1163): firing the
+  // onStartup listener with no open socket opens a new one immediately,
+  // instead of waiting for the slow reconnect backoff.
+  startup_reconnect: async () => {
+    const env = makeEnv({ activeTab: null });
+    runBridge(env);
+    handshake(env.sockets);
+    env.sockets[0]._drop();
+    const listener = env.chrome.runtime.onStartup._listeners[0];
+    const socketsBefore = env.sockets.length;
+    if (typeof listener === 'function') listener();
+    return {
+      listenerRegistered: typeof listener === 'function',
+      socketsBefore,
+      newSocketCreated: env.sockets.length > socketsBefore,
     };
   },
 

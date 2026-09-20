@@ -117,6 +117,21 @@ function stopBridgeHeartbeat() {
   }
 }
 
+// Handshake diagnostics (#1163): announce protocol version, allowlist and
+// manifest permissions so `live-doctor` can verify both sides agree without
+// sending a single command. kind-namespaced, like the heartbeat — the server
+// treats these as diagnostics, never as command responses.
+function announceHello() {
+  const manifest = chrome.runtime.getManifest();
+  sendBridgeMessage({
+    kind: 'hello',
+    v: PROTOCOL_VERSION,
+    actions: [...RELAY_ACTIONS].sort(),
+    permissions: manifest.permissions ?? [],
+    hostPermissions: manifest.host_permissions ?? [],
+  });
+}
+
 // A dropped connection is never a scenario error (#1159): reconnect with
 // capped backoff until the CLI server comes back.
 function scheduleBridgeReconnect() {
@@ -141,6 +156,7 @@ function connectLiveServe() {
   socket.onopen = () => {
     bridgeReconnectDelay = RECONNECT_BASE_MS;
     stopBridgeHeartbeat();
+    announceHello();
     bridgeHeartbeatTimer = setInterval(() => {
       sendBridgeMessage({ kind: 'heartbeat', observedAt: new Date().toISOString() });
     }, HEARTBEAT_INTERVAL_MS);
@@ -215,4 +231,9 @@ chrome.runtime.onConnect.addListener((port) => {
     port.postMessage({ ok: false, error: 'action_not_allowed', action: message?.action ?? null });
   });
 });
+// Browser startup must wake this MV3 service worker and connect the channel:
+// without an onStartup listener the SW only starts on install or on a content
+// script message, so `live-doctor`/`bump-live` running before an hh.ru page
+// loads (or with the SW asleep) never see the extension (#1163).
+chrome.runtime.onStartup.addListener(() => connectLiveServe());
 connectLiveServe();
