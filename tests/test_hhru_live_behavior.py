@@ -491,6 +491,16 @@ def test_hhru_live_executor_click_ambiguous_target_refused():
     assert scenario["clickCount"] == 2
 
 
+def test_hhru_live_executor_apply_modal_overlay_allowed_with_permission():
+    """Боевой факт #1162: ответная модалка классифицируется apply_step, а
+    пикер/письмо/submit сидят внутри неё — allowApply понижает и apply_step
+    оверлея-предка (apply_flow_overlay). Без флага — отказ без клика."""
+    scenario = _run_executor_scenario("click_apply_modal_overlay_allowed_with_permission")
+    assert scenario["allowedContext"] == "apply_flow_overlay"
+    assert scenario["allowedClicked"] is True
+    assert scenario["noFlagError"] == "policy_refused" and scenario["noFlagReason"] == "apply_step"
+
+
 def test_hhru_live_executor_click_invisible_target_refused():
     """Действие по невидимому контролю — действие без оснований: отказ до
     policy-гейта, кликов 0."""

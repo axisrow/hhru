@@ -99,25 +99,28 @@ function findOverlayContext(node) {
 
 // The #929 policy core applied to a click target. Same fail-closed priority
 // as classifyDisposition: danger anchors outrank apply signals, both refuse.
-// allowApply (#1162) downgrades ONLY the target's own apply_step signal —
-// the explicit decision of the S4 apply scenario; everything dangerous or
-// ambiguous refuses exactly as before.
+// allowApply (#1162) downgrades apply_step refusals — the target's own AND
+// its overlay ancestor's (the response modal IS the apply flow: picker,
+// letter toggle and submit all sit inside it and match the structural
+// anchors). DANGEROUS targets and ambiguous/dangerous overlays still refuse
+// exactly as before; without the flag nothing changes (#929 stage-1).
 function evaluateClickPolicy(target, allowApply) {
   const text = collectText(target);
   if (DANGEROUS_TEXT.some((re) => re.test(text))) {
     return { verdict: 'refused', reason: 'dangerous', targetText: text.slice(0, 200) };
   }
-  if (hasApplySignal(target, text)) {
-    if (allowApply !== true) {
-      return { verdict: 'refused', reason: 'apply_step' };
-    }
-    return { verdict: 'allowed', context: 'apply_flow' };
+  const targetApply = hasApplySignal(target, text);
+  if (targetApply && allowApply !== true) {
+    return { verdict: 'refused', reason: 'apply_step' };
   }
   const overlay = findOverlayContext(target);
-  if (!overlay) return { verdict: 'allowed', context: 'page' };
+  if (!overlay) return { verdict: 'allowed', context: targetApply ? 'apply_flow' : 'page' };
   const info = classify(overlay);
   const disposition = classifyDisposition(overlay, info);
   if (disposition !== 'safe') {
+    if (allowApply === true && disposition === 'apply_step') {
+      return { verdict: 'allowed', context: 'apply_flow_overlay' };
+    }
     return { verdict: 'refused', reason: disposition, overlay: info };
   }
   return { verdict: 'allowed', context: 'safe_overlay', disposition, overlayType: info.type };
