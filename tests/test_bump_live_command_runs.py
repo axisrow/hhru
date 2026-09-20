@@ -26,8 +26,9 @@ class FakeLiveChannel(LiveChannel):
     def __init__(self, port: int = 0, client_timeout: float = 120.0) -> None:
         super().__init__(port=port, client_timeout=client_timeout)
         self.closed = False
-        # wait-очередь: список, карточка, hint нет, кнопка есть, маркер появился.
-        self.wait_results: list[bool] = [True, True, False, True, True]
+        # wait-очередь: список, карточка, hint нет, кнопка есть, маркер
+        # появился, кнопка снята (#1184 — добивочное чтение после хинта).
+        self.wait_results: list[bool] = [True, True, False, True, True, True]
 
     def start(self) -> str:
         return "ws://127.0.0.1:0"

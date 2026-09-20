@@ -147,8 +147,9 @@ def test_success_path_maps_to_primitives_in_battle_order() -> None:
         False,
     )
     # Порядок боевого bump.py: URL -> форма входа -> список -> карточка ->
-    # hint -> кнопка -> клик -> позитивный маркер. Селекторы кнопки/hint
-    # скоупятся карточкой резюме (мульти-резюме аккаунта).
+    # hint -> кнопка -> клик -> позитивный маркер -> добивочное чтение кнопки
+    # (#1184). Селекторы кнопки/hint скоупятся карточкой резюме
+    # (мульти-резюме аккаунта).
     waits = [payload for action, payload in channel.calls if action == ACTION_WAIT]
     assert _actions(channel) == [
         ACTION_GET_STATE,
@@ -159,10 +160,14 @@ def test_success_path_maps_to_primitives_in_battle_order() -> None:
         ACTION_WAIT,
         ACTION_CLICK,
         ACTION_WAIT,
+        ACTION_WAIT,
     ]
-    assert waits[-1]["timeoutMs"] == MARKER_TIMEOUT_MS
-    assert "resume-update-button" in channel.calls[-2][1]["selector"]
-    assert "resume-card-link-abc123" in channel.calls[-2][1]["selector"]
+    assert waits[-2]["timeoutMs"] == MARKER_TIMEOUT_MS
+    assert waits[-1]["timeoutMs"] == MARKER_GONE_TIMEOUT_MS
+    assert waits[-1]["state"] == WAIT_STATE_HIDDEN
+    click_call = next(payload for action, payload in channel.calls if action == ACTION_CLICK)
+    assert "resume-update-button" in click_call["selector"]
+    assert "resume-card-link-abc123" in click_call["selector"]
 
 
 def test_dry_run_stops_before_click() -> None:
@@ -239,6 +244,21 @@ def test_click_timeout_is_uncertain_acting() -> None:
 
     assert (result.success, result.acted, result.uncertain) == (False, True, True)
     assert "исход неопределён" in result.reason
+
+
+def test_cooldown_hint_racing_after_precheck_is_not_success() -> None:
+    # Гонка #1184: хинт смонтировался в окне между pre-check и кликом
+    # (кулдаун наступил ровно сейчас) — hh.ru оставляет кнопку disabled,
+    # клик ничего не поднимает, а пост-клик условие «хинт виден» метится
+    # мгновенно. post_click=(True, True) — ровно эта страница: хинт есть,
+    # кнопка НЕ снята. Ложный success запрещён: acted+uncertain (fail-closed).
+    channel = FakeChannel(post_click=(True, True))
+    result = bump_via_live(channel, _resume(), dry_run=False)
+
+    assert (result.success, result.acted, result.uncertain) == (False, True, True)
+    assert "кнопка поднятия не снята" in result.reason
+    waits = [payload for action, payload in channel.calls if action == ACTION_WAIT]
+    assert waits[-1]["state"] == WAIT_STATE_HIDDEN
 
 
 def test_marker_absent_button_gone_is_success() -> None:
