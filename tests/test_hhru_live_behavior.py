@@ -720,6 +720,19 @@ def test_hhru_live_bridge_answers_keepalive_ping():
     assert scenario["foreign"] == {"ok": False, "error": "sender_not_allowed"}
 
 
+def test_hhru_live_bridge_keepalive_expedites_reconnect():
+    """Ревью #1203 (Codex P1): при закрытом сокете пинг не просто отвечает —
+    он немедленно даёт попытку соединения, не оставляя следующий ретрай на
+    30-секундном потолке backoff (сервер live-doctor держит порт всего 10 с,
+    и промах по окну возвращал бы ложный [FAIL] даже при живом воркере).
+    Чужой origin состояние моста не трогает; подключённый мост лишних сокетов
+    не плодит."""
+    scenario = _run_ws_bridge_scenario("keepalive_expedites_reconnect")
+    assert scenario["expedited"] is True
+    assert scenario["connectedResponse"] == {"ok": True}
+    assert scenario["noExtraSocketWhileConnected"] is True
+
+
 def test_hhru_live_content_script_sends_keepalive_ping():
     """#1187/#1197: пинг живёт в content.js (живёт, пока открыта вкладка),
     а не в background.js (его таймеры умирают вместе с SW). Интервал — под

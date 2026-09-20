@@ -191,6 +191,24 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 chrome.alarms.create(RECONNECT_ALARM, { periodInMinutes: RECONNECT_ALARM_PERIOD_MIN });
 
+// Keep-alive pings double as retry opportunities (Codex review of #1203):
+// while the socket is down, ping time connects NOW instead of leaving the
+// next attempt up to the 30s backoff cap — live-doctor keeps its server
+// open for only 10s, so a capped backoff could miss it entirely. Cancels a
+// pending backoff timer and restarts from the base delay; a no-op while
+// connected or already connecting (connectLiveServe guards the socket).
+// Complements the alarm above: the alarm wakes a suspended SW with no tabs,
+// the ping keeps the SW and expedites the connect while a tab is open.
+function expediteBridgeConnect() {
+  if (bridgeSocket) return;
+  if (bridgeReconnectTimer) {
+    clearTimeout(bridgeReconnectTimer);
+    bridgeReconnectTimer = null;
+  }
+  bridgeReconnectDelay = RECONNECT_BASE_MS;
+  connectLiveServe();
+}
+
 function connectLiveServe() {
   if (bridgeSocket) return;
   let socket;
@@ -259,8 +277,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // and resets its ~30s idle timer, so the 20s ping keeps the worker — and
   // with it the WebSocket reconnect chain — alive while any hh.ru tab is
   // open. That is what makes "server started after Chrome" recoverable.
-  // Nothing to record: answer and drop.
+  // With the socket down a ping is also a free retry slot (Codex review of
+  // #1203): attempt the connection NOW, see expediteBridgeConnect.
   if (message?.kind === 'keepalive') {
+    expediteBridgeConnect();
     sendResponse({ ok: true });
     return false;
   }

@@ -312,6 +312,39 @@ const SCENARIOS = {
     });
     return { response, foreign };
   },
+
+  // Codex review of #1203 (P1): with the socket down, a keepalive ping must
+  // EXPEDITE a connection attempt instead of only answering — otherwise the
+  // next retry stays up to the 30s backoff cap away, while live-doctor keeps
+  // its server open for just 10s, so a late-started server could still be
+  // missed. A foreign ping touches no bridge state.
+  keepalive_expedites_reconnect: async () => {
+    const env = makeEnv({ activeTab: null });
+    runBridge(env);
+    env.sockets[0]._drop();
+    const listener = env.chrome.runtime._listeners[0];
+    const before = env.sockets.length;
+    await new Promise((resolve) => {
+      listener({ kind: 'keepalive' }, { tab: { id: 9, url: 'https://example.com/' } }, resolve);
+    });
+    const afterForeign = env.sockets.length;
+    await new Promise((resolve) => {
+      listener({ kind: 'keepalive' }, { tab: { id: 7, url: 'https://hh.ru/' } }, resolve);
+    });
+    const expedited = env.sockets.length > afterForeign && afterForeign === before;
+    // The expedited attempt is a working socket: opening it connects, and a
+    // further ping is answered while connected (and opens no extra socket).
+    env.sockets[before]._open();
+    const socketsWhileConnected = env.sockets.length;
+    const connectedResponse = await new Promise((resolve) => {
+      listener({ kind: 'keepalive' }, { tab: { id: 7, url: 'https://hh.ru/' } }, resolve);
+    });
+    return {
+      expedited,
+      connectedResponse,
+      noExtraSocketWhileConnected: env.sockets.length === socketsWhileConnected,
+    };
+  },
 };
 
 async function main() {
