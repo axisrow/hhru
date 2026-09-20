@@ -472,6 +472,7 @@ def run_import(progress, history, params: ImportRunParams) -> bool:  # noqa: ANN
     from ..catalog_preflight import preflight_profession
     from ..config import bare_resume
     from ..create_resume import apply_draft_readback, create_resume_on_hh
+    from ..import_resume import payload_role
     from .copy_resume import format_config_snippet
     from .supervision import DurableMutationAttempt
 
@@ -486,10 +487,18 @@ def run_import(progress, history, params: ImportRunParams) -> bool:  # noqa: ANN
     ) as context:
         page = context.new_page()
         try:
+            # Роль из экспорта (#1167) — источник профессии для создания:
+            # preflight и визард резолвят лист по НЕЙ, title остаётся только
+            # заголовком позиции (editor). Роли нет (экспорт v1/ранний v2) —
+            # прежнее поведение с честным WARN.
+            role = payload_role(params.payload)
+            area = role["name"] if role else params.position_plan.title
+            if role:
+                print(f"[INFO] роль из экспорта: «{role['name']}» (id {role['id']})")
+            else:
+                print("[WARN] роль: в экспорте нет профессии — роль резолвится по title")
             # Read-only сверка area с live-каталогом ДО любого клика (#950).
-            outcome = preflight_profession(
-                page, params.position_plan.title, allow_unresolved_area=False
-            )
+            outcome = preflight_profession(page, area, allow_unresolved_area=False)
             if not outcome.ok:
                 print(f"[FAIL] создание: {outcome.message}")
                 return True
@@ -499,7 +508,7 @@ def run_import(progress, history, params: ImportRunParams) -> bool:  # noqa: ANN
             try:
                 result = create_resume_on_hh(
                     page,
-                    area=params.position_plan.title,
+                    area=area,
                     title=params.position_plan.title,
                     dry_run=False,
                     before_click=create_attempt.before_click,

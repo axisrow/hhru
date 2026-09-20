@@ -87,6 +87,9 @@ def run(args: argparse.Namespace) -> bool:
             position = payload.get("position", {})
             print(f"[INFO] Позиция: {position.get('title') or '<недоступно>'}")
             print(f"[INFO] Зарплата: {position.get('salary_text') or '<не указана>'}")
+            role = position.get("role")
+            role_text = role.get("name") if isinstance(role, dict) else None
+            print(f"[INFO] Роль: {role_text or '<не прочитана из SSR>'}")
             print(
                 f"[INFO] Опыт: {len(payload.get('experience', {}).get('companies', []))} компаний"
             )
