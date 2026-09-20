@@ -79,10 +79,16 @@ mkdir -p "$PROFILE_DIR"
 # --disable-features: с M137 фича DisableLoadExtensionCommandLineSwitch
 # молча игнорирует --load-extension (боевой факт: CfT 151, 2026-09-20 —
 # расширение не загружалось, SW не появлялся); флаг возвращает загрузку.
+# Трио против background-throttling: окно агента часто в фоне (юзер работает
+# параллельно) — без них вкладки фризятся/дискардятся и content script
+# становится недостижим посреди сценария (боевой факт #1162).
 exec "$BINARY" \
   --user-data-dir="$PROFILE_DIR" \
   --load-extension="$EXT_DIR" \
   --disable-features=DisableLoadExtensionCommandLineSwitch \
+  --disable-background-timer-throttling \
+  --disable-backgrounding-occluded-windows \
+  --disable-renderer-backgrounding \
   --no-first-run \
   --no-default-browser-check \
   "$URL" "$@"
