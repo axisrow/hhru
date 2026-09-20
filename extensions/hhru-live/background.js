@@ -67,8 +67,18 @@ function shapeCommand(envelope) {
   return command;
 }
 
+// Command ids mirror the server protocol (protocol._is_valid_id, #1159):
+// a non-empty string or an integer — booleans and floats are not ids.
+// Rejecting integers here made live-serve burn the full response timeout:
+// the error's null id never matched the pending command (#1178 review).
+function envelopeId(value) {
+  if (typeof value === 'string' && value.length > 0) return value;
+  if (typeof value === 'number' && Number.isInteger(value)) return value;
+  return null;
+}
+
 function handleEnvelope(envelope) {
-  const id = envelope && typeof envelope.id === 'string' ? envelope.id : null;
+  const id = envelope ? envelopeId(envelope.id) : null;
   if (!envelope || envelope.v !== PROTOCOL_VERSION) {
     respondToEnvelope(id, 'error', { code: 'unsupported_version', receivedV: envelope ? envelope.v ?? null : null });
     return;

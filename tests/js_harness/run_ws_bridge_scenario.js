@@ -255,6 +255,22 @@ const SCENARIOS = {
     };
   },
 
+  // Server protocol allows integer command ids (protocol._is_valid_id):
+  // the answer must echo the same numeric id, not command_id_required.
+  integer_id_echoed: async () => {
+    const env = makeEnv({
+      activeTab: ACTIVE_HHRU_TAB,
+      tabReply: { ok: true, overlays: [] },
+    });
+    runBridge(env);
+    handshake(env.sockets);
+    env.sockets[0]._message(JSON.stringify({ v: 1, id: 7, action: 'list_overlays' }));
+    return {
+      envelopes: sentEnvelopes(env.sent),
+      sentToTabCount: env.sent.toTab.length,
+    };
+  },
+
   // Heartbeats flow only while the socket is open (kind-namespaced, so the
   // server can distinguish a live client from a dead one, #1159 п.3).
   heartbeat_only_when_open: async () => {
