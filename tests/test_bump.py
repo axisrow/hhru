@@ -471,6 +471,29 @@ def test_bump_click_error_hint_appeared_is_confirmed_success():
     assert "поднятие подтверждено" in result.reason
 
 
+def test_bump_click_error_with_stale_alert_and_unreadable_state_is_uncertain():
+    """#1188 fallback: модалка видима при сбое и закрыта dismiss-кнопкой, но
+    состояние кулдауна после сбоя НЕ подтвердилось (кнопка исчезла, hint не
+    появился) — прежний fail-closed uncertain (#176), reason называет и
+    модалку, и непрочитанное состояние. Прямой тест ветки bump.py:276-285."""
+    page = FakeBumpPage(
+        hint_present=False,
+        button_present=True,
+        stale_alert_present=True,
+        button_click_error=True,
+        button_gone_after_click_error=True,
+    )
+
+    result = bump_resume(page, _resume(), dry_run=False)
+
+    assert result.success is False
+    assert result.acted is True
+    assert result.uncertain is True
+    assert "не подтвердилось" in result.reason
+    assert "модалка" in result.reason
+    assert "stale-alert-cancel" in page.click_log
+
+
 def test_bump_click_error_with_stale_alert_certain_failed_names_it():
     """#1188 + #1189: перехват модалкой контактов при активной кнопке после
     сбоя — определённый failed, reason называет и модалку (закрыта dismiss-кнопкой,
