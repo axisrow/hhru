@@ -306,10 +306,13 @@ class TestCommandRegistration:
         assert ns.port == 8765
         assert callable(ns.func)
 
-    def test_default_port_is_ephemeral(self):
+    def test_default_port_matches_extension_bridge(self):
+        # LIVE_SERVE_URL расширения захардкожен (background.js): дефолт
+        # ephemeral 0 давал канал, который клиент никогда не увидит.
         from hhru_bot.cli import build_parser
+        from hhru_bot.commands.live_serve import LIVE_SERVE_DEFAULT_PORT
 
-        assert build_parser().parse_args(["live-serve"]).port == 0
+        assert build_parser().parse_args(["live-serve"]).port == LIVE_SERVE_DEFAULT_PORT == 8765
 
     @pytest.mark.parametrize("bad_port", ["99999", "-1", "65536"])
     def test_port_out_of_range_rejected_at_argparse(self, bad_port, capsys):
