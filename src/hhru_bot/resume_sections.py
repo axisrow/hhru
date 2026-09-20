@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from .browser import (
     HH_BASE_URL,
@@ -596,12 +597,33 @@ BLOCK_READY_SELECTORS = {
 }
 
 
-def _contacts_ready(page: Page) -> None:
-    """commit != отрисовано (#858): телефонное поле рендерится на форме всегда
-    (census #1119), ждём его видимость перед первой строгой проверкой."""
-    page.locator(f"[data-qa='{CONTACT_FIELDS['phone']}']").first.wait_for(
-        state="visible", timeout=FORM_TIMEOUT_MS
-    )
+def _contacts_ready(page: Page, items: list[Contact]) -> None:
+    """commit != отрисовано (#858): ждём видимость ПОЛЕЙ ПЛАНА перед первой
+    строгой проверкой. Census #1165 (2026-09-20, черновик боя #1157): на свежем
+    черновике hh.ru прячет phone-поле в скрытый контейнер phone-верификации
+    (attached, но visible=false), email при этом видим и редактируем; на
+    опубликованном резюме видимы оба. Поэтому гейт пер-типовой, а не
+    phone-хардкод (#1119): поле плана, зависшее скрытым, — честный отказ
+    «черновик не готов» (failed/retry), а не таймаут гидратации."""
+    for ctype in dict.fromkeys(item.type for item in items):
+        field = page.locator(f"[data-qa='{CONTACT_FIELDS[ctype]}']").first
+        try:
+            field.wait_for(state="visible", timeout=FORM_TIMEOUT_MS)
+        except PlaywrightTimeoutError as exc:
+            try:
+                attached = field.count()
+            except PlaywrightError:
+                # Страница ушла между wait и count (навигация/анти-бот) —
+                # скрытость не доказана, обычный failed/retry (review #1173).
+                attached = 0
+            if attached == 0:
+                raise  # поле вообще не отрисовалось — гидратация/анти-бот, обычный failed/retry
+            raise RuntimeError(
+                f"contacts: поле {ctype} отрисовано скрытым (census #1165: на "
+                "незаполненном черновике скрытые поля недоступны для записи) — "
+                "досдача невозможна, опубликуйте резюме "
+                f"или уберите {ctype}-строку из плана"
+            ) from exc
 
 
 def _on_contacts_route(page: Page, resume_id: str) -> bool:
@@ -674,7 +696,7 @@ def _apply_contacts(
         goto_hh(page, edit_url)
         if not _on_contacts_route(page, resume_id):
             raise RuntimeError("contacts: редактор открыт не для того резюме")
-        _contacts_ready(page)
+        _contacts_ready(page, items)
         for item in items:
             field = page.locator(f"[data-qa='{CONTACT_FIELDS[item.type]}']")
             if field.count() != 1:
@@ -721,7 +743,7 @@ def _apply_contacts(
         goto_hh(page, edit_url)
         if not _on_contacts_route(page, resume_id):
             raise PlaywrightError("contacts: readback открыл не тот редактор (uncertain)")
-        _contacts_ready(page)
+        _contacts_ready(page, items)
         uncertain: list[int] = []
         details: list[str] = []
         for index, item in enumerate(items):
