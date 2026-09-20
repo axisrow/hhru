@@ -13,7 +13,7 @@ from hhru_bot.apply.blockers import (
     relocation_popup_visible,
 )
 from hhru_bot.history import SKIP_REASONS
-from hhru_bot.selector_groups import vacancy_page
+from hhru_bot.selector_groups import resume_page, vacancy_page
 
 pytestmark = pytest.mark.integration
 
@@ -173,6 +173,34 @@ def test_similar_popup_is_closed_without_becoming_terminal():
 
     assert result is None
     assert page.clicked == [vacancy_page.VACANCY_SIMILAR_VACANCIES_CLOSE]
+
+
+def test_stale_contacts_alert_is_closed_and_reported():
+    # #1189: модалка контактов перехватила клик — явный вердикт skip
+    # stale_contacts_alert (не безликий form-timeout uncertain #1161),
+    # закрытие dismiss-кнопкой «Закрыть»; accept-кнопка «Заменить на новые
+    # из профиля» (мутация профиля) не кликается никогда.
+    page = _Page(
+        (resume_page.STALE_CONTACTS_SYNC_ALERT, "Контакты в резюме могли устареть"),
+        (resume_page.STALE_CONTACTS_SYNC_ALERT_CANCEL, "Закрыть"),
+    )
+
+    result = handle_post_click_blockers(page, allow_relocation=False)
+
+    assert result is not None
+    assert result.kind == "stale_contacts_alert"
+    assert result.skip_reason == SKIP_REASONS.STALE_CONTACTS_ALERT
+    assert page.clicked == [resume_page.STALE_CONTACTS_SYNC_ALERT_CANCEL]
+
+
+def test_stale_contacts_alert_absent_changes_nothing():
+    # Штатная страница без модалки — ни одного клика, None (продолжаем).
+    page = _Page()
+
+    result = handle_post_click_blockers(page, allow_relocation=False)
+
+    assert result is None
+    assert page.clicked == []
 
 
 def test_direct_application_requires_alert_text():

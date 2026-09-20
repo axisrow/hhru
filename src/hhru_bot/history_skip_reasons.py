@@ -46,6 +46,9 @@ class _SkipReasons:
     RELOCATION_NOT_ALLOWED = "relocation_not_allowed"
     DIRECT_APPLICATION = "direct_application"
     RESPONSE_REJECTED = "response_rejected"
+    # #1189: модалка «Контакты в резюме могли устареть» перехватила клик; закрыта
+    # dismiss-кнопкой «Закрыть» (не мутация), замена контактов не выполнялась.
+    STALE_CONTACTS_ALERT = "stale_contacts_alert"
 
 
 #: Enum-объект причин отсева. Используется как ``SKIP_REASONS.STOPWORD_TITLE``
@@ -75,4 +78,5 @@ SKIP_REASON_VALUES = (
     _SkipReasons.RELOCATION_NOT_ALLOWED,
     _SkipReasons.DIRECT_APPLICATION,
     _SkipReasons.RESPONSE_REJECTED,
+    _SkipReasons.STALE_CONTACTS_ALERT,
 )

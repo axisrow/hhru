@@ -8,6 +8,7 @@ from playwright.sync_api import Locator, Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from . import selectors as sel
+from .apply.blockers import close_stale_contacts_alert
 from .browser import HH_BASE_URL, goto_hh, has_login_form
 from .config import ResumeConfig, is_resume_url_placeholder
 from .selector_groups.resume_list import RESUME_LIST_CARD_LINK_PREFIX
@@ -165,6 +166,13 @@ def bump_resume(page: Page, resume: ResumeConfig, dry_run: bool) -> BumpResult:
         logger.info("[DRY-RUN] Поднял бы резюме '%s' в поиске", resume.id)
         return BumpResult(resume.id, True, "dry-run")
 
+    # #1189: модалка «Контакты в резюме могли устареть» смонтирована при заходе
+    # на /applicant/resumes и перехватывает клик поднятия (боевой сбой #1161:
+    # 30с hit-target таймаут → acted+uncertain и кулдаун 4ч впустую). Закрываем
+    # dismiss-кнопкой «Закрыть» (не мутация профиля) прямо перед кликом —
+    # минимальное окно повторного монтажа. dry-run вышел выше: ноль кликов.
+    stale_contacts_closed = close_stale_contacts_alert(page)
+
     # #176: клик по кнопке поднятия — единственное необратимое действие bump.
     # Playwright может бросить исключение уже ПОСЛЕ того, как клик уйдёт на
     # hh.ru (navigation timeout, target closed при редиректе после действия).
@@ -183,6 +191,20 @@ def bump_resume(page: Page, resume: ResumeConfig, dry_run: bool) -> BumpResult:
             resume.id,
             exc,
         )
+        # #1189: если клик перехватила модалка контактов, исход обязан это
+        # называть — бездиагностный uncertain (#1161) повторяется на каждом
+        # следующем запуске. Модалку закрываем dismiss-кнопкой, чтобы она не
+        # съела и следующий прогон; вердикт прежний fail-closed.
+        if close_stale_contacts_alert(page):
+            return BumpResult(
+                resume.id,
+                False,
+                "клик поднятия перехвачен модалкой «Контакты в резюме могли "
+                "устареть» (закрыта кликом «Закрыть»); исход неопределён "
+                f"(Playwright: {exc})",
+                acted=True,
+                uncertain=True,
+            )
         return BumpResult(
             resume.id,
             False,
@@ -191,4 +213,9 @@ def bump_resume(page: Page, resume: ResumeConfig, dry_run: bool) -> BumpResult:
             uncertain=True,
         )
     logger.info("Резюме '%s' поднято в поиске", resume.id)
-    return BumpResult(resume.id, True, "success", acted=True)
+    # #1189: срабатывание попапа не должно остаться невидимым — пометка в
+    # reason успеха (как _relocation_confirmed_suffix у apply).
+    reason = "success"
+    if stale_contacts_closed:
+        reason += "; модалка контактов закрыта кликом «Закрыть» (#1189)"
+    return BumpResult(resume.id, True, reason, acted=True)
