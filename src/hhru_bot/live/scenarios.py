@@ -661,6 +661,26 @@ class PrimitiveError(Exception):
         self.forwarded = forwarded
 
 
+def _policy_detail(policy: object) -> str:
+    """Короткая расшифровка вердикта policy-ядра для отказа policy_refused.
+
+    Боевой урок #1181: без расшифровки [FAIL] показывает только
+    «policy_refused» — какой шаг, чем именно отказал и в каком оверлее,
+    остаётся невыясненным до живой диагностки канала. Текст цели режем:
+    census-строка 120 символов достаточна для опознания шага.
+    """
+    if not isinstance(policy, dict):
+        return ""
+    parts = [str(policy.get("reason") or policy.get("verdict") or "")]
+    overlay = policy.get("overlay")
+    if isinstance(overlay, dict):
+        parts.append(f"overlay={overlay.get('type')}/{overlay.get('disposition')}")
+    target = policy.get("targetText")
+    if isinstance(target, str) and target:
+        parts.append(f"цель={target[:120]}")
+    return "; ".join(part for part in parts if part)
+
+
 class _Collector:
     """TextIO-приёмник stdout сервера: строка-ответ -> ожидание в call()."""
 
@@ -851,5 +871,7 @@ class LiveChannel:
             # в 'error' ({ok:false, error:...}); читаем оба.
             code = str(result.get("code") or result.get("error") or "unknown")
             detail = str(result.get("detail", ""))
+            if not detail:
+                detail = _policy_detail(result.get("policy"))
             raise PrimitiveError(code, detail, forwarded=code in FORWARD_UNKNOWN_CODES)
         return response.get("result") or {}

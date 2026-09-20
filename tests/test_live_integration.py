@@ -224,6 +224,40 @@ def test_extension_error_shape_error_key_is_not_lost(channel):
     assert "policy_refused" in str(exc.value)
 
 
+def test_policy_refused_carries_verdict_in_detail(channel):
+    # Боевой урок #1181: без расшифровки policy-вердикта [FAIL] показывает
+    # только «policy_refused» — какой шаг и чем отказал, неизвестно. Кладёт
+    # reason + классификацию оверлея-предка в detail ошибки.
+    client = _connect(channel)
+
+    def refuse() -> None:
+        _, payload = client.recv_frame()
+        obj = json.loads(payload)
+        client.send_text(
+            json.dumps(
+                {
+                    "id": obj["id"],
+                    "status": "error",
+                    "result": {
+                        "error": "policy_refused",
+                        "policy": {
+                            "verdict": "refused",
+                            "reason": "ambiguous",
+                            "overlay": {"type": "modal", "disposition": "ambiguous"},
+                        },
+                    },
+                }
+            )
+        )
+
+    threading.Thread(target=refuse, daemon=True).start()
+    with pytest.raises(PrimitiveError) as exc:
+        channel.click(BUTTON, {"selector": HINT, "state": "visible", "timeoutMs": 1000})
+    client.close()
+    assert "ambiguous" in str(exc.value)
+    assert "overlay=modal/ambiguous" in str(exc.value)
+
+
 def test_unknown_action_fails_closed_before_forward(channel):
     client = _connect(channel)
     try:
