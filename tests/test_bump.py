@@ -44,6 +44,7 @@ class _FakeLocator:
         render_delayed: bool = False,
         wait_error: bool = False,
         click_error: bool = False,
+        text: str = "",
     ):
         self._present = present
         self._click_log = click_log
@@ -57,6 +58,7 @@ class _FakeLocator:
         # click_error=True: #176 — PlaywrightError в момент click() (клик мог
         # уйти на hh.ru, но ожидание после клика упало).
         self._click_error = click_error
+        self._text = text
 
     @property
     def first(self) -> _FakeLocator:
@@ -66,6 +68,11 @@ class _FakeLocator:
     def is_visible(self) -> bool:
         # #1189: close_stale_contacts_alert читает видимость попапа через .first.
         return self._present
+
+    def inner_text(self) -> str:
+        # #1205: bump читает текст renewal-элемента «Поднять в HH:MM» ради
+        # серверного окна кулдауна.
+        return self._text
 
     def count(self) -> int:
         if self._render_delayed:
@@ -103,10 +110,10 @@ class _FakeLocator:
 
 
 class _FakeOrLocator:
-    """locator.or_(...) для пост-клик вердикта #1188: виден, если виден хоть
-    один из двух сигналов кулдауна (hint или активная кнопка)."""
+    """locator.or_(...) для кулдаун-состояний (#1188/#1205): виден, если виден
+    хоть один из объединённых сигналов (hint, renewal-текст или кнопка)."""
 
-    def __init__(self, left: _FakeLocator, right: _FakeLocator):
+    def __init__(self, left: _FakeLocator | _FakeOrLocator, right: _FakeLocator):
         self._left = left
         self._right = right
 
@@ -114,12 +121,23 @@ class _FakeOrLocator:
     def first(self) -> _FakeOrLocator:
         return self
 
+    def or_(self, other: _FakeLocator) -> _FakeOrLocator:
+        # #1205: тройная цепочка hint.or_(renewal).or_(button) в пост-клик
+        # вердикте.
+        return _FakeOrLocator(self, other)
+
     def wait_for(self, *, timeout: float = 0, state: str = "visible") -> None:  # noqa: ARG002
-        if not (self._left._present or self._right._present):
-            raise PlaywrightTimeoutError("neither hint nor bump button visible")
+        # Реальный or_(): не-timeout ошибка любой из сторон валит всё ожидание
+        # (#139) — не глотаем её за «сигналов нет».
+        for side in (self._left, self._right):
+            if getattr(side, "_wait_error", False):
+                name = getattr(side, "_name", "or-locator")
+                raise PlaywrightError(f"runtime error waiting for {name}")
+        if not (self._left.is_visible() or self._right.is_visible()):
+            raise PlaywrightTimeoutError("neither cooldown signal nor bump button visible")
 
     def is_visible(self) -> bool:
-        return self._left._present or self._right._present
+        return self._left.is_visible() or self._right.is_visible()
 
 
 class _FakeCard:
@@ -142,6 +160,18 @@ class _FakeCard:
                 "hint",
                 render_delayed=self._page._hint_render_delayed,
                 wait_error=self._page._hint_wait_error,
+            )
+        if selector == resume_page.RESUME_BUMP_RENEWAL_TEXT:
+            # #1205: renewal-текст кулдауна «Поднять в HH:MM» — фактическая
+            # форма кулдауна карточки; как hint, появляется и пост-клик.
+            present = self._page._renewal_present or (
+                self._page._renewal_after_click and "button" in self._page.click_log
+            )
+            return _FakeLocator(
+                present,
+                self._page.click_log,
+                "renewal",
+                text=self._page._renewal_text,
             )
         if selector == resume_page.RESUME_BUMP_BUTTON:
             # #1188: кнопка, исчезающая после сбоя клика (карточка
@@ -233,6 +263,9 @@ class FakeBumpPage:
         stale_cancel_present: bool | None = None,
         hint_appears_after_click: bool = False,
         button_gone_after_click_error: bool = False,
+        renewal_present: bool = False,
+        renewal_after_click: bool = False,
+        renewal_text: str = "Поднять в 03:13",
     ):
         self.goto_calls: list[str] = []
         self.click_log: list[str] = []
@@ -240,6 +273,10 @@ class FakeBumpPage:
         self._card_present = card_present
         self._hint_present = hint_present
         self._button_present = button_present
+        # #1205: renewal-текст кулдауна — фактическая форма состояния карточки.
+        self._renewal_present = renewal_present
+        self._renewal_after_click = renewal_after_click
+        self._renewal_text = renewal_text
         self._hint_render_delayed = hint_render_delayed
         self._hint_wait_error = hint_wait_error
         self._button_click_error = button_click_error
@@ -308,6 +345,7 @@ def test_bump_hint_present_blocks_click():
     assert "рано" in result.reason
     assert page.click_log == []
     assert result.acted is False  # #163: клика не было — без паузы и записи
+    assert result.skipped is True  # #1205: «рано» — skip, не failed
 
 
 def test_bump_placeholder_url_does_not_navigate():
@@ -353,6 +391,61 @@ def test_bump_no_hint_clicks_button():
     assert result.success is True
     assert page.click_log == ["button"]
     assert result.acted is True  # #163: реальный клик — пауза обязательна
+
+
+# --- #1205: renewal-текст кулдауна — фактическая форма состояния карточки -----
+
+
+def test_bump_renewal_text_is_honest_skip_not_button_fail():
+    """Чек Г #1203 (живой факт 2026-09-21 01:45): карточка в серверном кулдауне
+    hh.ru не содержит ни кнопки, ни hint — только renewal-текст «Поднять в
+    03:13». Локальный кулдаун истёк, поэтому прежний код падал в «кнопка не
+    найдена» ([FAIL]) там, где честный «рано» от hh.ru. Распознавание ДО
+    попытки клика: skipped-вердикт с серверным окном из текста карточки."""
+    page = FakeBumpPage(hint_present=False, button_present=False, renewal_present=True)
+
+    result = bump_resume(page, _resume(), dry_run=False)
+
+    assert result.success is False
+    assert result.skipped is True
+    assert result.acted is False
+    assert "рано" in result.reason
+    assert "03:13" in result.reason
+    assert "не найдена" not in result.reason
+    assert page.click_log == []
+
+
+def test_bump_renewal_text_without_parseable_time_still_skips():
+    # Деградировавший текст без HH:MM — тот же честный skip, окно не выдумывается.
+    page = FakeBumpPage(
+        hint_present=False, button_present=False, renewal_present=True, renewal_text="Поднять"
+    )
+
+    result = bump_resume(page, _resume(), dry_run=False)
+
+    assert result.success is False
+    assert result.skipped is True
+    assert "рано" in result.reason
+    assert page.click_log == []
+
+
+def test_bump_click_error_renewal_after_click_is_confirmed_success():
+    """#1205 + #1188: клик упал с исключением, карточка после сбоя показывает
+    renewal-текст кулдауна — hh.ru поднятие засчитал (hint при этом не
+    рендерится вовсе, живой census 2026-09-21). success вместо uncertain."""
+    page = FakeBumpPage(
+        hint_present=False,
+        button_present=True,
+        button_click_error=True,
+        renewal_after_click=True,
+    )
+
+    result = bump_resume(page, _resume(), dry_run=False)
+
+    assert result.success is True
+    assert result.acted is True
+    assert result.uncertain is False
+    assert "поднятие подтверждено" in result.reason
 
 
 def test_bump_dry_run_does_not_click_even_without_hint():

@@ -532,6 +532,7 @@ def bump_via_live(channel, resume, dry_run: bool):
     from ..selector_groups.resume_page import (
         RESUME_BUMP_BUTTON,
         RESUME_BUMP_DISABLED_HINT,
+        RESUME_BUMP_RENEWAL_TEXT,
         RESUME_CARD_LINK_TEMPLATE,
     )
 
@@ -573,6 +574,12 @@ def bump_via_live(channel, resume, dry_run: bool):
         scope = RESUME_CARD_SCOPE_TEMPLATE.format(resume_id=resume.resume_id)
         in_scope_button = f"{scope} {RESUME_BUMP_BUTTON}"
         in_scope_hint = f"{scope} {RESUME_BUMP_DISABLED_HINT}"
+        # #1205: кулдаун hh.ru рендерится renewal-текстом «Поднять в HH:MM»
+        # (hint-элемента в кулдауне нет, census 2026-09-21). Примитив wait
+        # берёт один селектор — or-список CSS-запятой: cooldown-состояние =
+        # hint ИЛИ renewal-текст, различение отдельным check после.
+        in_scope_renewal = f"{scope} {RESUME_BUMP_RENEWAL_TEXT}"
+        in_scope_cooldown = f"{in_scope_hint}, {in_scope_renewal}"
 
         if not channel.wait(RESUME_LIST_CARD_LINK_PREFIX, WAIT_STATE_VISIBLE, BUMP_TIMEOUT_MS):
             return BumpResult(
@@ -588,8 +595,20 @@ def bump_via_live(channel, resume, dry_run: bool):
                 False,
                 "резюме не найдено в списке /applicant/resumes (удалено или недоступно)",
             )
-        if channel.wait(in_scope_hint, WAIT_STATE_VISIBLE, BUMP_HINT_TIMEOUT_MS):
-            return BumpResult(resume.id, False, "hh.ru сообщает, что поднимать ещё рано")
+        if channel.wait(in_scope_cooldown, WAIT_STATE_VISIBLE, BUMP_HINT_TIMEOUT_MS):
+            renewal = channel.check(in_scope_renewal)
+            if renewal.get("found") or renewal.get("visible"):
+                return BumpResult(
+                    resume.id,
+                    False,
+                    "hh.ru: поднимать ещё рано — карточка в серверном кулдауне "
+                    "(текст «Поднять в HH:MM»; локальный кулдаун и серверное "
+                    "окно hh.ru расходятся, #1205)",
+                    skipped=True,
+                )
+            return BumpResult(
+                resume.id, False, "hh.ru сообщает, что поднимать ещё рано", skipped=True
+            )
         if not channel.wait(in_scope_button, WAIT_STATE_VISIBLE, BUMP_TIMEOUT_MS):
             return BumpResult(resume.id, False, "кнопка поднятия резюме не найдена на странице")
     except (ChannelError, PrimitiveError) as exc:
@@ -603,11 +622,13 @@ def bump_via_live(channel, resume, dry_run: bool):
         channel.click(
             in_scope_button,
             # Объявленное post-click условие обязательно (#1160: wait_required
-            # отказ до клика): hh.ru после поднятия снимает кнопку и показывает
-            # кулдаун-хинт — он и есть условие. Тот же маркер проверяется ниже
-            # как позитивный исход; здесь он нужен исполнителю ДО клика.
+            # отказ до клика): hh.ru после поднятия снимает кнопку и переходит
+            # в кулдаун-состояние — оно и есть условие (#1205: фактически это
+            # renewal-текст, hint не рендерится; or-список покрывает обе формы).
+            # Тот же маркер проверяется ниже как позитивный исход; здесь он
+            # нужен исполнителю ДО клика.
             wait_for={
-                "selector": in_scope_hint,
+                "selector": in_scope_cooldown,
                 "state": WAIT_STATE_VISIBLE,
                 "timeoutMs": MARKER_TIMEOUT_MS,
             },
@@ -625,14 +646,14 @@ def bump_via_live(channel, resume, dry_run: bool):
             )
         return BumpResult(resume.id, False, f"клик не выполнен: {exc}")
 
-    # Позитивный маркер успеха (#1161): кулдаун-хинт появился (hh.ru снял
-    # кнопку) или хотя бы кнопка исчезла из карточки. Ни один не подтверждён —
-    # выдуманный успех запрещён: acted+uncertain. Исчезновение кнопки ждём
-    # через state=hidden, а не «not wait(visible)»: wait(visible) возвращается
-    # на первом же срезе DOM, где кнопку после клика ещё видно, и снятие
-    # осталось бы незамеченным.
+    # Позитивный маркер успеха (#1161): кулдаун-состояние появилось (hh.ru снял
+    # кнопку; #1205 — фактически renewal-текст «Поднять в HH:MM») или хотя бы
+    # кнопка исчезла из карточки. Ни один не подтверждён — выдуманный успех
+    # запрещён: acted+uncertain. Исчезновение кнопки ждём через state=hidden,
+    # а не «not wait(visible)»: wait(visible) возвращается на первом же срезе
+    # DOM, где кнопку после клика ещё видно, и снятие осталось бы незамеченным.
     try:
-        if channel.wait(in_scope_hint, WAIT_STATE_VISIBLE, MARKER_TIMEOUT_MS):
+        if channel.wait(in_scope_cooldown, WAIT_STATE_VISIBLE, MARKER_TIMEOUT_MS):
             # Гонка кулдауна #1184: хинт может смонтироваться в окне между
             # pre-check и кликом (кулдаун наступил ровно сейчас) — hh.ru
             # оставляет кнопку в карточке disabled, клик ничего не поднимает,

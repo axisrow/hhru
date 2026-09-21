@@ -106,6 +106,12 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
             if result.success:
                 progress.applied_count += 1
                 print(f"  [OK] {resume.id} поднято")
+            elif result.skipped:
+                # #1205: «рано» по состоянию карточки hh.ru — не сбой, как и
+                # локальный «Пропуск: рано поднимать»: без failed и без
+                # ненулевого exit-кода.
+                progress.skipped_count += 1
+                print(f"  [skip] {resume.id} — {result.reason}")
             else:
                 progress.failed_count += 1
                 failed = True

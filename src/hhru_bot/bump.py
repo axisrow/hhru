@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 
 from playwright.sync_api import Error as PlaywrightError
@@ -12,7 +13,7 @@ from .apply.blockers import close_stale_contacts_alert
 from .browser import HH_BASE_URL, goto_hh, has_login_form
 from .config import ResumeConfig, is_resume_url_placeholder
 from .selector_groups.resume_list import RESUME_LIST_CARD_LINK_PREFIX
-from .selector_groups.resume_page import RESUME_CARD_LINK_TEMPLATE
+from .selector_groups.resume_page import RESUME_BUMP_RENEWAL_TEXT, RESUME_CARD_LINK_TEMPLATE
 
 logger = logging.getLogger("hhru_bot.bump")
 
@@ -99,6 +100,26 @@ class BumpResult:
     # гарантированно писала action со статусом 'uncertain' (кулдаун 4ч и
     # дневной лимит его видят) и выдерживала троттл-паузу.
     uncertain: bool = False
+    # #1205: отказ «рано поднимать» по СОСТОЯНИЮ КАРТОЧКИ (hint или
+    # renewal-текст кулдауна) — не сбой: команда печатает [skip], не считает
+    # failed и не валит exit-код, как локальный «Пропуск: рано поднимать».
+    skipped: bool = False
+
+
+def _renewal_skip_reason(text: str) -> str:
+    """Честный skip-вердикт по renewal-тексту карточки (#1205).
+
+    Текст «Поднять в 03:13» — единственный носитель серверного окна hh.ru
+    (локальный кулдаун и серверный расходятся, живой факт чека Г #1203:
+    локальный истёк, hh.ru своё окно продлил до 03:13). Время показываем
+    как есть — сверку делает человек; парсить в дату нечего: окно в тексте
+    уже локальное для пользователя.
+    """
+    window = ""
+    match = re.search(r"\d{1,2}:\d{2}", text)
+    if match:
+        window = f" (серверное окно hh.ru до {match.group(0)})"
+    return f"hh.ru: поднимать ещё рано{window} — карточка в кулдауне («{text}»)"
 
 
 def _post_click_verdict(
@@ -111,7 +132,10 @@ def _post_click_verdict(
     уйти, мог быть перехвачен модалкой контактов #1161). Состояние кулдауна
     на карточке — серверное состояние hh.ru:
 
-    - hint «поднимать рано» отрисован → поднятие засчитано (success);
+    - hint «поднимать рано» ИЛИ renewal-текст кулдауна отрисован → поднятие
+      засчитано (success); renewal-текст — фактическое кулдаун-состояние
+      карточки hh.ru (#1205, census 2026-09-21: hint-элемента в кулдауне нет,
+      есть resume-renewal-manual-text «Поднять в HH:MM»);
     - кнопка поднятия активна → hh.ru клик не засчитывал (перехваченный
       клик он не видел, кулдаун не начался) → определённый failed: без
       uncertain и без кулдауна 4ч, съедавшего по действию за прогон;
@@ -123,12 +147,18 @@ def _post_click_verdict(
     ``reason_suffix`` — пометка о закрытой модалке контактов, если она была.
     """
 
-    state = card.locator(sel.RESUME_BUMP_DISABLED_HINT).or_(card.locator(sel.RESUME_BUMP_BUTTON))
+    cooldown_state = card.locator(sel.RESUME_BUMP_DISABLED_HINT).or_(
+        card.locator(RESUME_BUMP_RENEWAL_TEXT)
+    )
+    state = cooldown_state.or_(card.locator(sel.RESUME_BUMP_BUTTON))
     try:
         # Гонка рендера (CLAUDE.md п.4): строгие проверки — только после
         # явного ожидания любого из двух сигналов.
         state.first.wait_for(state="visible", timeout=BUMP_POST_CLICK_STATE_WAIT_MS)
-        bumped = card.locator(sel.RESUME_BUMP_DISABLED_HINT).first.is_visible()
+        bumped = (
+            card.locator(sel.RESUME_BUMP_DISABLED_HINT).first.is_visible()
+            or card.locator(RESUME_BUMP_RENEWAL_TEXT).first.is_visible()
+        )
     except PlaywrightError:
         return None
     if bumped:
@@ -136,7 +166,7 @@ def _post_click_verdict(
             resume_id,
             True,
             "success; поднятие подтверждено состоянием карточки после сбоя клика — "
-            "hint кулдауна отрисован" + reason_suffix + f" (Playwright: {exc})",
+            "кулдаун-состояние отрисовано" + reason_suffix + f" (Playwright: {exc})",
             acted=True,
         )
     return BumpResult(
@@ -199,10 +229,17 @@ def bump_resume(page: Page, resume: ResumeConfig, dry_run: bool) -> BumpResult:
     # «подсказки нет», а «ещё не отрисовалось»), и код шёл жать кнопку поднятия
     # в обход кулдауна hh.ru. Приводим к тому же приёму, что и кнопка ниже:
     # ждём (короткий таймаут — опциональный элемент), ловим PlaywrightTimeoutError
-    # как «hint не появился» = легитимное отсутствие.
-    disabled_hint = card.locator(sel.RESUME_BUMP_DISABLED_HINT)
+    # как «сигналов кулдауна нет» = легитимное отсутствие.
+    # #1205: кулдаун hh.ru рендерится двумя формами — старый hint
+    # resume-update-button-disabled и фактический renewal-текст
+    # resume-renewal-manual-text «Поднять в HH:MM» (живой census 2026-09-21:
+    # в кулдауне кнопки и hint НЕТ, есть только текст). Ждём оба одним or_
+    # (короткий таймаут у обоих общий), различаем после.
+    cooldown_state = card.locator(sel.RESUME_BUMP_DISABLED_HINT).or_(
+        card.locator(RESUME_BUMP_RENEWAL_TEXT)
+    )
     try:
-        disabled_hint.wait_for(state="visible", timeout=BUMP_HINT_TIMEOUT_MS)
+        cooldown_state.first.wait_for(state="visible", timeout=BUMP_HINT_TIMEOUT_MS)
     except PlaywrightTimeoutError:
         pass
     except PlaywrightError:
@@ -214,7 +251,15 @@ def bump_resume(page: Page, resume: ResumeConfig, dry_run: bool) -> BumpResult:
             resume.id, False, "ошибка при проверке подсказки кулдауна — поднятие отменено"
         )
     else:
-        return BumpResult(resume.id, False, "hh.ru сообщает, что поднимать ещё рано")
+        renewal = card.locator(RESUME_BUMP_RENEWAL_TEXT).first
+        if renewal.is_visible():
+            return BumpResult(
+                resume.id,
+                False,
+                _renewal_skip_reason(" ".join(renewal.inner_text().split())),
+                skipped=True,
+            )
+        return BumpResult(resume.id, False, "hh.ru сообщает, что поднимать ещё рано", skipped=True)
 
     bump_button = card.locator(sel.RESUME_BUMP_BUTTON)
     try:

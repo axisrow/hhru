@@ -88,6 +88,33 @@ def test_bump_persists_success_and_correlates_action_to_run(tmp_path, monkeypatc
     assert "[RUN]" in capsys.readouterr().out
 
 
+def test_bump_renewal_skip_prints_skip_not_fail_and_exit_zero(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """#1205: серверный кулдаун карточки (renewal-текст) — [skip], не [FAIL]:
+    run завершается без failed-исхода, skipped учитывается в command_runs,
+    action в history не пишется (acted=False, #163)."""
+    config = _config(tmp_path)
+    _patch_runtime(monkeypatch, config)
+    monkeypatch.setattr(
+        "hhru_bot.bump.bump_resume",
+        lambda _page, resume, _dry_run: BumpResult(resume.id, False, "hh.ru: рано", skipped=True),
+    )
+
+    assert bump_command.run(_args(tmp_path)) is False
+
+    row = History(tmp_path / "history.db").command_runs()[-1]
+    assert (row["status"], row["attempted"], row["skipped"], row["failed"]) == (
+        "completed",
+        1,
+        1,
+        0,
+    )
+    out = capsys.readouterr().out
+    assert "[skip]" in out
+    assert "[FAIL]" not in out
+
+
 def test_bump_exception_still_finishes_run_and_prints_summary(
     tmp_path, monkeypatch, capsys
 ) -> None:
