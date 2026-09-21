@@ -96,7 +96,7 @@ def test_run_seeds_cookies_into_profile(tmp_path, monkeypatch, capsys):
 
 
 def test_run_normalizes_cookies_before_seed(tmp_path, monkeypatch, capsys):
-    # #1206: сессионные/истёкшие кукu сеются с конечным сроком, лишние ключи
+    # #1206: сессионные/истёкшие куки сеются с конечным сроком, лишние ключи
     # (session из стороннего экспорта) не доходят до add_cookies.
     now = time.time()
     _write_storage_state(
@@ -173,6 +173,45 @@ def test_normalize_for_seed_pure():
     assert by_name["session"]["expires"] == pytest.approx(now + 30 * 24 * 3600)
     assert by_name["noexp"]["expires"] == pytest.approx(now + 30 * 24 * 3600)
     assert "session" not in by_name["junk"]
+
+
+def test_run_skips_non_dict_cookie_elements(tmp_path, monkeypatch, capsys):
+    # Не-dict элемент списка рядом с валидным hhtoken (гейт пропускает: dict
+    # требуется только для поиска hhtoken) не должен ронять нормализацию
+    # TypeError'ом — мусор отбрасывается, валидные куки сеются.
+    _write_storage_state(tmp_path, [_hhtoken_cookie(), 42])
+    seen: dict = {}
+
+    def fake_seed(_profile_dir, cookies):
+        seen["cookies"] = cookies
+
+    monkeypatch.setattr(session_seed_cmd, "_seed_cookies", fake_seed)
+    _mock_verify_ok(monkeypatch)
+
+    failed = session_seed_cmd.run(_args(_write_config(tmp_path), tmp_path / "p"))
+
+    assert failed is False
+    assert [c["name"] for c in seen["cookies"]] == ["hhtoken"]
+    assert "[OK]" in capsys.readouterr().out
+
+
+def test_run_reports_fail_when_restart_guard_crashes(tmp_path, monkeypatch, capsys):
+    # Страж readback'а — тот же класс отказов, что и посев (профиль в этот
+    # момент занят другим Chrome и т.п.): честный [FAIL], а не сырой traceback.
+    _write_storage_state(tmp_path, [_hhtoken_cookie()])
+
+    def broken_verify(_profile_dir):
+        raise RuntimeError("profile is locked by another Chrome")
+
+    monkeypatch.setattr(session_seed_cmd, "_seed_cookies", lambda _p, _c: None)
+    monkeypatch.setattr(session_seed_cmd, "_verify_token_survives_restart", broken_verify)
+
+    failed = session_seed_cmd.run(_args(_write_config(tmp_path), tmp_path / "p"))
+
+    assert failed is True
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out
+    assert "[OK]" not in out
 
 
 def test_run_fails_when_seeded_token_does_not_survive_restart(tmp_path, monkeypatch, capsys):

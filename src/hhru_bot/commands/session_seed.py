@@ -39,12 +39,17 @@ _COOKIE_FIELDS = (
 def _normalize_for_seed(cookies: list[dict], now: float) -> list[dict]:
     """Канонический вид для add_cookies: контрактные поля + гарантированный expires.
 
-    Сессионные (expires <= 0) и уже истёкшие кукu получают конечный срок:
+    Сессионные (expires <= 0) и уже истёкшие куки получают конечный срок:
     Chrome не восстанавливает session-куки чужого запуска, поэтому посев
     «как есть» умирал на первом же рестарте браузера (#1206).
     """
     normalized = []
     for cookie in cookies:
+        # Не-dict элемент битого storage_state — не кука; отбрасываем, а не
+        # роняем команду (field in 42 → TypeError; класс входа, который гейт
+        # hhtoken выше пропускает — dict требуется только для поиска hhtoken).
+        if not isinstance(cookie, dict):
+            continue
         item = {field: cookie[field] for field in _COOKIE_FIELDS if field in cookie}
         expires = item.get("expires", -1)
         if not isinstance(expires, (int, float)) or expires <= now:
@@ -157,7 +162,11 @@ def run(args: argparse.Namespace) -> bool:
         print(f"[FAIL] Не удалось посеять куки в профиль: {exc}")
         return True
 
-    ok, detail = _verify_token_survives_restart(profile_dir)
+    try:
+        ok, detail = _verify_token_survives_restart(profile_dir)
+    except Exception as exc:  # noqa: BLE001 — PlaywrightError и ошибки профиля (занят другим Chrome и т.п.); тот же класс отказов, что и посев
+        print(f"[FAIL] Не удалось проверить профиль после посева: {exc}")
+        return True
     if not ok:
         print(f"[FAIL] {detail}")
         return True
