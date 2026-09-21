@@ -60,6 +60,7 @@ BROWSER_COMMANDS = frozenset(
         "apply-live",
         "areas",
         "bump",
+        "live-browser",
         "call-api",
         "clear-negotiations",
         "common",

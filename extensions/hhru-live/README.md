@@ -11,9 +11,20 @@ policy-ядро, опасные цели отказываются без кли�
 
 ## Установка
 
-Быстрый запуск одной командой (загружает расширение флагом `--load-extension`
-в небрендированный Chromium из кэша Playwright, профиль в
-`data/extension-profile/`):
+Основной способ — CLI-команда `live-browser` (#1209): Playwright запускает
+браузер с расширением и **нативно грузит сессию аккаунта** (storage_state) —
+hh.ru принимает этот класс клиента (#1206: клон кук в чужой браузер антифрод
+отвергает):
+
+```bash
+./scripts/run.sh live-browser            # вкладка /applicant/resumes
+./scripts/run.sh live-browser --headless # без окна
+```
+
+Запасной способ — загружает расширение флагом `--load-extension` в
+небрендированный Chromium из кэша Playwright, профиль в
+`data/extension-profile/` (профиль остаётся БЕЗ сессии — сессию в него
+не засеять, #1206):
 
 ```bash
 ./scripts/run_extension_chrome.sh
