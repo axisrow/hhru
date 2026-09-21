@@ -407,6 +407,12 @@ READ hh.ru: competitors collect --text QUERY [--search-in SCOPE] [--max-pages N]
 - `--status` — Дополнительно: можно ли поднять (кулдаун) и дата последнего поднятия
 - `--local` — Без похода на hh.ru: только записи config.yaml (overlay настроек)
 
+### `live-browser`
+
+- `--profile-dir PROFILE_DIR` — Каталог профиля браузера (user-data-dir); по умолчанию data/extension-profile (по умолчанию: PosixPath('data/extension-profile'))
+- `--headless` — Без окна (расширение работает и в новом headless)
+- `--url` — Стартовая вкладка (по умолчанию https://hh.ru/applicant/resumes) (по умолчанию: 'https://hh.ru/applicant/resumes')
+
 ### `live-doctor`
 
 - `--port PORT` — Порт сервера на 127.0.0.1 (по умолчанию 8765 — единственный, к которому расширение подключается само) (по умолчанию: 8765)

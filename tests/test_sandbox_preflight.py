@@ -36,6 +36,7 @@ def test_browser_command_registry_is_complete() -> None:
         "export-resume",
         "fill-form",
         "import-resume",
+        "live-browser",
         "login",
         "login-code",
         "login-external",
