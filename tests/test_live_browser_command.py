@@ -247,4 +247,6 @@ def test_launch_args_carry_extension_switches():
     ext = Path("/repo/extensions/hhru-live")
     args = live_browser_cmd._launch_args(ext)
     assert f"--load-extension={ext}" in args
+    # Без except-флага Playwright добавляет --disable-extensions (#1209).
+    assert f"--disable-extensions-except={ext}" in args
     assert "--disable-features=DisableLoadExtensionCommandLineSwitch" in args

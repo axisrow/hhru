@@ -34,6 +34,10 @@ def _extension_dir() -> Path:
 def _launch_args(extension_dir: Path) -> list[str]:
     return [
         f"--load-extension={extension_dir}",
+        # Без except-флага Playwright сам добавляет --disable-extensions, и
+        # расширение молча не стартует (живой факт #1209): except-переключатель
+        # отключает этот автозапрет.
+        f"--disable-extensions-except={extension_dir}",
         # Chrome 137+ режет --load-extension в branded-сборках; CfT держит
         # переключатель за фичей — как в scripts/run_extension_chrome.sh.
         "--disable-features=DisableLoadExtensionCommandLineSwitch",
