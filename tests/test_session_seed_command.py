@@ -1,8 +1,10 @@
 """Тесты команды session-seed (#1195): посев кук storage_state в профиль браузера.
 
-Реальный launch_persistent_context мокается (на уровне _seed_cookies) —
-в CI Chromium не запускаем. Проверяем fail-closed гейты (нет файла, нет
-hhtoken — профиль не мутируется), передачу кук и вывод по конвенции.
+Реальный launch_persistent_context мокается (на уровне _seed_cookies и
+_verify_token_survives_restart) — живой контур гоняет чеклист и эксперименты
+из #1206, в тестах Playwright под стражем conftest. Проверяем fail-closed
+(нет файла, нет hhtoken, сеянный токен не пережил рестарт — профиль не
+считается засеянным) и нормализацию expires (#1206).
 """
 
 from __future__ import annotations
@@ -10,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import textwrap
+import time
 
 import pytest
 
@@ -61,6 +64,14 @@ def _hhtoken_cookie(expires: float | int = -1) -> dict:
     }
 
 
+def _mock_verify_ok(monkeypatch):
+    monkeypatch.setattr(
+        session_seed_cmd,
+        "_verify_token_survives_restart",
+        lambda _profile_dir: (True, "hhtoken постоянный, переживает рестарт браузера"),
+    )
+
+
 def test_run_seeds_cookies_into_profile(tmp_path, monkeypatch, capsys):
     state = _write_storage_state(tmp_path, [_hhtoken_cookie(), {"name": "x", "value": "y"}])
     profile = tmp_path / "worker-profile"
@@ -71,6 +82,7 @@ def test_run_seeds_cookies_into_profile(tmp_path, monkeypatch, capsys):
         seen["cookies"] = cookies
 
     monkeypatch.setattr(session_seed_cmd, "_seed_cookies", fake_seed)
+    _mock_verify_ok(monkeypatch)
 
     failed = session_seed_cmd.run(_args(_write_config(tmp_path), profile))
 
@@ -81,6 +93,151 @@ def test_run_seeds_cookies_into_profile(tmp_path, monkeypatch, capsys):
     assert "[OK]" in out
     assert "hhtoken" in out
     assert str(state) not in out  # сеем в профиль, storage_state не упоминаем как результат
+
+
+def test_run_normalizes_cookies_before_seed(tmp_path, monkeypatch, capsys):
+    # #1206: сессионные/истёкшие куки сеются с конечным сроком, лишние ключи
+    # (session из стороннего экспорта) не доходят до add_cookies.
+    now = time.time()
+    _write_storage_state(
+        tmp_path,
+        [
+            _hhtoken_cookie(expires=-1),
+            {**_hhtoken_cookie(), "name": "expired", "expires": now - 100},
+            {
+                "name": "extra",
+                "value": "v",
+                "domain": ".hh.ru",
+                "path": "/",
+                "expires": now + 100,
+                "session": None,
+            },
+        ],
+    )
+    seen: dict = {}
+
+    def fake_seed(_profile_dir, cookies):
+        seen["cookies"] = cookies
+
+    monkeypatch.setattr(session_seed_cmd, "_seed_cookies", fake_seed)
+    _mock_verify_ok(monkeypatch)
+
+    failed = session_seed_cmd.run(_args(_write_config(tmp_path), tmp_path / "p"))
+
+    assert failed is False
+    by_name = {c["name"]: c for c in seen["cookies"]}
+    assert set(seen["cookies"][0].keys()) <= {
+        "name",
+        "value",
+        "domain",
+        "path",
+        "expires",
+        "httpOnly",
+        "secure",
+        "sameSite",
+        "partitionKey",
+    }
+    assert "session" not in by_name["extra"]
+    assert by_name["hhtoken"]["expires"] > now
+    assert by_name["expired"]["expires"] > now
+    assert by_name["extra"]["expires"] == pytest.approx(now + 100)
+    assert "[OK]" in capsys.readouterr().out
+
+
+def test_normalize_for_seed_pure():
+    now = 1_000_000.0
+    normalized = session_seed_cmd._normalize_for_seed(
+        [
+            {
+                "name": "persistent",
+                "value": "v",
+                "domain": ".hh.ru",
+                "path": "/",
+                "expires": now + 50,
+            },
+            {"name": "session", "value": "v", "domain": ".hh.ru", "path": "/", "expires": -1},
+            {"name": "noexp", "value": "v", "domain": ".hh.ru", "path": "/"},
+            {
+                "name": "junk",
+                "value": "v",
+                "domain": ".hh.ru",
+                "path": "/",
+                "expires": now + 50,
+                "session": True,
+            },
+        ],
+        now,
+    )
+    by_name = {c["name"]: c for c in normalized}
+    assert by_name["persistent"]["expires"] == now + 50
+    assert by_name["session"]["expires"] == pytest.approx(now + 30 * 24 * 3600)
+    assert by_name["noexp"]["expires"] == pytest.approx(now + 30 * 24 * 3600)
+    assert "session" not in by_name["junk"]
+
+
+def test_run_skips_non_dict_cookie_elements(tmp_path, monkeypatch, capsys):
+    # Не-dict элемент списка рядом с валидным hhtoken (гейт пропускает: dict
+    # требуется только для поиска hhtoken) не должен ронять нормализацию
+    # TypeError'ом — мусор отбрасывается, валидные куки сеются.
+    _write_storage_state(tmp_path, [_hhtoken_cookie(), 42])
+    seen: dict = {}
+
+    def fake_seed(_profile_dir, cookies):
+        seen["cookies"] = cookies
+
+    monkeypatch.setattr(session_seed_cmd, "_seed_cookies", fake_seed)
+    _mock_verify_ok(monkeypatch)
+
+    failed = session_seed_cmd.run(_args(_write_config(tmp_path), tmp_path / "p"))
+
+    assert failed is False
+    assert [c["name"] for c in seen["cookies"]] == ["hhtoken"]
+    assert "[OK]" in capsys.readouterr().out
+
+
+def test_run_reports_fail_when_restart_guard_crashes(tmp_path, monkeypatch, capsys):
+    # Страж readback'а — тот же класс отказов, что и посев (профиль в этот
+    # момент занят другим Chrome и т.п.): честный [FAIL], а не сырой traceback.
+    _write_storage_state(tmp_path, [_hhtoken_cookie()])
+
+    def broken_verify(_profile_dir):
+        raise RuntimeError("profile is locked by another Chrome")
+
+    monkeypatch.setattr(session_seed_cmd, "_seed_cookies", lambda _p, _c: None)
+    monkeypatch.setattr(session_seed_cmd, "_verify_token_survives_restart", broken_verify)
+
+    failed = session_seed_cmd.run(_args(_write_config(tmp_path), tmp_path / "p"))
+
+    assert failed is True
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out
+    assert "[OK]" not in out
+
+
+def test_run_fails_when_seeded_token_does_not_survive_restart(tmp_path, monkeypatch, capsys):
+    # #1206: посев [OK], но токен после перезапуска профиля session/нет —
+    # команда обязана ответить [FAIL], а не молча отчитаться успехом.
+    _write_storage_state(tmp_path, [_hhtoken_cookie()])
+
+    def fake_seed(_profile_dir, _cookies):
+        pass
+
+    monkeypatch.setattr(session_seed_cmd, "_seed_cookies", fake_seed)
+    monkeypatch.setattr(
+        session_seed_cmd,
+        "_verify_token_survives_restart",
+        lambda _profile_dir: (
+            False,
+            "hhtoken в профиле session/истёк — посев не переживёт рестарт браузера",
+        ),
+    )
+
+    failed = session_seed_cmd.run(_args(_write_config(tmp_path), tmp_path / "p"))
+
+    assert failed is True
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out
+    assert "[OK]" not in out
 
 
 def test_run_fails_without_storage_state_file(tmp_path, monkeypatch, capsys):
