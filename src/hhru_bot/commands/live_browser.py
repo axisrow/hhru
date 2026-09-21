@@ -15,6 +15,7 @@ Foreground: Ctrl+C или EOF stdin закрывают браузер, фоно�
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -56,14 +57,11 @@ def _sync_playwright() -> Any:
     return sync_playwright
 
 
-def _launch_context(
-    p: Any, profile_dir: Path, headless: bool, extension_dir: Path, state_file: Path
-) -> Any:
+def _launch_context(p: Any, profile_dir: Path, headless: bool, extension_dir: Path) -> Any:
     return p.chromium.launch_persistent_context(
         str(profile_dir),
         headless=headless,
         args=_launch_args(extension_dir),
-        storage_state=str(state_file),
     )
 
 
@@ -114,11 +112,20 @@ def run(args: argparse.Namespace) -> bool:
     sync_playwright = _sync_playwright()
 
     profile_dir = args.profile_dir.expanduser()
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    cookies = state["cookies"]
     with sync_playwright() as p:
         try:
-            context = _launch_context(p, profile_dir, args.headless, extension_dir, state_file)
+            context = _launch_context(p, profile_dir, args.headless, extension_dir)
         except Exception as exc:  # noqa: BLE001 — профиль занят другим Chrome, нет браузера и т.п.
             print(f"[FAIL] live-browser: не удалось запустить браузер: {exc}")
+            return True
+        try:
+            # Нативный формат storage_state = контракт add_cookies; переносим
+            # сессию внутри Playwright-клиента — hh.ru принимает его (#1206).
+            context.add_cookies(cookies)  # type: ignore[arg-type]
+        except Exception as exc:  # noqa: BLE001 — битый storage_state дошли бы до гейта ниже
+            print(f"[FAIL] live-browser: не удалось перенести куки сессии: {exc}")
             return True
         try:
             page = context.pages[0] if context.pages else context.new_page()

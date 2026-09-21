@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import json
 import textwrap
 from pathlib import Path
 
@@ -42,7 +43,10 @@ def _write_config(tmp_path) -> str:
 def _write_storage_state(tmp_path) -> Path:
     path = tmp_path / "storage_state" / "hh_session.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text('{"cookies": [], "origins": []}', encoding="utf-8")
+    cookies = [
+        {"name": "hhtoken", "value": "synthetic", "domain": ".hh.ru", "path": "/", "expires": -1}
+    ]
+    path.write_text(json.dumps({"cookies": cookies, "origins": []}), encoding="utf-8")
     return path
 
 
@@ -86,9 +90,13 @@ class _FakeContext:
         self._page = page
         self.pages: list = []
         self.closed = False
+        self.added: list = []
 
     def new_page(self) -> _FakePage:
         return self._page
+
+    def add_cookies(self, cookies: list) -> None:
+        self.added = cookies
 
     def close(self) -> None:
         self.closed = True
@@ -111,11 +119,10 @@ def _patch_pw(monkeypatch):
 def _patch_launch(monkeypatch, context: _FakeContext) -> dict:
     seen: dict = {}
 
-    def fake_launch(_p, profile_dir, headless, extension_dir, state_file):
+    def fake_launch(_p, profile_dir, headless, extension_dir):
         seen["profile_dir"] = profile_dir
         seen["headless"] = headless
         seen["extension_dir"] = extension_dir
-        seen["state_file"] = state_file
         return context
 
     monkeypatch.setattr(live_browser_cmd, "_launch_context", fake_launch)
@@ -154,7 +161,7 @@ def test_run_fails_without_extension(tmp_path, monkeypatch, capsys):
 
 
 def test_run_launches_with_session_and_stops_on_eof(tmp_path, monkeypatch, capsys):
-    state_file = _write_storage_state(tmp_path)
+    _write_storage_state(tmp_path)
     page = _FakePage()
     context = _FakeContext(page)
     seen = _patch_launch(monkeypatch, context)
@@ -167,7 +174,7 @@ def test_run_launches_with_session_and_stops_on_eof(tmp_path, monkeypatch, capsy
     assert failed is False
     assert context.closed is True
     assert page.gotos == [live_browser_cmd.DEFAULT_START_URL]
-    assert seen["state_file"] == state_file
+    assert [c["name"] for c in context.added] == ["hhtoken"]  # куки сессии ушли в контекст
     assert seen["headless"] is False
     assert seen["extension_dir"].name == "hhru-live"
     out = capsys.readouterr().out
