@@ -22,7 +22,7 @@ def _reconcile_bump_progress(progress: ApplyProgress, _history, _run_id: str) ->
     audit still retains ``uncertain`` when a click may have reached hh.ru, so
     the cooldown and daily limit remain fail-closed.
     """
-    completed = progress.applied_count + progress.failed_count
+    completed = progress.applied_count + progress.failed_count + progress.skipped_count
     if progress.attempted_count > completed:
         progress.failed_count += progress.attempted_count - completed
 
@@ -84,6 +84,12 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
             if result.success:
                 progress.applied_count += 1
                 print(f"  [OK] {resume.id} поднято")
+            elif result.skipped:
+                # #1205: «рано» по состоянию карточки hh.ru — не сбой, как и
+                # локальный «Пропуск: рано поднимать»: без failed и без
+                # ненулевого exit-кода.
+                progress.skipped_count += 1
+                print(f"  [skip] {resume.id} — {result.reason}")
             else:
                 progress.failed_count += 1
                 failed = True

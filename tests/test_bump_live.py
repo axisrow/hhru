@@ -51,7 +51,9 @@ class FakeChannel:
         card_present: bool = True,
         hint_present: bool = False,
         button_present: bool = True,
+        renewal_present: bool = False,
         post_click: tuple[bool, bool] = (True, False),
+        post_click_renewal: bool = False,
         click_error: PrimitiveError | None = None,
         wait_error: PrimitiveError | None = None,
         get_state_error: Exception | None = None,
@@ -62,7 +64,11 @@ class FakeChannel:
         self.card_present = card_present
         self.hint_present = hint_present
         self.button_present = button_present
+        # #1205: renewal-текст кулдауна «Поднять в HH:MM» — фактическая форма
+        # кулдауна карточки (hint при этом не рендерится).
+        self.renewal_present = renewal_present
         self.post_click = post_click
+        self.post_click_renewal = post_click_renewal
         self.click_error = click_error
         self.wait_error = wait_error
         self.get_state_error = get_state_error
@@ -77,6 +83,11 @@ class FakeChannel:
 
     def check(self, selector: str) -> dict:
         self.calls.append((ACTION_CHECK, {"selector": selector}))
+        # Различение кулдаун-форм после or-ожидания (#1205): check по
+        # renewal-селектору отвечает фактом карточки, не формой входа.
+        if "resume-renewal-manual-text" in selector:
+            found = self._present(selector)
+            return {"found": found, "visible": found}
         return {"found": self.login_found, "visible": self.login_found}
 
     def click(self, selector: str, wait_for: dict | None = None, allow_apply: bool = False) -> dict:
@@ -87,6 +98,7 @@ class FakeChannel:
             raise self.click_error
         self._clicked = True
         self.hint_present, self.button_present = self.post_click
+        self.renewal_present = self.post_click_renewal
         return {"clicked": True, "wait": {"met": bool(wait_for)}}
 
     def wait(self, selector: str, state: str, timeout_ms: int) -> bool:
@@ -99,6 +111,11 @@ class FakeChannel:
         return present if state == WAIT_STATE_VISIBLE else not present
 
     def _present(self, selector: str) -> bool:
+        # or-список CSS-запятой (#1205): cooldown-состояние = hint ИЛИ renewal.
+        if "," in selector:
+            return self.hint_present or self.renewal_present
+        if "resume-renewal-manual-text" in selector:
+            return self.renewal_present
         if "resume-update-button-disabled" in selector:
             return self.hint_present
         if "resume-update-button" in selector:
@@ -201,7 +218,38 @@ def test_disabled_hint_means_too_early_without_click() -> None:
 
     assert (result.success, result.acted, result.uncertain) == (False, False, False)
     assert result.reason == "hh.ru сообщает, что поднимать ещё рано"
+    assert result.skipped is True  # #1205: «рано» — skip, не failed
     assert ACTION_CLICK not in _actions(channel)
+
+
+def test_renewal_text_means_too_early_without_click() -> None:
+    """#1205 (чек Г #1203, живой факт 2026-09-21 01:45): карточка в серверном
+    кулдауне hh.ru не содержит ни кнопки, ни hint — только renewal-текст
+    «Поднять в HH:MM». Локальный кулдаун истёк, прежний код падал в «кнопка
+    не найдена» ([FAIL]) там, где честный «рано». Распознавание до попытки
+    клика: skip с указанием на расхождение локального и серверного окон."""
+    channel = FakeChannel(renewal_present=True)
+    result = bump_via_live(channel, _resume(), dry_run=False)
+
+    assert (result.success, result.acted, result.uncertain) == (False, False, False)
+    assert result.skipped is True
+    assert "рано" in result.reason
+    assert "не найдена" not in result.reason
+    assert ACTION_CLICK not in _actions(channel)
+
+
+def test_post_click_renewal_marker_is_success() -> None:
+    """#1205: после реального поднятия hh.ru рендерит renewal-текст (hint не
+    появляется вовсе) — cooldown-маркер or-списка метится, кнопка снята:
+    success, а не «маркеры не подтвердились»."""
+    channel = FakeChannel(post_click=(False, False), post_click_renewal=True)
+    result = bump_via_live(channel, _resume(), dry_run=False)
+
+    assert (result.success, result.acted, result.uncertain) == (True, True, False)
+    assert result.reason == "success"
+    click_call = next(payload for action, payload in channel.calls if action == ACTION_CLICK)
+    # Объявленное post-click условие — or-список обеих форм кулдауна.
+    assert "," in click_call["waitFor"]["selector"]
 
 
 def test_unrendered_list_and_missing_card_are_distinguished() -> None:

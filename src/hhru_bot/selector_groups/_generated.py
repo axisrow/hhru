@@ -140,6 +140,7 @@ VALUES: dict[str, str] = {
     "resume_page.RESUME_ABOUT_NO_EXPERIENCE_REASON": "[data-qa^='resume-editor-about-no-experience-reason-']",
     "resume_page.RESUME_BUMP_BUTTON": "[data-qa~='resume-update-button']",
     "resume_page.RESUME_BUMP_DISABLED_HINT": "[data-qa~='resume-update-button-disabled']",
+    "resume_page.RESUME_BUMP_RENEWAL_TEXT": "[data-qa~='resume-renewal-manual-text']",
     "resume_page.RESUME_CARD_LINK_TEMPLATE": "a[data-qa='resume-card-link-{resume_id}']",
     "resume_page.RESUME_CREATE_BUTTON": "[data-qa='mainmenu_createResume']",
     "resume_page.RESUME_CREATION_CATEGORY_INPUT": "[data-qa~='tree-selector-input-{}']",

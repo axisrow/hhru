@@ -19,6 +19,18 @@ from ._generated import selector as _selector
 # resume-card-link-<resume_id>, кнопка/hint скоплены в её пределы.
 RESUME_BUMP_BUTTON = _selector("resume_page.RESUME_BUMP_BUTTON")
 RESUME_BUMP_DISABLED_HINT = _selector("resume_page.RESUME_BUMP_DISABLED_HINT")
+
+# #1205 (census /applicant/resumes 2026-09-21 01:45, аккаунт testing, чек Г
+# #1203): карточка резюме в СЕРВЕРНОМ кулдауне hh.ru НЕ содержит ни
+# resume-update-button, ни resume-update-button-disabled — вместо них элемент
+# resume-renewal-manual-text с текстом «Поднять в 03:13» (боевой bump ~23:13,
+# 4h окно). Локальный кулдаун при этом истёк — чек Г дошёл до поиска кнопки и
+# получил ложный «кнопка не найдена» там, где честный ответ «рано» от hh.ru.
+# Повторный census 2026-09-21 12:39 (то же состояние карточек после истечения
+# окна): кнопка активна у обеих карточек, renewal-текста нет — гидрация ни при
+# чём. Сырая константа (не _selector()), как STALE_CONTACTS_SYNC_ALERT ниже:
+# значение из собственного живого census, а не reference-каталога.
+RESUME_BUMP_RENEWAL_TEXT = "[data-qa~='resume-renewal-manual-text']"
 RESUME_CARD_LINK_TEMPLATE = _selector("resume_page.RESUME_CARD_LINK_TEMPLATE")
 
 # #1189 (read-only census /applicant/resumes 2026-09-20, аккаунт testing):
