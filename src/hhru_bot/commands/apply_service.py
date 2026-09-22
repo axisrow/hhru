@@ -497,6 +497,28 @@ def _finish_approved_review(
     history.finish_review(approved_id, state)
 
 
+def _print_apply_summary(run_applied: int, start_applied: int, target_limit: int | None) -> None:
+    """Пострезюмная строчка «Итого» (#1212). progress общий на прогон (#441,
+    --limit считается по всем резюме), поэтому пустая секция резюме не имеет
+    права печатать чужой счётчик как свой — боевой прогон 2026-09-22: у qa-2
+    «Итого: 5» при нуле попыток. Общий для обоих маршрутов печати:
+    lazy-paging (:func:`execute_apply_for_resume`) и cards_override/
+    approved (:func:`_execute_apply_wave` с ``show_summary=True``)."""
+    resume_applied = run_applied - start_applied
+    if resume_applied == run_applied:
+        print(f"Итого откликов за этот запуск: {run_applied}")
+        return
+    print(
+        f"Итого откликов по резюме: {resume_applied}; "
+        f"всего за прогон (--limit общий): {run_applied}"
+    )
+    if resume_applied == 0 and target_limit is not None and run_applied >= target_limit:
+        print(
+            f"[INFO] лимит запуска ({target_limit}) уже исчерпан предыдущими "
+            "резюме — этому резюме отклики не доставались (#441: --limit общий)"
+        )
+
+
 def run_apply_for_resume(
     page,
     config: AppConfig,
@@ -595,6 +617,11 @@ def execute_apply_for_resume(
     )
 
     progress = progress or ApplyProgress()
+    # #441: progress общий на прогон (--limit считается по всем резюме), поэтому
+    # для честной пострезюмной строчки «Итого» фиксируем точку отсчёта этого
+    # резюме — иначе пустая секция второго резюме печатает чужой счётчик
+    # (боевой прогон 2026-09-22: у qa-2 «Итого: 5» при нуле попыток).
+    start_applied = progress.applied_count
     failed = False
     page_limit = _apply_search_page_limit_core(params.max_pages, params.limit)
     target_limit = params.limit or None
@@ -664,7 +691,7 @@ def execute_apply_for_resume(
             "--max-pages с большим значением"
         )
     if show_summary:
-        print(f"Итого откликов за этот запуск: {progress.applied_count}")
+        _print_apply_summary(progress.applied_count, start_applied, target_limit)
     return failed
 
 
@@ -884,6 +911,9 @@ def _execute_apply_wave(
         )
 
     applied_count = progress.applied_count if progress is not None else 0
+    # #1212: progress общий на прогон — точка отсчёта этого вызова для честной
+    # пострезюмной строчки «Итого» ниже (cards_override/approved-маршрут).
+    start_applied = applied_count
     for card, _score, _breakdown in plan.ranked:
         if plan.target_limit is not None and applied_count >= plan.target_limit:
             break
@@ -1151,5 +1181,5 @@ def _execute_apply_wave(
             raise ApplyRunStopped(result.reason)
 
     if show_summary:
-        print(f"Итого откликов за этот запуск: {applied_count}")
+        _print_apply_summary(applied_count, start_applied, plan.target_limit)
     return False

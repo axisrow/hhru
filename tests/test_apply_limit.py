@@ -90,6 +90,74 @@ def test_limit_counts_success_after_pre_submit_failure(tmp_path, monkeypatch):
     assert calls == ["0", "1", "2"]
 
 
+def test_summary_distinguishes_resume_and_run_totals(tmp_path, monkeypatch, capsys):
+    # #441: progress общий на прогон — строчка «Итого» под вторым резюме не
+    # имеет права печатать чужой счётчик как свой (боевой прогон 2026-09-22:
+    # у пустой секции qa-2 было «Итого: 5»).
+    from hhru_bot.commands.apply_service import ApplyProgress
+
+    config, resume, history, throttle = _setup(tmp_path)
+    progress = ApplyProgress()
+    args = _args(2)
+    monkeypatch.setattr(apply_service, "search_vacancies", lambda *a, **k: _cards(2))
+    monkeypatch.setattr(apply_service, "resolve_numeric_resume_ids", lambda _page: None)
+    monkeypatch.setattr(Throttle, "wait", lambda *a, **k: None)
+    monkeypatch.setattr(
+        apply_service,
+        "apply_to_vacancy",
+        lambda *a, **k: ApplyResult(a[1], True, "success"),
+    )
+
+    _common.run_apply_for_resume(
+        object(), config, resume, history, throttle, args, progress=progress
+    )
+    first = capsys.readouterr().out
+    assert "Итого откликов за этот запуск: 2" in first
+
+    # Второй резюме в том же прогоне с поднятый лимитом: дельта честная.
+    _common.run_apply_for_resume(
+        object(), config, resume, history, throttle, _args(4), progress=progress
+    )
+    second = capsys.readouterr().out
+    assert "Итого откликов по резюме: 2; всего за прогон (--limit общий): 4" in second
+    assert "Итого откликов за этот запуск: 4" not in second
+
+    # Третий прогон при уже исчерпанном общем лимите: ноль дельта + объяснение.
+    _common.run_apply_for_resume(
+        object(), config, resume, history, throttle, _args(4), progress=progress
+    )
+    third = capsys.readouterr().out
+    assert "Итого откликов по резюме: 0; всего за прогон (--limit общий): 4" in third
+    assert "лимит запуска (4) уже исчерпан предыдущими резюме" in third
+
+
+def test_summary_explains_limit_consumed_by_previous_resume(tmp_path, monkeypatch, capsys):
+    # Пустая секция второго резюме обязана объяснить ПОЧЕМУ пуста:
+    # --limit общий, его съело первое резюме (#441), а не «вакансий нет».
+    from hhru_bot.commands.apply_service import ApplyProgress
+
+    config, resume, history, throttle = _setup(tmp_path)
+    progress = ApplyProgress()
+    progress.applied_count = 2  # как будто первое резюме уже закрыло лимит 2
+    args = _args(2)
+    monkeypatch.setattr(apply_service, "search_vacancies", lambda *a, **k: _cards(1))
+    monkeypatch.setattr(apply_service, "resolve_numeric_resume_ids", lambda _page: None)
+    monkeypatch.setattr(Throttle, "wait", lambda *a, **k: None)
+    monkeypatch.setattr(
+        apply_service,
+        "apply_to_vacancy",
+        lambda *a, **k: ApplyResult(a[1], False, "анкета", skipped=True),
+    )
+
+    _common.run_apply_for_resume(
+        object(), config, resume, history, throttle, args, progress=progress
+    )
+
+    out = capsys.readouterr().out
+    assert "Итого откликов по резюме: 0" in out
+    assert "лимит запуска (2) уже исчерпан предыдущими резюме" in out
+
+
 def test_limit_zero_processes_all_candidates(tmp_path, monkeypatch):
     cards = _cards(3)
     results = [ApplyResult(card, True, "success") for card in cards]

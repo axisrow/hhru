@@ -108,54 +108,68 @@ def run(args: argparse.Namespace) -> bool:
     config = load_config_or_exit(args.config)
     state_file = config.storage_state_file
     if not state_file.exists():
-        print(f"[FAIL] live-browser: файл сессии не найден: {state_file}")
+        print(f"[FAIL] live-browser: файл сессии не найден: {state_file}", flush=True)
         return True
 
     extension_dir = _extension_dir()
     if not (extension_dir / "manifest.json").exists():
         print(
             f"[FAIL] live-browser: расширение не найдено: {extension_dir} "
-            "(команда рассчитана на editable install из корня репозитория)"
+            "(команда рассчитана на editable install из корня репозитория)",
+            flush=True,
         )
         return True
 
     sync_playwright = _sync_playwright()
 
     profile_dir = args.profile_dir.expanduser()
-    state = json.loads(state_file.read_text(encoding="utf-8"))
-    cookies = state["cookies"]
+    # Битый storage_state — честный [FAIL], а не сырой traceback (#1209).
+    try:
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        cookies = state["cookies"]
+        if not isinstance(cookies, list):
+            raise ValueError("cookies не список")
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        print(f"[FAIL] live-browser: не удалось прочитать storage_state: {exc}", flush=True)
+        return True
     with sync_playwright() as p:
         try:
             context = _launch_context(p, profile_dir, args.headless, extension_dir)
         except Exception as exc:  # noqa: BLE001 — профиль занят другим Chrome, нет браузера и т.п.
-            print(f"[FAIL] live-browser: не удалось запустить браузер: {exc}")
+            print(f"[FAIL] live-browser: не удалось запустить браузер: {exc}", flush=True)
             return True
         try:
             # Нативный формат storage_state = контракт add_cookies; переносим
             # сессию внутри Playwright-клиента — hh.ru принимает его (#1206).
             context.add_cookies(cookies)  # type: ignore[arg-type]
         except Exception as exc:  # noqa: BLE001 — битый storage_state дошли бы до гейта ниже
-            print(f"[FAIL] live-browser: не удалось перенести куки сессии: {exc}")
+            print(f"[FAIL] live-browser: не удалось перенести куки сессии: {exc}", flush=True)
             return True
         try:
             page = context.pages[0] if context.pages else context.new_page()
             try:
                 page.goto(args.url, wait_until="domcontentloaded")
             except Exception as exc:  # noqa: BLE001 — обрыв сети (локальный канал, CLAUDE.md) не гасит браузер
-                print(f"[INFO] live-browser: вкладка не открылась ({exc}); браузер работает")
+                print(
+                    f"[INFO] live-browser: вкладка не открылась ({exc}); браузер работает",
+                    flush=True,
+                )
             if "hh.ru" in page.url and not _auth_ok(page):
                 print(
                     f"[FAIL] live-browser: hh.ru не принял сессию (форма входа на {page.url}) "
-                    "— сессия аккаунта недействительна, прогоните login (#1206)"
+                    "— сессия аккаунта недействительна, прогоните login (#1206)",
+                    flush=True,
                 )
                 return True
-            print(f"[INFO] live-browser: профиль {profile_dir}, сессия из {state_file}")
-            print(f"[INFO] вкладка: {page.url}; расширение: {extension_dir}")
-            print("[INFO] Ctrl+C или EOF stdin — остановка")
+            print(f"[INFO] live-browser: профиль {profile_dir}, сессия из {state_file}", flush=True)
+            print(f"[INFO] вкладка: {page.url}; расширение: {extension_dir}", flush=True)
+            # flush обязателен: команда живёт в фоне/под пайпом (чеклист, шаг 0),
+            # блочный буфер делает её немой до самого выхода.
+            print("[INFO] Ctrl+C или EOF stdin — остановка", flush=True)
             sys.stdin.read()  # foreground, как live-serve: EOF/Ctrl+C — остановка
         except KeyboardInterrupt:
             pass
         finally:
             context.close()
-    print("[OK] live-browser остановлен")
+    print("[OK] live-browser остановлен", flush=True)
     return False
