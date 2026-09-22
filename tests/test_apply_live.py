@@ -414,11 +414,11 @@ def test_questions_skip_and_queue_channel_never_answers() -> None:
 
 
 def test_hidden_resume_warning_is_skip_with_human_reason() -> None:
-    # Боевой случай #1214 (testing, 2026-09-23): модалка открылась с требованием
-    # поменять видимость резюме. Вердикт — skip (vacancy не «сгорает»), флаги
-    # чистые (клик по переключателю видимости — мутация, не выполняется никогда),
-    # шаги формы дальше не идут — policy_refused на пикере больше не звучит.
-    channel = FakeFormChannel(hidden_warning=True)
+    # Боевой случай #1214 (testing, 2026-09-23): скрытое резюме недоступно
+    # в пикере формы, warning видимости в DOM. Вердикт — skip (vacancy не
+    # «сгорает»), флаги чистые; клик по переключателю видимости — мутация,
+    # не выполняется никогда.
+    channel = FakeFormChannel(hidden_warning=True, option_present=False)
     result = _run(channel, verify=_verify_of("not_found"))
 
     assert (result.success, result.skipped, result.acted, result.uncertain) == (
@@ -430,32 +430,45 @@ def test_hidden_resume_warning_is_skip_with_human_reason() -> None:
     assert result.skip_reason == SKIP_REASONS.RESUME_VISIBILITY
     assert "видимость" in result.reason and "вручную" in result.reason
     assert "поменяйте видимость резюме" in result.reason
-    # Ни одного клика/заполнения после кнопки отклика: форма не заполняется.
+    # Только клик кнопки отклика и триггера пикера: дальше формы не идём.
     clicks = [payload for action, payload in channel.calls if action == ACTION_CLICK]
-    assert len(clicks) == 1  # только сама кнопка отклика
+    assert len(clicks) == 2
     assert channel.filled_text is None and not channel.submitted
 
 
-def test_warning_absent_leaves_flow_unchanged() -> None:
-    # Элемент warning есть только в блокированных формах (2 дампа 2026-09-09
-    # против ~54 неблокированных) — в обычном flow проверка не мешает: клик по
-    # кнопке отклика → дальше штатные шаги вплоть до submit.
-    channel = FakeFormChannel()
-    result = _run(channel, verify=_verify_of("found"), require_resume_select=False)
+def test_warning_absent_at_failed_selection_keeps_site_verdict() -> None:
+    # Опции нет, но и warning нет: вердикт сайта ("нет в пикере"), не skip.
+    channel = FakeFormChannel(option_present=False)
+    result = _run(channel, verify=_verify_of("not_found"))
+
+    assert (result.success, result.skipped, result.uncertain) == (False, False, False)
+    assert "нет в пикере" in result.reason
+
+
+def test_warning_present_but_selectable_resume_continues() -> None:
+    # Ревью PR #1215 (P1): warning-узел бывает в DOM и при применимой вакансии
+    # (зеркало apply/steps.py) — сам по себе он НЕ терминален. Пока выбор
+    # резюме удаётся, flow продолжается до submit, warning даже не читается.
+    channel = FakeFormChannel(hidden_warning=True)
+    result = _run(channel, verify=_verify_of("found"))
 
     assert result.success
-    # Проверка warning (check) идёт сразу после подтверждения формы, до вопросов.
-    warning_index = next(
-        i
-        for i, (action, payload) in enumerate(channel.calls)
-        if action == ACTION_CHECK and "hidden-resume-warning" in payload["selector"]
+    assert channel.submitted  # flow дошёл до отправки, warning не помешал
+    assert all(
+        "hidden-resume-warning" not in payload["selector"]
+        for action, payload in channel.calls
+        if action == ACTION_CHECK
     )
-    questions_index = next(
-        i
-        for i, (action, payload) in enumerate(channel.calls)
-        if action == ACTION_CHECK and "task-body" in payload["selector"]
-    )
-    assert warning_index < questions_index
+
+
+def test_warning_present_without_picker_is_skip() -> None:
+    # Вторая точка провала выбора: триггера пикера нет вовсе, warning есть —
+    # тот же человеческий skip видимости.
+    channel = FakeFormChannel(picker_present=False, hidden_warning=True)
+    result = _run(channel, verify=_verify_of("not_found"))
+
+    assert (result.skipped, result.acted, result.uncertain) == (True, False, False)
+    assert result.skip_reason == SKIP_REASONS.RESUME_VISIBILITY
 
 
 def test_policy_detail_prints_overlay_text() -> None:
