@@ -522,6 +522,21 @@ def test_hhru_live_executor_apply_modal_overlay_allowed_with_permission():
     assert scenario["noFlagError"] == "policy_refused" and scenario["noFlagReason"] == "apply_step"
 
 
+def test_hhru_live_executor_nested_overlay_family_collapsed_to_topmost():
+    """Боевой факт #1214: одна модалка — семейство вложенных overlay-узлов
+    (outer apply_step, inner ambiguous), клик бьёт по inner. Вердикт снимается
+    по ВЕРХНЕМУ overlay-предку: apply_step наружного понижается allowApply, а
+    safe-inner больше не маскирует dangerous-наружную (прежде ближайший
+    safe-предок позволил бы клик внутри опасной модалки)."""
+    scenario = _run_executor_scenario("click_nested_family_collapsed_to_topmost")
+    assert scenario["allowedContext"] == "apply_flow_overlay"
+    assert scenario["clicked"] is True and scenario["clickedPicker"] is True
+    assert scenario["refusedError"] == "policy_refused"
+    assert scenario["refusedReason"] == "dangerous"
+    assert scenario["refusedOverlayType"] == "modal"
+    assert scenario["clickedInnerOk"] is False
+
+
 def test_hhru_live_executor_click_invisible_target_refused():
     """Действие по невидимому контролю — действие без оснований: отказ до
     policy-гейта, кликов 0."""

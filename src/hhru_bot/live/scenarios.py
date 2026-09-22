@@ -156,6 +156,7 @@ def apply_via_live(
         VACANCY_ALREADY_RESPONDED_AGAIN,
         VACANCY_ALREADY_RESPONDED_CHAT,
         VACANCY_APPLY_BUTTON,
+        VACANCY_HIDDEN_RESUME_WARNING,
     )
 
     resume_id = resume.resume_id
@@ -342,6 +343,28 @@ def apply_via_live(
                     acted=True,
                     uncertain=True,
                 )
+
+        # --- скрытое резюме: warning внутри формы отклика (#1214) -------------
+        # hh.ru рендерит collapsible `[data-qa='hidden-resume-warning']`
+        # («поменяйте видимость резюме на …») ВНУТРИ формы отклика, когда
+        # видимость резюме не даёт откликнуться; в ~54 неблокированных дампах
+        # формы элемента нет, в обоих блокированных (пробники 2026-09-09,
+        # testing) — есть. Свернутость/раскрытость каналу нечитаема
+        # (max-height check_element не отдаёт), поэтому сигнал — сам факт
+        # наличия; цена ложного срабатывания — retryable skip (не fail и не
+        # uncertain), вакансия не «сгорает». Переключатель видимости — мутация
+        # профиля: не кликается никогда, решение за оператором.
+        warning = _read(VACANCY_HIDDEN_RESUME_WARNING)
+        if warning.get("found") or warning.get("visible"):
+            detail = str(warning.get("text") or "").strip()
+            suffix = f": {detail[:120]}" if detail else ""
+            return _result(
+                False,
+                "hh.ru требует публичную видимость резюме — поменяйте видимость "
+                f"вручную, автоматом переключатель не кликается{suffix}",
+                skipped=True,
+                skip_reason=SKIP_REASONS.RESUME_VISIBILITY,
+            )
 
         # --- форма открыта: анкеты → skip в очередь (#482), канал не отвечает -
         questions = _read(str(APPLY_QUESTION_BODY))
@@ -709,6 +732,10 @@ def _policy_detail(policy: object) -> str:
     «policy_refused» — какой шаг, чем именно отказал и в каком оверлее,
     остаётся невыясненным до живой диагностики канала. Текст цели режем:
     census-строка 120 символов достаточна для опознания шага.
+
+    #1214: текст оверлея оператор не видел («overlay=modal/None» — ЧТО
+    блокирует, неизвестно), хотя исполнитель кладёт его в payload всегда
+    (classify() возвращает text ≤500) — печатаем в той же норме 120.
     """
     if not isinstance(policy, dict):
         return ""
@@ -716,6 +743,9 @@ def _policy_detail(policy: object) -> str:
     overlay = policy.get("overlay")
     if isinstance(overlay, dict):
         parts.append(f"overlay={overlay.get('type')}/{overlay.get('disposition')}")
+        overlay_text = str(overlay.get("text") or "").strip()
+        if overlay_text:
+            parts.append(f"текст={overlay_text[:120]}")
     target = policy.get("targetText")
     if isinstance(target, str) and target:
         parts.append(f"цель={target[:120]}")

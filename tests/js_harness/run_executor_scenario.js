@@ -196,6 +196,57 @@ const SCENARIOS = {
     };
   },
 
+  // Боевой факт #1214 (testing, 2026-09-23): одна модалка — СЕМЕЙСТВО вложенных
+  // overlay-узлов (реестр учитывает их раздельно: outer apply_step, inner
+  // ambiguous), клик бьёт по inner. Семейство сворачивается в один оверлей:
+  // вердикт снимается по ВЕРХНЕМУ overlay-предку — apply_step наружного
+  // понижается allowApply (клик по inner проходит как раньше), а опасный
+  // наружный больше не обходится через безопасный внутренний узел.
+  click_nested_family_collapsed_to_topmost: async () => {
+    const picker = el('button', { 'data-qa': 'resume-title' }, 'Резюме');
+    // Внутренний узел-обёртка: modal-класс → overlay-узел, но без apply-якорей
+    // и close-маркеров → ambiguous. Именно на него попадал клик в бою #1214.
+    const inner = el('div', { class: 'modal-inner' }, '');
+    inner.appendChild(picker);
+    const letter = el('textarea', { 'data-qa': 'vacancy-response-popup-form-letter-input' });
+    const form = el('form', { id: 'RESPONSE_MODAL_FORM_ID' });
+    form.appendChild(inner);
+    form.appendChild(letter);
+    const modal = el('div', { class: 'magritte-modal' }, '');
+    modal.appendChild(form);
+    append(modal);
+    const allowed = await send({
+      action: 'click_element',
+      dataQa: 'resume-title',
+      allowApply: true,
+      waitFor: { state: 'visible', dataQa: 'resume-title', timeoutMs: 1000 },
+    });
+    // Обратная сторона свёртки: safe-inner (тост) внутри dangerous-наружной
+    // модалки — раньше ближайший safe-предок маскировал опасность, клик ушёл бы.
+    const safe = el('button', { 'data-qa': 'inner-ok' }, 'OK');
+    const toast = el('div', { class: 'toast-notification' }, 'Готово');
+    toast.appendChild(safe);
+    const danger = el('div', { class: 'modal', role: 'alertdialog' }, 'Подтвердите удаление');
+    danger.appendChild(toast);
+    append(danger);
+    const refused = await send({
+      action: 'click_element',
+      dataQa: 'inner-ok',
+      waitFor: { state: 'hidden', dataQa: 'inner-ok', timeoutMs: 1000 },
+    });
+    return {
+      allowedContext: allowed.result?.policy?.context ?? null,
+      allowedError: allowed.error ?? null,
+      allowedReason: allowed.policy?.reason ?? null,
+      clicked: allowed.result?.clicked ?? null,
+      clickedPicker: env.clicks.includes(picker),
+      refusedError: refused.error ?? null,
+      refusedReason: refused.policy?.reason ?? null,
+      refusedOverlayType: refused.policy?.overlay?.type ?? null,
+      clickedInnerOk: env.clicks.includes(safe),
+    };
+  },
+
   // fill_element (#1162): the letter text lands in the field through the
   // native setter path and is read back; a mismatch is ok:false, never a
   // silent half-filled form.

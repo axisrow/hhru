@@ -12,7 +12,8 @@
 // Policy: EVERY click passes the #929 policy core (policy.js) BEFORE the
 // click happens — danger anchors over the target's own subtree text and
 // aria-labels, apply-flow signals, then the disposition of the overlay the
-// target sits in (nearest overlay ANCESTOR; the target itself is judged by
+// target sits in (the TOPMOST overlay ANCESTOR — the modal family collapsed
+// into one overlay, #1214; the target itself is judged by
 // its content, so clicking an overlay container still scans everything
 // inside it). dangerous / apply_step / ambiguous refuse WITHOUT any click;
 // only a safe context clicks. This file adds no anchors and never widens
@@ -87,14 +88,23 @@ function resolveTargets(params) {
 // the target itself would classify controls by substring luck). html/body
 // are never overlays: same guard as reportIfNewlyVisible, because hh.ru
 // marks cookie state with classes on <body>.
+//
+// #1214 (боевой прогон testing 2026-09-23): одна модалка — СЕМЕЙСТВО вложенных
+// overlay-узлов (реестр учитывает их раздельно: outer apply_step, inner
+// ambiguous), и клик бьёт по inner. Семейство сворачивается в один оверлей —
+// вердикт снимается по ВЕРХНЕМУ overlay-предку: apply_step формы отклика
+// снаружи понижается allowApply как раньше, а опасный/ambiguous наружный
+// больше не обходится через безопасный внутренний узел (раньше ближайший
+// safe-предок маскировал dangerous-модалку вокруг него).
 function findOverlayContext(node) {
   let current = node.parentNode;
+  let topmost = null;
   while (current && typeof current.matches === 'function') {
     if (current !== document.documentElement && current !== document.body
-      && OVERLAY_SELECTORS.some((selector) => current.matches(selector))) return current;
+      && OVERLAY_SELECTORS.some((selector) => current.matches(selector))) topmost = current;
     current = current.parentNode;
   }
-  return null;
+  return topmost;
 }
 
 // The #929 policy core applied to a click target. Same fail-closed priority
