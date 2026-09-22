@@ -595,6 +595,11 @@ def execute_apply_for_resume(
     )
 
     progress = progress or ApplyProgress()
+    # #441: progress общий на прогон (--limit считается по всем резюме), поэтому
+    # для честной пострезюмной строчки «Итого» фиксируем точку отсчёта этого
+    # резюме — иначе пустая секция второго резюме печатает чужой счётчик
+    # (боевой прогон 2026-09-22: у qa-2 «Итого: 5» при нуле попыток).
+    start_applied = progress.applied_count
     failed = False
     page_limit = _apply_search_page_limit_core(params.max_pages, params.limit)
     target_limit = params.limit or None
@@ -664,7 +669,20 @@ def execute_apply_for_resume(
             "--max-pages с большим значением"
         )
     if show_summary:
-        print(f"Итого откликов за этот запуск: {progress.applied_count}")
+        run_applied = progress.applied_count
+        resume_applied = run_applied - start_applied
+        if resume_applied == run_applied:
+            print(f"Итого откликов за этот запуск: {run_applied}")
+        else:
+            print(
+                f"Итого откликов по резюме: {resume_applied}; "
+                f"всего за прогон (--limit общий): {run_applied}"
+            )
+        if resume_applied == 0 and target_limit is not None and run_applied >= target_limit:
+            print(
+                f"[INFO] лимит запуска ({target_limit}) уже исчерпан предыдущими "
+                "резюме — этому резюме отклики не доставались (#441: --limit общий)"
+            )
     return failed
 
 
