@@ -34,9 +34,9 @@ def _extension_dir() -> Path:
 def _launch_args(extension_dir: Path) -> list[str]:
     return [
         f"--load-extension={extension_dir}",
-        # Без except-флага Playwright сам добавляет --disable-extensions, и
-        # расширение молча не стартует (живой факт #1209): except-переключатель
-        # отключает этот автозапрет.
+        # Отсекает расширения профиля — грузится только hhru-live. Автозапрет
+        # Playwright (--disable-extensions в дефолтных свитчах) этот флаг НЕ
+        # подавляет — он гасится ignore_default_args в _launch_context.
         f"--disable-extensions-except={extension_dir}",
         # Chrome 137+ режет --load-extension в branded-сборках; CfT держит
         # переключатель за фичей — как в scripts/run_extension_chrome.sh.
@@ -66,6 +66,12 @@ def _launch_context(p: Any, profile_dir: Path, headless: bool, extension_dir: Pa
         str(profile_dir),
         headless=headless,
         args=_launch_args(extension_dir),
+        # Playwright (1.59, chromiumSwitches.js) кладёт --disable-extensions
+        # в дефолтные свитчи БЕЗУСЛОВНО — except-флаг в args его не подавляет.
+        # Живой прогон 2026-09-22: Chromium-1217 грузил расширение и с обоими
+        # флагами (приоритет у except), гасим дефолт явно — поведение не
+        # должно зависеть от приоритета двух флагов внутри Chrome.
+        ignore_default_args=["--disable-extensions"],
     )
 
 

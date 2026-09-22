@@ -247,6 +247,27 @@ def test_launch_args_carry_extension_switches():
     ext = Path("/repo/extensions/hhru-live")
     args = live_browser_cmd._launch_args(ext)
     assert f"--load-extension={ext}" in args
-    # Без except-флага Playwright добавляет --disable-extensions (#1209).
+    # Отсекает расширения профиля — грузится только hhru-live.
     assert f"--disable-extensions-except={ext}" in args
     assert "--disable-features=DisableLoadExtensionCommandLineSwitch" in args
+
+
+def test_launch_context_suppresses_default_disable_extensions():
+    # Playwright 1.59 добавляет --disable-extensions безусловно
+    # (chromiumSwitches.js) — гасим явно, поведение не зависит от
+    # приоритета флагов внутри Chrome (живая верификация 2026-09-22).
+    seen: dict = {}
+
+    class _FakeChromium:
+        def launch_persistent_context(self, user_data_dir, **kwargs):
+            seen["user_data_dir"] = user_data_dir
+            seen.update(kwargs)
+
+    class _FakeP:
+        chromium = _FakeChromium()
+
+    live_browser_cmd._launch_context(_FakeP(), Path("/tmp/prof"), True, Path("/repo/ext"))
+    assert seen["user_data_dir"] == "/tmp/prof"
+    assert seen["headless"] is True
+    assert seen["ignore_default_args"] == ["--disable-extensions"]
+    assert any(a.startswith("--load-extension=") for a in seen["args"])
