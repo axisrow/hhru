@@ -204,14 +204,21 @@ def test_run_fails_cleanly_on_malformed_storage_state(tmp_path, monkeypatch, cap
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("{not json", encoding="utf-8")
 
+    monkeypatch.setattr(live_browser_cmd, "_sync_playwright", lambda: None)
+    launched: dict[str, bool] = {}
+
     def fail_launch(*_a, **_kw):
-        raise AssertionError("битый storage_state — браузер не запускать")
+        # Страж через флаг, а не AssertionError: run() глотает Exception
+        # вокруг _launch_context, исключение здесь тест не провалило бы.
+        launched["called"] = True
+        raise RuntimeError("битый storage_state — браузер не запускать")
 
     monkeypatch.setattr(live_browser_cmd, "_launch_context", fail_launch)
 
     failed = live_browser_cmd.run(_args(tmp_path))
 
     assert failed is True
+    assert "called" not in launched
     out = capsys.readouterr().out
     assert "[FAIL]" in out
     assert "storage_state" in out

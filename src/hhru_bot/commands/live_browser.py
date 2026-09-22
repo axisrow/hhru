@@ -108,14 +108,15 @@ def run(args: argparse.Namespace) -> bool:
     config = load_config_or_exit(args.config)
     state_file = config.storage_state_file
     if not state_file.exists():
-        print(f"[FAIL] live-browser: файл сессии не найден: {state_file}")
+        print(f"[FAIL] live-browser: файл сессии не найден: {state_file}", flush=True)
         return True
 
     extension_dir = _extension_dir()
     if not (extension_dir / "manifest.json").exists():
         print(
             f"[FAIL] live-browser: расширение не найдено: {extension_dir} "
-            "(команда рассчитана на editable install из корня репозитория)"
+            "(команда рассчитана на editable install из корня репозитория)",
+            flush=True,
         )
         return True
 
