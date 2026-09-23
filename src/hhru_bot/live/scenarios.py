@@ -245,6 +245,88 @@ def apply_via_live(
         except ChannelError as exc:
             raise _ScenarioInterrupted(f"канал: {exc}") from exc
 
+    def _visibility_skip_if_warned():
+        """Skip, если на форме висит warning скрытого резюме (#1214).
+
+        Определяется РЯДОМ С ОБЁРТКАМИ примитивов, а не в секции формы:
+        policy_refused внутри модалки видимости приходит из шагов, которые
+        исполняются до секции формы (боевой случай 2026-09-23 — отказ клика
+        в модалке до Lines-пикера), и обработчики отказов зовут этот хелпер
+        из любой точки сценария. Warning — ОБЪЯСНЕНИЕ неудавшегося выбора
+        резюме, не терминальный признак (ревью PR #1215; зеркало
+        apply/steps.py); терминален только провал выбора. Селектор из
+        живых дампов probe testing 2026-09-09.
+        """
+        warning = _read(VACANCY_HIDDEN_RESUME_WARNING)
+        if not (warning.get("found") or warning.get("visible")):
+            return None
+        # #1218: модалка видимости поверх формы закрывается close'ом
+        # safe-overlay — одна попытка; warning исчез → штатный флоу
+        # продолжается (пикер выберет публичное резюме), остался →
+        # честный skip ниже.
+        if _dismiss_visibility_overlay_once():
+            warning = _read(VACANCY_HIDDEN_RESUME_WARNING)
+            if not (warning.get("found") or warning.get("visible")):
+                return None
+        detail = str(warning.get("text") or "").strip()
+        suffix = f": {detail[:120]}" if detail else ""
+        return _result(
+            False,
+            "hh.ru требует публичную видимость резюме — поменяйте видимость "
+            f"вручную, автоматом переключатель не кликается{suffix}",
+            skipped=True,
+            skip_reason=SKIP_REASONS.RESUME_VISIBILITY,
+        )
+
+    def _dismiss_visibility_overlay_once() -> bool:
+        """Одна попытка закрыть safe-overlay «поменяйте видимость» (#1218).
+
+        Цель — ровно один overlay из list_overlays: census-текст содержит
+        маркер модалки, disposition == "safe" И есть close-контролы
+        (боевой census 2026-09-23: outer-узел safe с 2 close-контролами;
+        inner ambiguous-узел dismiss'у не подлежит — не трогаем). Жёсткий
+        гейт всё равно у исполнителя: он re-классифицирует overlay в
+        момент клика и кликает только close-контрол — переключатель
+        видимости (мутация профиля) не нажимается ни этим сценарием, ни
+        каналом.
+
+        True — попытка dismiss'а СОСТОЯЛАСЬ: вызывающий код перечитывает
+        warning и решает (исчез → флоу продолжается, остался → честный
+        skip #1216). Отказ самого dismiss_overlay — тоже сделанная
+        попытка: response_lost (#176-семантика) означает, что close-клик
+        мог уйти и модалка могла закрыться — решает перечитка warning'а
+        (read-only check бесплатен), а не классификация отказа (ревью
+        #1219); refused-отказы (overlay_not_found/not_safe/no_close_
+        control) проходят тот же путь безвредно — warning остался бы.
+        False — попытки не было (overlay не перечислен / не safe / без
+        close-контролов / канал не отвечает на list_overlays): skip
+        #1216 без изменений; повторных попыток нет.
+
+        Определён РЯДОМ С _visibility_skip_if_warned ДО try: probe зовётся
+        из обработчика отказов, достижимого до секции формы, — def внутри
+        try давал бы NameError мимо best-effort except (ревью PR #1216,
+        round 2).
+        """
+        try:
+            overlays = channel.list_overlays()
+        except (ChannelError, PrimitiveError):
+            return False
+        target = None
+        for overlay in overlays or []:
+            if VISIBILITY_MODAL_TEXT_MARKER not in str(overlay.get("text") or ""):
+                continue
+            if overlay.get("disposition") != "safe" or not overlay.get("closeControls"):
+                continue
+            target = overlay
+            break
+        if target is None:
+            return False
+        try:
+            channel.dismiss_overlay(str(target["id"]))
+        except (ChannelError, PrimitiveError):
+            pass  # попытка сделана: решит перечитка warning'а, не классификация отказа
+        return True
+
     def _grey_zone(reason: str, *, acted: bool, uncertain: bool):
         """Финализация fail-исхода ПОСЛЕ клика по кнопке отклика (#207).
 
@@ -352,77 +434,6 @@ def apply_via_live(
                 )
 
         # --- форма открыта: анкеты → skip в очередь (#482), канал не отвечает -
-        def _dismiss_visibility_overlay_once() -> bool:
-            """Одна попытка закрыть safe-overlay «поменяйте видимость» (#1218).
-
-            Цель — ровно один overlay из list_overlays: census-текст содержит
-            маркер модалки, disposition == "safe" И есть close-контролы
-            (боевой census 2026-09-23: outer-узел safe с 2 close-контролами;
-            inner ambiguous-узел dismiss'у не подлежит — не трогаем). Жёсткий
-            гейт всё равно у исполнителя: он re-классифицирует overlay в
-            момент клика и кликает только close-контрол — переключатель
-            видимости (мутация профиля) не нажимается ни этим сценарием, ни
-            каналом.
-
-            True — попытка dismiss'а СОСТОЯЛАСЬ: вызывающий код перечитывает
-            warning и решает (исчез → флоу продолжается, остался → честный
-            skip #1216). Отказ самого dismiss_overlay — тоже сделанная
-            попытка: response_lost (#176-семантика) означает, что close-клик
-            мог уйти и модалка могла закрыться — решает перечитка warning'а
-            (read-only check бесплатен), а не классификация отказа (ревью
-            #1219); refused-отказы (overlay_not_found/not_safe/no_close_
-            control) проходят тот же путь безвредно — warning остался бы.
-            False — попытки не было (overlay не перечислен / не safe / без
-            close-контролов / канал не отвечает на list_overlays): skip
-            #1216 без изменений; повторных попыток нет.
-            """
-            try:
-                overlays = channel.list_overlays()
-            except (ChannelError, PrimitiveError):
-                return False
-            target = None
-            for overlay in overlays or []:
-                if VISIBILITY_MODAL_TEXT_MARKER not in str(overlay.get("text") or ""):
-                    continue
-                if overlay.get("disposition") != "safe" or not overlay.get("closeControls"):
-                    continue
-                target = overlay
-                break
-            if target is None:
-                return False
-            try:
-                channel.dismiss_overlay(str(target["id"]))
-            except (ChannelError, PrimitiveError):
-                pass  # попытка сделана: решит перечитка warning'а, не классификация отказа
-            return True
-
-        def _visibility_skip_if_warned():
-            # Warning видимости — ОБЪЯСНЕНИЕ неудавшегося выбора резюме, не
-            # терминальный признак (ревью PR #1215; зеркало apply/steps.py:
-            # узел бывает в DOM свёрнутым и при применимой вакансии — терми-
-            # нальным его делает только провал выбора). Селектор из живых
-            # дампов probe testing 2026-09-09; текст требования — оператору.
-            warning = _read(VACANCY_HIDDEN_RESUME_WARNING)
-            if not (warning.get("found") or warning.get("visible")):
-                return None
-            # #1218: модалка видимости поверх формы закрывается close'ом
-            # safe-overlay — одна попытка; warning исчез → штатный флоу
-            # продолжается (пикер выберет публичное резюме), остался →
-            # честный skip ниже.
-            if _dismiss_visibility_overlay_once():
-                warning = _read(VACANCY_HIDDEN_RESUME_WARNING)
-                if not (warning.get("found") or warning.get("visible")):
-                    return None
-            detail = str(warning.get("text") or "").strip()
-            suffix = f": {detail[:120]}" if detail else ""
-            return _result(
-                False,
-                "hh.ru требует публичную видимость резюме — поменяйте видимость "
-                f"вручную, автоматом переключатель не кликается{suffix}",
-                skipped=True,
-                skip_reason=SKIP_REASONS.RESUME_VISIBILITY,
-            )
-
         questions = _read(str(APPLY_QUESTION_BODY))
         if questions.get("found") or (questions.get("matchCount") or 0) > 0:
             # Осознанное ограничение: check_element отдаёт census ОДНОГО
@@ -563,13 +574,29 @@ def apply_via_live(
             },
         )
     except _ScenarioInterrupted as exc:
+        # Forwarded/канальный отказ: после submit-клика нельзя знать, дошёл
+        # ли отклик (#176) — решает только внешний источник серой зоны.
+        # Warning здесь не читается и в skip не переводит: policy_refused
+        # структурно не-forwarded и приходит в _RefusedBeforeAction (ревью
+        # PR #1216), а warning-узел бывает свёрнутым и при применимой
+        # вакансии (#1215) — призрачный skip замаскировал бы ушедший отклик.
         if not grey_zone:
             # Чтение/клик не состоялись ДО кнопки отклика — на hh.ru следа нет.
             return _result(False, str(exc))
-        # Отказ ПОСЛЕ клика (обрыв/таймаут/полная навигация): отправка могла
-        # состояться на любом шаге — решает внешний источник (#176).
         return _grey_zone(str(exc), acted=True, uncertain=True)
     except _RefusedBeforeAction as exc:
+        # Бой 2026-09-23 (#1214): не-forwarded policy_refused на шаге в
+        # модалке видимости приходит СЮДА — «действия не было», warning
+        # честно объясняет отказ. Probe best-effort (ревью PR #1216):
+        # отказ чтения warning'а (мёртвый канал) не должен выйти из
+        # apply_via_live исключением — исключение из except-блока соседними
+        # ветками не ловится; решает прежний вердикт.
+        try:
+            blocked = _visibility_skip_if_warned()
+        except (_ScenarioInterrupted, _RefusedBeforeAction):
+            blocked = None
+        if blocked:
+            return blocked
         if not grey_zone:
             return _result(False, f"клик по кнопке отклика не выполнен: {exc}")
         # Отказ исполнителя до конкретного клика: мутации не было (как у
