@@ -569,22 +569,28 @@ def apply_via_live(
             },
         )
     except _ScenarioInterrupted as exc:
-        # Бой 2026-09-23 (#1214): policy_refused на шаге ВНУТРИ модалки
-        # видимости доходит сюда раньше чекпоинтов пикера — warning на
-        # форме переводит отказ в честный skip (клик переключателя
-        # видимости — мутация профиля, не выполняется никогда).
-        if blocked := _visibility_skip_if_warned():
-            return blocked
+        # Forwarded/канальный отказ: после submit-клика нельзя знать, дошёл
+        # ли отклик (#176) — решает только внешний источник серой зоны.
+        # Warning здесь не читается и в skip не переводит: policy_refused
+        # структурно не-forwarded и приходит в _RefusedBeforeAction (ревью
+        # PR #1216), а warning-узел бывает свёрнутым и при применимой
+        # вакансии (#1215) — призрачный skip замаскировал бы ушедший отклик.
         if not grey_zone:
             # Чтение/клик не состоялись ДО кнопки отклика — на hh.ru следа нет.
             return _result(False, str(exc))
-        # Отказ ПОСЛЕ клика (обрыв/таймаут/полная навигация): отправка могла
-        # состояться на любом шаге — решает внешний источник (#176).
         return _grey_zone(str(exc), acted=True, uncertain=True)
     except _RefusedBeforeAction as exc:
-        # Тот же бой (#1214): policy_refused (не-forwarded) на шаге в модалке
-        # видимости приходит СЮДА — warning на форме превращает отказ в skip.
-        if blocked := _visibility_skip_if_warned():
+        # Бой 2026-09-23 (#1214): не-forwarded policy_refused на шаге в
+        # модалке видимости приходит СЮДА — «действия не было», warning
+        # честно объясняет отказ. Probe best-effort (ревью PR #1216):
+        # отказ чтения warning'а (мёртвый канал) не должен выйти из
+        # apply_via_live исключением — исключение из except-блока соседними
+        # ветками не ловится; решает прежний вердикт.
+        try:
+            blocked = _visibility_skip_if_warned()
+        except (_ScenarioInterrupted, _RefusedBeforeAction):
+            blocked = None
+        if blocked:
             return blocked
         if not grey_zone:
             return _result(False, f"клик по кнопке отклика не выполнен: {exc}")
