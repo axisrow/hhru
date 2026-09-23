@@ -94,6 +94,7 @@ class FakeFormChannel:
         submit_click_error: PrimitiveError | None = None,
         fill_error: PrimitiveError | None = None,
         warning_check_error: PrimitiveError | None = None,
+        warning_needs_form: bool = True,
         overlays: list[dict] | None = None,
         dismiss_error: PrimitiveError | None = None,
         dismiss_lost_effect: bool = False,
@@ -118,6 +119,9 @@ class FakeFormChannel:
         self.submit_click_error = submit_click_error
         self.fill_error = fill_error
         self.warning_check_error = warning_check_error
+        # False = warning-узел в DOM и до открытия формы (#1215: свёрнутый
+        # узел бывает и при применимой вакансии).
+        self.warning_needs_form = warning_needs_form
         self.overlays = list(overlays or [])
         self.dismiss_error = dismiss_error
         # response_lost (#176): ответ потерян, но close-клик мог уйти —
@@ -257,7 +261,7 @@ class FakeFormChannel:
             # #1214: collapsible внутри формы отклика; census-текст — требование
             # hh.ru поменять видимость (как в боевых дампах 2026-09-09).
             return (
-                self.hidden_warning and self._form_open(),
+                self.hidden_warning and (self._form_open() or not self.warning_needs_form),
                 "поменяйте видимость резюме на «Видно всем работодателям»",
                 1 if self.hidden_warning else 0,
             )
@@ -738,6 +742,29 @@ def test_warning_probe_failure_degrades_to_site_verdict(probe_error: PrimitiveEr
     )
     assert "шаг формы не выполнен" in result.reason
     assert not channel.submitted
+
+
+def test_warning_before_form_open_gets_honest_skip_not_crash() -> None:
+    # Ревью PR #1216 round 2: warning-узел бывает в DOM и ДО открытия формы
+    # (#1215 — свёрнутый узел при применимой вакансии). Не-forwarded отказ
+    # клика кнопки отклика при таком узле не должен поднимать NameError из
+    # ещё не исполненного def dismiss-хелпера — probe best-effort находит
+    # warning и возвращает честный skip, флаги чистые.
+    channel = FakeFormChannel(
+        hidden_warning=True,
+        warning_needs_form=False,
+        apply_click_error=PrimitiveError("policy_refused", "dangerous", forwarded=False),
+    )
+    result = _run(channel, verify=_verify_of("not_found"))
+
+    assert (result.success, result.skipped, result.acted, result.uncertain) == (
+        False,
+        True,
+        False,
+        False,
+    )
+    assert result.skip_reason == SKIP_REASONS.RESUME_VISIBILITY
+    assert channel.dismissed_ids == []
 
 
 def test_policy_detail_prints_overlay_text() -> None:

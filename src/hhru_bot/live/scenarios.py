@@ -278,6 +278,55 @@ def apply_via_live(
             skip_reason=SKIP_REASONS.RESUME_VISIBILITY,
         )
 
+    def _dismiss_visibility_overlay_once() -> bool:
+        """Одна попытка закрыть safe-overlay «поменяйте видимость» (#1218).
+
+        Цель — ровно один overlay из list_overlays: census-текст содержит
+        маркер модалки, disposition == "safe" И есть close-контролы
+        (боевой census 2026-09-23: outer-узел safe с 2 close-контролами;
+        inner ambiguous-узел dismiss'у не подлежит — не трогаем). Жёсткий
+        гейт всё равно у исполнителя: он re-классифицирует overlay в
+        момент клика и кликает только close-контрол — переключатель
+        видимости (мутация профиля) не нажимается ни этим сценарием, ни
+        каналом.
+
+        True — попытка dismiss'а СОСТОЯЛАСЬ: вызывающий код перечитывает
+        warning и решает (исчез → флоу продолжается, остался → честный
+        skip #1216). Отказ самого dismiss_overlay — тоже сделанная
+        попытка: response_lost (#176-семантика) означает, что close-клик
+        мог уйти и модалка могла закрыться — решает перечитка warning'а
+        (read-only check бесплатен), а не классификация отказа (ревью
+        #1219); refused-отказы (overlay_not_found/not_safe/no_close_
+        control) проходят тот же путь безвредно — warning остался бы.
+        False — попытки не было (overlay не перечислен / не safe / без
+        close-контролов / канал не отвечает на list_overlays): skip
+        #1216 без изменений; повторных попыток нет.
+
+        Определён РЯДОМ С _visibility_skip_if_warned ДО try: probe зовётся
+        из обработчика отказов, достижимого до секции формы, — def внутри
+        try давал бы NameError мимо best-effort except (ревью PR #1216,
+        round 2).
+        """
+        try:
+            overlays = channel.list_overlays()
+        except (ChannelError, PrimitiveError):
+            return False
+        target = None
+        for overlay in overlays or []:
+            if VISIBILITY_MODAL_TEXT_MARKER not in str(overlay.get("text") or ""):
+                continue
+            if overlay.get("disposition") != "safe" or not overlay.get("closeControls"):
+                continue
+            target = overlay
+            break
+        if target is None:
+            return False
+        try:
+            channel.dismiss_overlay(str(target["id"]))
+        except (ChannelError, PrimitiveError):
+            pass  # попытка сделана: решит перечитка warning'а, не классификация отказа
+        return True
+
     def _grey_zone(reason: str, *, acted: bool, uncertain: bool):
         """Финализация fail-исхода ПОСЛЕ клика по кнопке отклика (#207).
 
@@ -385,50 +434,6 @@ def apply_via_live(
                 )
 
         # --- форма открыта: анкеты → skip в очередь (#482), канал не отвечает -
-        def _dismiss_visibility_overlay_once() -> bool:
-            """Одна попытка закрыть safe-overlay «поменяйте видимость» (#1218).
-
-            Цель — ровно один overlay из list_overlays: census-текст содержит
-            маркер модалки, disposition == "safe" И есть close-контролы
-            (боевой census 2026-09-23: outer-узел safe с 2 close-контролами;
-            inner ambiguous-узел dismiss'у не подлежит — не трогаем). Жёсткий
-            гейт всё равно у исполнителя: он re-классифицирует overlay в
-            момент клика и кликает только close-контрол — переключатель
-            видимости (мутация профиля) не нажимается ни этим сценарием, ни
-            каналом.
-
-            True — попытка dismiss'а СОСТОЯЛАСЬ: вызывающий код перечитывает
-            warning и решает (исчез → флоу продолжается, остался → честный
-            skip #1216). Отказ самого dismiss_overlay — тоже сделанная
-            попытка: response_lost (#176-семантика) означает, что close-клик
-            мог уйти и модалка могла закрыться — решает перечитка warning'а
-            (read-only check бесплатен), а не классификация отказа (ревью
-            #1219); refused-отказы (overlay_not_found/not_safe/no_close_
-            control) проходят тот же путь безвредно — warning остался бы.
-            False — попытки не было (overlay не перечислен / не safe / без
-            close-контролов / канал не отвечает на list_overlays): skip
-            #1216 без изменений; повторных попыток нет.
-            """
-            try:
-                overlays = channel.list_overlays()
-            except (ChannelError, PrimitiveError):
-                return False
-            target = None
-            for overlay in overlays or []:
-                if VISIBILITY_MODAL_TEXT_MARKER not in str(overlay.get("text") or ""):
-                    continue
-                if overlay.get("disposition") != "safe" or not overlay.get("closeControls"):
-                    continue
-                target = overlay
-                break
-            if target is None:
-                return False
-            try:
-                channel.dismiss_overlay(str(target["id"]))
-            except (ChannelError, PrimitiveError):
-                pass  # попытка сделана: решит перечитка warning'а, не классификация отказа
-            return True
-
         questions = _read(str(APPLY_QUESTION_BODY))
         if questions.get("found") or (questions.get("matchCount") or 0) > 0:
             # Осознанное ограничение: check_element отдаёт census ОДНОГО
