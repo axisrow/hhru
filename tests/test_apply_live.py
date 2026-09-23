@@ -66,6 +66,7 @@ class FakeFormChannel:
         page_form: bool = False,
         question_count: int = 0,
         question_text: str = "Ваш опыт с LLM?",
+        hidden_warning: bool = False,
         picker_present: bool = True,
         option_present: bool = True,
         option_click_lost: bool = False,
@@ -86,6 +87,7 @@ class FakeFormChannel:
         self.page_form = page_form
         self.question_count = question_count
         self.question_text = question_text
+        self.hidden_warning = hidden_warning
         self.picker_present = picker_present
         self.option_present = option_present
         self.panel_closes = panel_closes
@@ -186,6 +188,14 @@ class FakeFormChannel:
                 bool(self.question_count) and self._form_open(),
                 self.question_text,
                 self.question_count,
+            )
+        if "hidden-resume-warning" in selector:
+            # #1214: collapsible внутри формы отклика; census-текст — требование
+            # hh.ru поменять видимость (как в боевых дампах 2026-09-09).
+            return (
+                self.hidden_warning and self._form_open(),
+                "поменяйте видимость резюме на «Видно всем работодателям»",
+                1 if self.hidden_warning else 0,
             )
         if "resume-title" in selector:
             return self.picker_present and self._form_open(), "", 1
@@ -401,6 +411,84 @@ def test_questions_skip_and_queue_channel_never_answers() -> None:
     assert result.question_texts == ["Ваш опыт с LLM?"]
     assert channel.filled_text is None and not channel.submitted
     assert "вопросы в очередь" in result.reason
+
+
+def test_hidden_resume_warning_is_skip_with_human_reason() -> None:
+    # Боевой случай #1214 (testing, 2026-09-23): скрытое резюме недоступно
+    # в пикере формы, warning видимости в DOM. Вердикт — skip (vacancy не
+    # «сгорает»), флаги чистые; клик по переключателю видимости — мутация,
+    # не выполняется никогда.
+    channel = FakeFormChannel(hidden_warning=True, option_present=False)
+    result = _run(channel, verify=_verify_of("not_found"))
+
+    assert (result.success, result.skipped, result.acted, result.uncertain) == (
+        False,
+        True,
+        False,
+        False,
+    )
+    assert result.skip_reason == SKIP_REASONS.RESUME_VISIBILITY
+    assert "видимость" in result.reason and "вручную" in result.reason
+    assert "поменяйте видимость резюме" in result.reason
+    # Только клик кнопки отклика и триггера пикера: дальше формы не идём.
+    clicks = [payload for action, payload in channel.calls if action == ACTION_CLICK]
+    assert len(clicks) == 2
+    assert channel.filled_text is None and not channel.submitted
+
+
+def test_warning_absent_at_failed_selection_keeps_site_verdict() -> None:
+    # Опции нет, но и warning нет: вердикт сайта ("нет в пикере"), не skip.
+    channel = FakeFormChannel(option_present=False)
+    result = _run(channel, verify=_verify_of("not_found"))
+
+    assert (result.success, result.skipped, result.uncertain) == (False, False, False)
+    assert "нет в пикере" in result.reason
+
+
+def test_warning_present_but_selectable_resume_continues() -> None:
+    # Ревью PR #1215 (P1): warning-узел бывает в DOM и при применимой вакансии
+    # (зеркало apply/steps.py) — сам по себе он НЕ терминален. Пока выбор
+    # резюме удаётся, flow продолжается до submit, warning даже не читается.
+    channel = FakeFormChannel(hidden_warning=True)
+    result = _run(channel, verify=_verify_of("found"))
+
+    assert result.success
+    assert channel.submitted  # flow дошёл до отправки, warning не помешал
+    assert all(
+        "hidden-resume-warning" not in payload["selector"]
+        for action, payload in channel.calls
+        if action == ACTION_CHECK
+    )
+
+
+def test_warning_present_without_picker_is_skip() -> None:
+    # Вторая точка провала выбора: триггера пикера нет вовсе, warning есть —
+    # тот же человеческий skip видимости.
+    channel = FakeFormChannel(picker_present=False, hidden_warning=True)
+    result = _run(channel, verify=_verify_of("not_found"))
+
+    assert (result.skipped, result.acted, result.uncertain) == (True, False, False)
+    assert result.skip_reason == SKIP_REASONS.RESUME_VISIBILITY
+
+
+def test_policy_detail_prints_overlay_text() -> None:
+    # #1214 DX: текст оверлея уже приходит в policy-payload (classify кладёт
+    # text ≤500), но печатался только type/disposition — оператор не видел
+    # ЧТО его блокирует.
+    from hhru_bot.live.scenarios import _policy_detail
+
+    detail = _policy_detail(
+        {
+            "reason": "ambiguous",
+            "overlay": {
+                "type": "modal",
+                "disposition": None,
+                "text": "Чтобы откликнуться на эту вакансию, поменяйте видимость резюме на «Видно всем работодателям»",
+            },
+        }
+    )
+    assert "ambiguous" in detail and "overlay=modal/None" in detail
+    assert "поменяйте видимость резюме" in detail
 
 
 def test_picker_option_missing_blocks_submit() -> None:

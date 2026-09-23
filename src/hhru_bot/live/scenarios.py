@@ -156,6 +156,7 @@ def apply_via_live(
         VACANCY_ALREADY_RESPONDED_AGAIN,
         VACANCY_ALREADY_RESPONDED_CHAT,
         VACANCY_APPLY_BUTTON,
+        VACANCY_HIDDEN_RESUME_WARNING,
     )
 
     resume_id = resume.resume_id
@@ -344,6 +345,25 @@ def apply_via_live(
                 )
 
         # --- форма открыта: анкеты → skip в очередь (#482), канал не отвечает -
+        def _visibility_skip_if_warned():
+            # Warning видимости — ОБЪЯСНЕНИЕ неудавшегося выбора резюме, не
+            # терминальный признак (ревью PR #1215; зеркало apply/steps.py:
+            # узел бывает в DOM свёрнутым и при применимой вакансии — терми-
+            # нальным его делает только провал выбора). Селектор из живых
+            # дампов probe testing 2026-09-09; текст требования — оператору.
+            warning = _read(VACANCY_HIDDEN_RESUME_WARNING)
+            if not (warning.get("found") or warning.get("visible")):
+                return None
+            detail = str(warning.get("text") or "").strip()
+            suffix = f": {detail[:120]}" if detail else ""
+            return _result(
+                False,
+                "hh.ru требует публичную видимость резюме — поменяйте видимость "
+                f"вручную, автоматом переключатель не кликается{suffix}",
+                skipped=True,
+                skip_reason=SKIP_REASONS.RESUME_VISIBILITY,
+            )
+
         questions = _read(str(APPLY_QUESTION_BODY))
         if questions.get("found") or (questions.get("matchCount") or 0) > 0:
             # Осознанное ограничение: check_element отдаёт census ОДНОГО
@@ -375,6 +395,8 @@ def apply_via_live(
             # резюме (11/11 боевых фактов #1144).
             selected = f"{option}[aria-selected='true']"
             if not _read(trigger).get("found"):
+                if blocked := _visibility_skip_if_warned():
+                    return blocked
                 return _grey_zone(
                     "пикер резюме не найден: подтверждённо приложить нужное резюме "
                     "невозможно — отправка запрещена",
@@ -389,6 +411,8 @@ def apply_via_live(
             if not _click(trigger, panel_open):
                 return _grey_zone("панель выбора резюме не открылась", acted=False, uncertain=False)
             if not _read(option).get("found"):
+                if blocked := _visibility_skip_if_warned():
+                    return blocked
                 return _grey_zone(
                     f"резюме {resume_id} нет в пикере формы — отправка запрещена",
                     acted=False,
@@ -709,6 +733,10 @@ def _policy_detail(policy: object) -> str:
     «policy_refused» — какой шаг, чем именно отказал и в каком оверлее,
     остаётся невыясненным до живой диагностики канала. Текст цели режем:
     census-строка 120 символов достаточна для опознания шага.
+
+    #1214: текст оверлея оператор не видел («overlay=modal/None» — ЧТО
+    блокирует, неизвестно), хотя исполнитель кладёт его в payload всегда
+    (classify() возвращает text ≤500) — печатаем в той же норме 120.
     """
     if not isinstance(policy, dict):
         return ""
@@ -716,6 +744,9 @@ def _policy_detail(policy: object) -> str:
     overlay = policy.get("overlay")
     if isinstance(overlay, dict):
         parts.append(f"overlay={overlay.get('type')}/{overlay.get('disposition')}")
+        overlay_text = str(overlay.get("text") or "").strip()
+        if overlay_text:
+            parts.append(f"текст={overlay_text[:120]}")
     target = policy.get("targetText")
     if isinstance(target, str) and target:
         parts.append(f"цель={target[:120]}")
