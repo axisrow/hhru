@@ -362,9 +362,19 @@ def apply_via_live(
             гейт всё равно у исполнителя: он re-классифицирует overlay в
             момент клика и кликает только close-контрол — переключатель
             видимости (мутация профиля) не нажимается ни этим сценарием, ни
-            каналом. Любой отказ (нет overlay / не safe / нет контрола /
-            канал) — НЕ ошибка сценария: False, и решает существующий skip
-            #1216; повторных попыток нет.
+            каналом.
+
+            True — попытка dismiss'а СОСТОЯЛАСЬ: вызывающий код перечитывает
+            warning и решает (исчез → флоу продолжается, остался → честный
+            skip #1216). Отказ самого dismiss_overlay — тоже сделанная
+            попытка: response_lost (#176-семантика) означает, что close-клик
+            мог уйти и модалка могла закрыться — решает перечитка warning'а
+            (read-only check бесплатен), а не классификация отказа (ревью
+            #1219); refused-отказы (overlay_not_found/not_safe/no_close_
+            control) проходят тот же путь безвредно — warning остался бы.
+            False — попытки не было (overlay не перечислен / не safe / без
+            close-контролов / канал не отвечает на list_overlays): skip
+            #1216 без изменений; повторных попыток нет.
             """
             try:
                 overlays = channel.list_overlays()
@@ -383,7 +393,7 @@ def apply_via_live(
             try:
                 channel.dismiss_overlay(str(target["id"]))
             except (ChannelError, PrimitiveError):
-                return False
+                pass  # попытка сделана: решит перечитка warning'а, не классификация отказа
             return True
 
         def _visibility_skip_if_warned():

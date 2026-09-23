@@ -95,6 +95,7 @@ class FakeFormChannel:
         fill_error: PrimitiveError | None = None,
         overlays: list[dict] | None = None,
         dismiss_error: PrimitiveError | None = None,
+        dismiss_lost_effect: bool = False,
     ) -> None:
         self.url = url
         self.login_found = login_found
@@ -117,6 +118,9 @@ class FakeFormChannel:
         self.fill_error = fill_error
         self.overlays = list(overlays or [])
         self.dismiss_error = dismiss_error
+        # response_lost (#176): ответ потерян, но close-клик мог уйти —
+        # dismiss_lost_effect моделирует «дошёл», False — «не дошёл».
+        self.dismiss_lost_effect = dismiss_lost_effect
         self.dismissed_ids: list[str] = []
         self.apply_clicked = False
         self.toggle_clicked = False
@@ -200,16 +204,14 @@ class FakeFormChannel:
 
     def dismiss_overlay(self, overlay_id: str) -> dict:
         if self.dismiss_error is not None:
+            if self.dismiss_error.forwarded and self.dismiss_lost_effect:
+                # response_lost с улетевшим кликом: эффект случился, ответ
+                # потерян — канал отвечает ошибкой ПОСЛЕ применения эффекта.
+                self._apply_dismiss(overlay_id)
             # Отказ исполнителя ДО клика (overlay_not_found/overlay_not_safe):
             # как у реального канала — PrimitiveError, состояние не меняется.
             raise self.dismiss_error
-        self.dismissed_ids.append(overlay_id)
-        # Модель боевого dismiss (#1218): модалка ушла, warning исчез,
-        # перекрытые ею пикер/опция снова читаются.
-        self.overlays = []
-        self.hidden_warning = False
-        self.option_present = True
-        self.picker_present = True
+        self._apply_dismiss(overlay_id)
         return {
             "overlayId": overlay_id,
             "type": "modal",
@@ -218,6 +220,15 @@ class FakeFormChannel:
             "overlayGone": True,
             "elements": {"closeControls": 2},
         }
+
+    def _apply_dismiss(self, overlay_id: str) -> None:
+        self.dismissed_ids.append(overlay_id)
+        # Модель боевого dismiss (#1218): модалка ушла, warning исчез,
+        # перекрытые ею пикер/опция снова читаются.
+        self.overlays = []
+        self.hidden_warning = False
+        self.option_present = True
+        self.picker_present = True
 
     # -- модель DOM -----------------------------------------------------------
 
@@ -614,9 +625,9 @@ def test_visibility_overlay_unsafe_or_controlless_is_never_dismissed(
 
 @pytest.mark.parametrize("forwarded", [False, True], ids=["refused", "response-lost"])
 def test_visibility_dismiss_failure_is_skip_not_fail(forwarded: bool) -> None:
-    # Отказ dismiss'а (executor/канал; response_lost — close-клик мог уйти,
-    # но отклик он не отправляет) — НЕ ошибка сценария: решает существующий
-    # skip #1216, флаги чистые, vacancy не «сгорает».
+    # Отказ dismiss'а (executor/канал) — НЕ ошибка сценария: после ЛЮБОЙ
+    # сделанной попытки warning перечитывается; здесь моделируется «эффекта
+    # не было» — warning остался, решает прежний skip #1216, флаги чистые.
     channel = FakeFormChannel(
         hidden_warning=True,
         option_present=False,
@@ -628,6 +639,26 @@ def test_visibility_dismiss_failure_is_skip_not_fail(forwarded: bool) -> None:
     assert (result.skipped, result.acted, result.uncertain) == (True, False, False)
     assert result.skip_reason == SKIP_REASONS.RESUME_VISIBILITY
     assert not channel.submitted
+
+
+def test_visibility_dismiss_response_lost_but_modal_gone_continues() -> None:
+    # Ревью #1219 (#176-семантика): response_lost — ответ dismiss'а потерян,
+    # но close-клик мог уйти и модалка закрылась. Перечитка warning'а после
+    # ЛЮБОЙ сделанной попытки dismiss это ловит: флоу продолжается до submit,
+    # vacancy не уходит в лишний skip с «поменяйте видимость вручную».
+    channel = FakeFormChannel(
+        hidden_warning=True,
+        option_present=False,
+        overlays=[dict(VISIBILITY_OVERLAY)],
+        dismiss_error=PrimitiveError("response_lost", "", forwarded=True),
+        dismiss_lost_effect=True,
+    )
+    result = _run(channel, verify=_verify_of("not_found"))
+
+    assert (result.success, result.acted, result.skipped) == (True, True, False)
+    assert result.skip_reason == ""
+    assert channel.dismissed_ids == ["overlay-1"]
+    assert channel.submitted and channel.filled_text == "Здравствуйте!"
 
 
 def test_policy_detail_prints_overlay_text() -> None:
