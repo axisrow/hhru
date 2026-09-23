@@ -32,6 +32,8 @@ ACTION_CHECK = "check_element"
 ACTION_CLICK = "click_element"
 ACTION_WAIT = "wait_element"
 ACTION_FILL = "fill_element"
+ACTION_LIST_OVERLAYS = "list_overlays"
+ACTION_DISMISS_OVERLAY = "dismiss_overlay"
 
 # Состояния для wait: элемент появился/исчез в бюджете ожидания.
 WAIT_STATE_VISIBLE = "visible"
@@ -83,6 +85,11 @@ LETTER_WAIT_TIMEOUT_MS = 5_000  # textarea после клика по letter-tog
 SUBMIT_WAIT_TIMEOUT_MS = 20_000  # success-маркеры после submit-клика
 # Маркер shape «модалка» (надёжный маркер — id формы, не letter-toggle, #1006).
 APPLY_MODAL_FORM = "form#RESPONSE_MODAL_FORM_ID"
+# Модалка видимости (#1218, боевой census 2026-09-23): overlay ищется ПОДСТРОКЕ
+# этого текста в census list_overlays. Переключатель видимости — мутация
+# профиля — не кликается никогда; dismiss ходит только в close-контрол
+# safe-overlay (второй гейт — сам исполнитель, policy.js + content.js).
+VISIBILITY_MODAL_TEXT_MARKER = "поменяйте видимость"
 
 
 class ApplyLiveResult:
@@ -345,6 +352,50 @@ def apply_via_live(
                 )
 
         # --- форма открыта: анкеты → skip в очередь (#482), канал не отвечает -
+        def _dismiss_visibility_overlay_once() -> bool:
+            """Одна попытка закрыть safe-overlay «поменяйте видимость» (#1218).
+
+            Цель — ровно один overlay из list_overlays: census-текст содержит
+            маркер модалки, disposition == "safe" И есть close-контролы
+            (боевой census 2026-09-23: outer-узел safe с 2 close-контролами;
+            inner ambiguous-узел dismiss'у не подлежит — не трогаем). Жёсткий
+            гейт всё равно у исполнителя: он re-классифицирует overlay в
+            момент клика и кликает только close-контрол — переключатель
+            видимости (мутация профиля) не нажимается ни этим сценарием, ни
+            каналом.
+
+            True — попытка dismiss'а СОСТОЯЛАСЬ: вызывающий код перечитывает
+            warning и решает (исчез → флоу продолжается, остался → честный
+            skip #1216). Отказ самого dismiss_overlay — тоже сделанная
+            попытка: response_lost (#176-семантика) означает, что close-клик
+            мог уйти и модалка могла закрыться — решает перечитка warning'а
+            (read-only check бесплатен), а не классификация отказа (ревью
+            #1219); refused-отказы (overlay_not_found/not_safe/no_close_
+            control) проходят тот же путь безвредно — warning остался бы.
+            False — попытки не было (overlay не перечислен / не safe / без
+            close-контролов / канал не отвечает на list_overlays): skip
+            #1216 без изменений; повторных попыток нет.
+            """
+            try:
+                overlays = channel.list_overlays()
+            except (ChannelError, PrimitiveError):
+                return False
+            target = None
+            for overlay in overlays or []:
+                if VISIBILITY_MODAL_TEXT_MARKER not in str(overlay.get("text") or ""):
+                    continue
+                if overlay.get("disposition") != "safe" or not overlay.get("closeControls"):
+                    continue
+                target = overlay
+                break
+            if target is None:
+                return False
+            try:
+                channel.dismiss_overlay(str(target["id"]))
+            except (ChannelError, PrimitiveError):
+                pass  # попытка сделана: решит перечитка warning'а, не классификация отказа
+            return True
+
         def _visibility_skip_if_warned():
             # Warning видимости — ОБЪЯСНЕНИЕ неудавшегося выбора резюме, не
             # терминальный признак (ревью PR #1215; зеркало apply/steps.py:
@@ -354,6 +405,14 @@ def apply_via_live(
             warning = _read(VACANCY_HIDDEN_RESUME_WARNING)
             if not (warning.get("found") or warning.get("visible")):
                 return None
+            # #1218: модалка видимости поверх формы закрывается close'ом
+            # safe-overlay — одна попытка; warning исчез → штатный флоу
+            # продолжается (пикер выберет публичное резюме), остался →
+            # честный skip ниже.
+            if _dismiss_visibility_overlay_once():
+                warning = _read(VACANCY_HIDDEN_RESUME_WARNING)
+                if not (warning.get("found") or warning.get("visible")):
+                    return None
             detail = str(warning.get("text") or "").strip()
             suffix = f": {detail[:120]}" if detail else ""
             return _result(
@@ -397,12 +456,15 @@ def apply_via_live(
             if not _read(trigger).get("found"):
                 if blocked := _visibility_skip_if_warned():
                     return blocked
-                return _grey_zone(
-                    "пикер резюме не найден: подтверждённо приложить нужное резюме "
-                    "невозможно — отправка запрещена",
-                    acted=False,
-                    uncertain=False,
-                )
+                # Dismiss мог убрать модалку видимости, за которой не было
+                # пикера — триггер перечитывается до серой зоны (#1218).
+                if not _read(trigger).get("found"):
+                    return _grey_zone(
+                        "пикер резюме не найден: подтверждённо приложить нужное резюме "
+                        "невозможно — отправка запрещена",
+                        acted=False,
+                        uncertain=False,
+                    )
             panel_open = {
                 "selector": panel,
                 "state": WAIT_STATE_VISIBLE,
@@ -413,11 +475,13 @@ def apply_via_live(
             if not _read(option).get("found"):
                 if blocked := _visibility_skip_if_warned():
                     return blocked
-                return _grey_zone(
-                    f"резюме {resume_id} нет в пикере формы — отправка запрещена",
-                    acted=False,
-                    uncertain=False,
-                )
+                # Dismiss мог вернуть опцию в панель — перечитывается (#1218).
+                if not _read(option).get("found"):
+                    return _grey_zone(
+                        f"резюме {resume_id} нет в пикере формы — отправка запрещена",
+                        acted=False,
+                        uncertain=False,
+                    )
             if not _click(
                 option,
                 {
@@ -884,6 +948,23 @@ class LiveChannel:
         )
         # Ключ ответа — часть контракта S2: исполнитель кладёт факт в wait.met.
         return bool((result.get("wait") or result).get("met", result.get("conditionMet", False)))
+
+    # -- overlay-примитивы S1 (#1218) ------------------------------------------
+
+    def list_overlays(self) -> list[dict]:
+        """Видимые overlay: {id, type, disposition, closeControls, text}.
+        Stage-1 ответ (как get_state/check) — один уровень, обёртка 'result'
+        не снимается."""
+        result = self._call(ACTION_LIST_OVERLAYS, {})
+        return list(result.get("overlays") or [])
+
+    def dismiss_overlay(self, overlay_id: str) -> dict:
+        """Закрыть safe-overlay кликом по его close-контролу (content.js
+        dismissOverlay): disposition пере-классифицируется в момент клика,
+        отказ (overlay_not_found/overlay_not_safe/no_close_control) —
+        PrimitiveError без forwarded. Ответ executor-стиля — двойная
+        вложенность 'result'."""
+        return self._executor_result(self._call(ACTION_DISMISS_OVERLAY, {"id": overlay_id}))
 
     @staticmethod
     def _executor_result(result: dict) -> dict:
