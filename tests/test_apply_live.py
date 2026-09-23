@@ -661,6 +661,24 @@ def test_visibility_dismiss_response_lost_but_modal_gone_continues() -> None:
     assert channel.submitted and channel.filled_text == "Здравствуйте!"
 
 
+def test_policy_refusal_inside_visibility_modal_is_skip() -> None:
+    # Бой 2026-09-23 (#1214): policy_refused на шаге ВНУТРИ модалки видимости
+    # приходит раньше чекпоинтов пикера — warning на форме переводит отказ
+    # в честный skip (переключатель видимости — мутация, не кликается).
+    channel = FakeFormChannel(
+        hidden_warning=True,
+        fill_error=PrimitiveError(
+            "policy_refused", "ambiguous; overlay=modal/None", forwarded=False
+        ),
+    )
+    result = _run(channel, require_resume_select=False, verify=_verify_of("not_found"))
+
+    assert (result.skipped, result.acted, result.uncertain) == (True, False, False)
+    assert result.skip_reason == SKIP_REASONS.RESUME_VISIBILITY
+    assert "видимость" in result.reason and "вручную" in result.reason
+    assert channel.filled_text is None and not channel.submitted
+
+
 def test_policy_detail_prints_overlay_text() -> None:
     # #1214 DX: текст оверлея уже приходит в policy-payload (classify кладёт
     # text ≤500), но печатался только type/disposition — оператор не видел

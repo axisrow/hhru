@@ -245,6 +245,39 @@ def apply_via_live(
         except ChannelError as exc:
             raise _ScenarioInterrupted(f"канал: {exc}") from exc
 
+    def _visibility_skip_if_warned():
+        """Skip, если на форме висит warning скрытого резюме (#1214).
+
+        Определяется РЯДОМ С ОБЁРТКАМИ примитивов, а не в секции формы:
+        policy_refused внутри модалки видимости приходит из шагов, которые
+        исполняются до секции формы (боевой случай 2026-09-23 — отказ клика
+        в модалке до Lines-пикера), и обработчики отказов зовут этот хелпер
+        из любой точки сценария. Warning — ОБЪЯСНЕНИЕ неудавшегося выбора
+        резюме, не терминальный признак (ревью PR #1215; зеркало
+        apply/steps.py); терминален только провал выбора. Селектор из
+        живых дампов probe testing 2026-09-09.
+        """
+        warning = _read(VACANCY_HIDDEN_RESUME_WARNING)
+        if not (warning.get("found") or warning.get("visible")):
+            return None
+        # #1218: модалка видимости поверх формы закрывается close'ом
+        # safe-overlay — одна попытка; warning исчез → штатный флоу
+        # продолжается (пикер выберет публичное резюме), остался →
+        # честный skip ниже.
+        if _dismiss_visibility_overlay_once():
+            warning = _read(VACANCY_HIDDEN_RESUME_WARNING)
+            if not (warning.get("found") or warning.get("visible")):
+                return None
+        detail = str(warning.get("text") or "").strip()
+        suffix = f": {detail[:120]}" if detail else ""
+        return _result(
+            False,
+            "hh.ru требует публичную видимость резюме — поменяйте видимость "
+            f"вручную, автоматом переключатель не кликается{suffix}",
+            skipped=True,
+            skip_reason=SKIP_REASONS.RESUME_VISIBILITY,
+        )
+
     def _grey_zone(reason: str, *, acted: bool, uncertain: bool):
         """Финализация fail-исхода ПОСЛЕ клика по кнопке отклика (#207).
 
@@ -396,33 +429,6 @@ def apply_via_live(
                 pass  # попытка сделана: решит перечитка warning'а, не классификация отказа
             return True
 
-        def _visibility_skip_if_warned():
-            # Warning видимости — ОБЪЯСНЕНИЕ неудавшегося выбора резюме, не
-            # терминальный признак (ревью PR #1215; зеркало apply/steps.py:
-            # узел бывает в DOM свёрнутым и при применимой вакансии — терми-
-            # нальным его делает только провал выбора). Селектор из живых
-            # дампов probe testing 2026-09-09; текст требования — оператору.
-            warning = _read(VACANCY_HIDDEN_RESUME_WARNING)
-            if not (warning.get("found") or warning.get("visible")):
-                return None
-            # #1218: модалка видимости поверх формы закрывается close'ом
-            # safe-overlay — одна попытка; warning исчез → штатный флоу
-            # продолжается (пикер выберет публичное резюме), остался →
-            # честный skip ниже.
-            if _dismiss_visibility_overlay_once():
-                warning = _read(VACANCY_HIDDEN_RESUME_WARNING)
-                if not (warning.get("found") or warning.get("visible")):
-                    return None
-            detail = str(warning.get("text") or "").strip()
-            suffix = f": {detail[:120]}" if detail else ""
-            return _result(
-                False,
-                "hh.ru требует публичную видимость резюме — поменяйте видимость "
-                f"вручную, автоматом переключатель не кликается{suffix}",
-                skipped=True,
-                skip_reason=SKIP_REASONS.RESUME_VISIBILITY,
-            )
-
         questions = _read(str(APPLY_QUESTION_BODY))
         if questions.get("found") or (questions.get("matchCount") or 0) > 0:
             # Осознанное ограничение: check_element отдаёт census ОДНОГО
@@ -563,6 +569,12 @@ def apply_via_live(
             },
         )
     except _ScenarioInterrupted as exc:
+        # Бой 2026-09-23 (#1214): policy_refused на шаге ВНУТРИ модалки
+        # видимости доходит сюда раньше чекпоинтов пикера — warning на
+        # форме переводит отказ в честный skip (клик переключателя
+        # видимости — мутация профиля, не выполняется никогда).
+        if blocked := _visibility_skip_if_warned():
+            return blocked
         if not grey_zone:
             # Чтение/клик не состоялись ДО кнопки отклика — на hh.ru следа нет.
             return _result(False, str(exc))
@@ -570,6 +582,10 @@ def apply_via_live(
         # состояться на любом шаге — решает внешний источник (#176).
         return _grey_zone(str(exc), acted=True, uncertain=True)
     except _RefusedBeforeAction as exc:
+        # Тот же бой (#1214): policy_refused (не-forwarded) на шаге в модалке
+        # видимости приходит СЮДА — warning на форме превращает отказ в skip.
+        if blocked := _visibility_skip_if_warned():
+            return blocked
         if not grey_zone:
             return _result(False, f"клик по кнопке отклика не выполнен: {exc}")
         # Отказ исполнителя до конкретного клика: мутации не было (как у
