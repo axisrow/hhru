@@ -15,8 +15,10 @@ from hhru_bot.history import SKIP_REASONS
 from hhru_bot.live.scenarios import (
     ACTION_CHECK,
     ACTION_CLICK,
+    ACTION_DISMISS_OVERLAY,
     ACTION_FILL,
     ACTION_GET_STATE,
+    ACTION_LIST_OVERLAYS,
     ACTION_WAIT,
     FORM_WAIT_TIMEOUT_MS,
     PAGE_FORM_WAIT_TIMEOUT_MS,
@@ -34,6 +36,19 @@ VACANCY_URL = f"https://hh.ru/vacancy/{VACANCY_ID}"
 RESUME_ID = "0123abcd"
 TEXTAREA = "vacancy-response-popup-form-letter-input"
 SUBMIT_MARKER = "responded-success-attach-cover-letter"
+# Census модалки видимости (#1218, боевой census 2026-09-23): outer-узел safe
+# с 2 close-контролами; inner-узел той же модалки — ambiguous (не тестируем
+# dismiss'ом, см. test_visibility_overlay_unsafe...).
+VISIBILITY_OVERLAY = {
+    "id": "overlay-1",
+    "type": "modal",
+    "disposition": "safe",
+    "closeControls": 2,
+    "text": (
+        "Чтобы откликнуться на эту вакансию, поменяйте видимость резюме "
+        "на «Видно всем работодателям»"
+    ),
+}
 
 
 class Verdict:
@@ -78,6 +93,8 @@ class FakeFormChannel:
         apply_click_error: PrimitiveError | None = None,
         submit_click_error: PrimitiveError | None = None,
         fill_error: PrimitiveError | None = None,
+        overlays: list[dict] | None = None,
+        dismiss_error: PrimitiveError | None = None,
     ) -> None:
         self.url = url
         self.login_found = login_found
@@ -98,6 +115,9 @@ class FakeFormChannel:
         self.apply_click_error = apply_click_error
         self.submit_click_error = submit_click_error
         self.fill_error = fill_error
+        self.overlays = list(overlays or [])
+        self.dismiss_error = dismiss_error
+        self.dismissed_ids: list[str] = []
         self.apply_clicked = False
         self.toggle_clicked = False
         self.option_clicked = False
@@ -171,6 +191,33 @@ class FakeFormChannel:
             raise self.fill_error
         self.filled_text = text if self.fill_ok else None
         return {"filled": self.fill_ok, "length": len(text) if self.fill_ok else 0}
+
+    def list_overlays(self) -> list[dict]:
+        # Контракт LiveChannel.list_overlays(): развёрнутый список overlay-
+        # словарей census (stage-1 ответ — один уровень, без обёрток).
+        self.calls.append((ACTION_LIST_OVERLAYS, {}))
+        return [dict(overlay) for overlay in self.overlays]
+
+    def dismiss_overlay(self, overlay_id: str) -> dict:
+        if self.dismiss_error is not None:
+            # Отказ исполнителя ДО клика (overlay_not_found/overlay_not_safe):
+            # как у реального канала — PrimitiveError, состояние не меняется.
+            raise self.dismiss_error
+        self.dismissed_ids.append(overlay_id)
+        # Модель боевого dismiss (#1218): модалка ушла, warning исчез,
+        # перекрытые ею пикер/опция снова читаются.
+        self.overlays = []
+        self.hidden_warning = False
+        self.option_present = True
+        self.picker_present = True
+        return {
+            "overlayId": overlay_id,
+            "type": "modal",
+            "disposition": "safe",
+            "action": "clicked close control",
+            "overlayGone": True,
+            "elements": {"closeControls": 2},
+        }
 
     # -- модель DOM -----------------------------------------------------------
 
@@ -273,11 +320,27 @@ def _actions(channel: FakeFormChannel) -> list[str]:
 
 
 def test_action_names_and_budgets_guard() -> None:
-    # Страж контракта: fill_element — примитив S4; бюджеты умещаются в
-    # response_timeout сервера (30 с), иначе ответ канала сгорает по таймауту.
-    from hhru_bot.live.scenarios import ACTION_FILL
-
-    assert ACTION_FILL == "fill_element"
+    # Страж контракта: таблица ACTION_* = ровно allowlist расширения
+    # (content.js ACTION_ALLOWLIST / background.js RELAY_ACTIONS); бюджеты
+    # умещаются в response_timeout сервера (30 с), иначе ответ канала
+    # сгорает по таймауту.
+    assert {
+        ACTION_GET_STATE,
+        ACTION_CHECK,
+        ACTION_CLICK,
+        ACTION_WAIT,
+        ACTION_FILL,
+        ACTION_LIST_OVERLAYS,
+        ACTION_DISMISS_OVERLAY,
+    } == {
+        "get_page_state",
+        "check_element",
+        "click_element",
+        "wait_element",
+        "fill_element",
+        "list_overlays",
+        "dismiss_overlay",
+    }
     assert max(FORM_WAIT_TIMEOUT_MS, PAGE_FORM_WAIT_TIMEOUT_MS, SUBMIT_WAIT_TIMEOUT_MS) < 30_000
 
 
@@ -469,6 +532,102 @@ def test_warning_present_without_picker_is_skip() -> None:
 
     assert (result.skipped, result.acted, result.uncertain) == (True, False, False)
     assert result.skip_reason == SKIP_REASONS.RESUME_VISIBILITY
+
+
+def test_visibility_modal_dismissed_flow_reaches_submit() -> None:
+    # Боевой случай #1214/#1218: модалка «поменяйте видимость» поверх формы,
+    # опция резюме недоступна. safe-overlay закрывается close-контролом —
+    # warning исчезает, штатный флоу доходит до submit (пикер выбирает
+    # публичное резюме). Переключатель видимости не кликается никем:
+    # в calls только известные клики флоу.
+    channel = FakeFormChannel(
+        hidden_warning=True,
+        option_present=False,
+        overlays=[dict(VISIBILITY_OVERLAY)],
+    )
+    result = _run(channel, verify=_verify_of("found"))
+
+    assert (result.success, result.acted, result.skipped) == (True, True, False)
+    assert result.skip_reason == ""
+    assert channel.dismissed_ids == ["overlay-1"]
+    assert channel.submitted and channel.filled_text == "Здравствуйте!"
+    clicks = [payload for action, payload in channel.calls if action == ACTION_CLICK]
+    # Кнопка отклика → триггер(открыть) → опция → триггер(закрыть) → submit.
+    assert len(clicks) == 5
+    assert "vacancy-response-link-top" in clicks[0]["selector"]
+    assert "vacancy-response-submit" in clicks[4]["selector"]
+
+
+def test_visibility_modal_dismiss_returns_picker_trigger() -> None:
+    # Вторая точка провала (#1218): триггера пикера нет, пока открыта модалка
+    # видимости; dismiss возвращает форму — флоу продолжается до submit.
+    channel = FakeFormChannel(
+        picker_present=False,
+        hidden_warning=True,
+        overlays=[dict(VISIBILITY_OVERLAY)],
+    )
+    result = _run(channel, verify=_verify_of("found"))
+
+    assert result.success and channel.submitted
+    assert channel.dismissed_ids == ["overlay-1"]
+
+
+def test_visibility_modal_not_listed_is_skip_like_1216() -> None:
+    # Overlay с текстом модалки не перечислен: dismiss не выполняется —
+    # честный skip #1216 без изменений.
+    channel = FakeFormChannel(
+        hidden_warning=True,
+        option_present=False,
+        overlays=[],
+    )
+    result = _run(channel, verify=_verify_of("not_found"))
+
+    assert (result.skipped, result.acted, result.uncertain) == (True, False, False)
+    assert result.skip_reason == SKIP_REASONS.RESUME_VISIBILITY
+    assert channel.dismissed_ids == []
+    assert channel.filled_text is None and not channel.submitted
+
+
+@pytest.mark.parametrize(
+    "overlay_patch",
+    [{"disposition": "ambiguous"}, {"closeControls": 0}],
+    ids=["unsafe", "no-close-control"],
+)
+def test_visibility_overlay_unsafe_or_controlless_is_never_dismissed(
+    overlay_patch: dict,
+) -> None:
+    # inner-узел модалки — ambiguous (боевой census 2026-09-23), узел без
+    # close-контролов закрывать нечем: dismiss'у не подлежат. Сценарий даже
+    # не пытается (жёсткий гейт у исполнителя, но попыток быть не должно
+    # вовсе) — skip #1216.
+    channel = FakeFormChannel(
+        hidden_warning=True,
+        option_present=False,
+        overlays=[{**VISIBILITY_OVERLAY, **overlay_patch}],
+    )
+    result = _run(channel, verify=_verify_of("not_found"))
+
+    assert (result.skipped, result.acted) == (True, False)
+    assert result.skip_reason == SKIP_REASONS.RESUME_VISIBILITY
+    assert channel.dismissed_ids == []
+
+
+@pytest.mark.parametrize("forwarded", [False, True], ids=["refused", "response-lost"])
+def test_visibility_dismiss_failure_is_skip_not_fail(forwarded: bool) -> None:
+    # Отказ dismiss'а (executor/канал; response_lost — close-клик мог уйти,
+    # но отклик он не отправляет) — НЕ ошибка сценария: решает существующий
+    # skip #1216, флаги чистые, vacancy не «сгорает».
+    channel = FakeFormChannel(
+        hidden_warning=True,
+        option_present=False,
+        overlays=[dict(VISIBILITY_OVERLAY)],
+        dismiss_error=PrimitiveError("overlay_not_found", "", forwarded=forwarded),
+    )
+    result = _run(channel, verify=_verify_of("not_found"))
+
+    assert (result.skipped, result.acted, result.uncertain) == (True, False, False)
+    assert result.skip_reason == SKIP_REASONS.RESUME_VISIBILITY
+    assert not channel.submitted
 
 
 def test_policy_detail_prints_overlay_text() -> None:
