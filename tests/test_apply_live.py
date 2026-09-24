@@ -275,7 +275,10 @@ class FakeFormChannel:
             return self.picker_present and self._form_open(), "", 1
         if "aria-selected" in selector:
             # Факт выбора опции: aria-selected="true" через атрибутный матчинг.
-            return self.option_selected, "", 1
+            # Бой 2026-09-25: Magritte размонтирует drop-панель при закрытии —
+            # опции (и их aria-selected) есть в DOM только при ОТКРЫТОЙ панели;
+            # чтение после закрытия давало ложный «нет aria-selected».
+            return self.option_selected and self.panel_open, "", 1
         if "magritte-select-option-" in selector:
             return self.option_present and self.panel_open, "", 1
         if "drop-base" in selector:
