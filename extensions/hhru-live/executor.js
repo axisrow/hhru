@@ -138,8 +138,10 @@ function isPickerDropPanel(element) {
 // allowApply (#1162) downgrades apply_step refusals — the target's own AND
 // its overlay ancestor's (the response modal IS the apply flow: picker,
 // letter toggle and submit all sit inside it and match the structural
-// anchors). DANGEROUS targets and ambiguous/dangerous overlays still refuse
-// exactly as before; without the flag nothing changes (#929 stage-1).
+// anchors). DANGEROUS targets always refuse; ambiguous/dangerous overlays
+// refuse exactly as before — except the picker drop panel with allowApply
+// while the apply form is open (#1220, below); without the flag nothing
+// changes (#929 stage-1).
 function evaluateClickPolicy(target, allowApply) {
   const text = collectText(target);
   if (DANGEROUS_TEXT.some((re) => re.test(text))) {
