@@ -247,6 +247,66 @@ const SCENARIOS = {
     };
   },
 
+  // Боевой факт #1220 (testing, 2026-09-24, census той же вкладки): drop-
+  // панель пикера резюме (magritte-drop-base, role=dialog) порталится в body
+  // ВНЕ семейства модалки отклика — текст панели совпал с overlay боевого
+  // отказа дословно, опция резюме сидит в панельном ambiguous (якорей и
+  // close-контролов у панели нет), а apply_step остаётся у модалки отдельным
+  // поддеревом. allowApply + ambiguous + видимая apply_step-модалка на
+  // странице = UI стек открытой формы отклика → клик проходит (context
+  // apply_flow_picker_overlay). Без открытой модалки тот же ambiguous
+  // отказывает и с allowApply (защита #1215 не ослаблена); dangerous-текст
+  // в панели не пускается и с флагом.
+  click_picker_drop_panel_allowed_with_permission: async () => {
+    const letter = el('textarea', { 'data-qa': 'vacancy-response-popup-form-letter-input' });
+    const form = el('form', { id: 'RESPONSE_MODAL_FORM_ID' });
+    form.appendChild(letter);
+    const modal = el('div', { class: 'magritte-modal' }, '');
+    modal.appendChild(form);
+    // Панель — САМОСТОЯТЕЛЬНЫЙ узел body (портал), не потомок модалки.
+    const option = el('label', { 'data-qa': 'magritte-select-option-287401967' }, 'Тестировщик');
+    const panel = el('div', { class: 'magritte-drop-base', role: 'dialog' }, '');
+    panel.appendChild(option);
+    append(modal, panel);
+    const allowed = await send({
+      action: 'click_element',
+      dataQa: 'magritte-select-option-287401967',
+      allowApply: true,
+      waitFor: { state: 'visible', dataQa: 'magritte-select-option-287401967', timeoutMs: 1000 },
+    });
+    // Модалка скрылась — панель без apply-контекста отказывает и с флагом
+    // (pruneRegistry убирает невидимое при пере-классификации в момент клика).
+    modal._setVisible(false);
+    const noModal = await send({
+      action: 'click_element',
+      dataQa: 'magritte-select-option-287401967',
+      allowApply: true,
+      waitFor: { state: 'visible', dataQa: 'magritte-select-option-287401967', timeoutMs: 1000 },
+    });
+    // Dangerous-текст в panel-подобном оверлее — отказ и с allowApply.
+    const dangerOk = el('button', { 'data-qa': 'danger-ok' }, 'OK');
+    const dangerPanel = el('div', { class: 'modal', role: 'dialog' }, 'Подтвердите удаление');
+    dangerPanel.appendChild(dangerOk);
+    append(dangerPanel);
+    const dangerRefused = await send({
+      action: 'click_element',
+      dataQa: 'danger-ok',
+      allowApply: true,
+      waitFor: { state: 'visible', dataQa: 'danger-ok', timeoutMs: 1000 },
+    });
+    return {
+      allowedContext: allowed.result?.policy?.context ?? null,
+      allowedClicked: allowed.result?.clicked ?? null,
+      clickedOption: env.clicks.includes(option),
+      noModalError: noModal.error ?? null,
+      noModalReason: noModal.policy?.reason ?? null,
+      noModalClicked: noModal.result?.clicked ?? null,
+      dangerReason: dangerRefused.policy?.reason ?? null,
+      clickedDanger: env.clicks.includes(dangerOk),
+      clickCount: env.clicks.length,
+    };
+  },
+
   // fill_element (#1162): the letter text lands in the field through the
   // native setter path and is read back; a mismatch is ok:false, never a
   // silent half-filled form.

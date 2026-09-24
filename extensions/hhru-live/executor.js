@@ -22,9 +22,13 @@
 // #1162 (S4 apply scenario): an explicit command MAY carry allowApply=true —
 // the agent's own decision to run the apply flow, the same way it explicitly
 // names the target. It downgrades ONLY the apply_step refusal of the target
-// itself (context 'apply_flow'); DANGEROUS_TEXT and an ambiguous-overlay
-// ancestor still refuse without any click. Stage-1 auto-dismiss semantics
-// (no allowApply) are unchanged.
+// itself (context 'apply_flow') and of its overlay ancestor (context
+// 'apply_flow_overlay'); DANGEROUS_TEXT always refuses without any click.
+// An ambiguous-overlay ancestor refuses too — EXCEPT the picker-drop case
+// (#1220): allowApply + ambiguous + a visible apply_step overlay on the page
+// (the response form is open) is the apply flow's own floating UI (context
+// 'apply_flow_picker_overlay'). Stage-1 auto-dismiss semantics (no
+// allowApply) are unchanged.
 //
 // The ONLY click in this file is target.click() inside clickElement(), the
 // same confirmed click method dismissOverlay() uses (a real DOM click, no
@@ -107,6 +111,18 @@ function findOverlayContext(node) {
   return topmost;
 }
 
+// #1220 (боевой census testing 2026-09-24): drop-панель пикера резюме
+// (magritte-drop-base, role=dialog) порталится Magritte'ом в body ВНЕ
+// семейства модалки отклика — вердикт клика по опции снимается по
+// панельному ambiguous (якорей и close-контролов у панели нет и быть не
+// должно), а apply_step-модалка остаётся отдельным поддеревом. Признак
+// «клик идёт внутри UI стека открытой формы отклика» — видимый
+// apply_step-overlay на странице (решение в момент клика, не из реестра
+// детект-тайма; listOverlays пере-классифицирует и подчищает невидимое).
+function hasVisibleApplyStepOverlay() {
+  return listOverlays().some((overlay) => overlay.disposition === 'apply_step');
+}
+
 // The #929 policy core applied to a click target. Same fail-closed priority
 // as classifyDisposition: danger anchors outrank apply signals, both refuse.
 // allowApply (#1162) downgrades apply_step refusals — the target's own AND
@@ -130,6 +146,13 @@ function evaluateClickPolicy(target, allowApply) {
   if (disposition !== 'safe') {
     if (allowApply === true && disposition === 'apply_step') {
       return { verdict: 'allowed', context: 'apply_flow_overlay' };
+    }
+    // #1220: панель пикера резюме — отдельный ambiguous-оверлей вне семейства
+    // модалки; флоу отклика продолжается, пока форма открыта. Dangerous
+    // сюда не доходит (проверен выше и в classifyDisposition), без флага
+    // и без открытой apply-модалки — прежний отказ.
+    if (allowApply === true && disposition === 'ambiguous' && hasVisibleApplyStepOverlay()) {
+      return { verdict: 'allowed', context: 'apply_flow_picker_overlay' };
     }
     return { verdict: 'refused', reason: disposition, overlay: info };
   }

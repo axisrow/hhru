@@ -366,6 +366,34 @@ def apply_via_live(
             uncertain=False,
         )
 
+    def _overlay_census_suffix() -> str:
+        """Census оверлеев к отказу исполнителя (#1220, DX по образцу #1214).
+
+        policy_refused называет только ВЕРХНИЙ overlay клика; соседние
+        остаются неназванными, а состояние «пассивно невоспроизводимо» —
+        модалка к моменту census уже закрыта. Отказ — «действия не было»,
+        вкладка жива: list_overlays рядом с вердиктом дёшев и называет
+        каждый overlay (id/type/disposition/closeControls/текст). Определён
+        РЯДОМ С обёртками примитивов ДО try: зовётся из обработчика отказов
+        (ревью PR #1216). Best-effort: мёртвый канал — пустой суффикс,
+        решает прежний вердикт.
+        """
+        try:
+            overlays = channel.list_overlays()
+        except (ChannelError, PrimitiveError):
+            return ""
+        census = [
+            f"{overlay.get('id')} {overlay.get('type')}/{overlay.get('disposition')} "
+            f"close={overlay.get('closeControls')}: "
+            f"{str(overlay.get('text') or '').strip()[:60]}"
+            for overlay in overlays or []
+        ]
+        if not census:
+            return "; оверлеи: нет"
+        shown = census[:12]
+        extra = f" | +ещё {len(census) - len(shown)}" if len(census) > len(shown) else ""
+        return "; оверлеи: " + " | ".join(shown) + extra
+
     grey_zone = False  # True с момента клика по кнопке отклика (#207)
     try:
         # --- гейты до клика: чтения, мутировать не могут ---------------------
@@ -598,11 +626,16 @@ def apply_via_live(
         if blocked:
             return blocked
         if not grey_zone:
-            return _result(False, f"клик по кнопке отклика не выполнен: {exc}")
+            census = _overlay_census_suffix()
+            return _result(False, f"клик по кнопке отклика не выполнен: {exc}{census}")
         # Отказ исполнителя до конкретного клика: мутации не было (как у
         # PlaywrightError заполнения в боевом пути) — флаги чистые; вердикт
         # всё равно финализирует внешний источник.
-        return _grey_zone(f"шаг формы не выполнен: {exc}", acted=False, uncertain=False)
+        return _grey_zone(
+            f"шаг формы не выполнен: {exc}{_overlay_census_suffix()}",
+            acted=False,
+            uncertain=False,
+        )
 
     if submitted:
         return _result(True, "success: маркер отправки подтверждён в живой вкладке", acted=True)
