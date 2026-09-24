@@ -123,6 +123,16 @@ function hasVisibleApplyStepOverlay() {
   return listOverlays().some((overlay) => overlay.disposition === 'apply_step');
 }
 
+// Признаки именно панели пикера (census #1220: data-qa='drop-base' —
+// рабочий селектор APPLY_RESUME_DROPDOWN; класс magritte-drop-base).
+// Без этого сужения allowApply-клик внутри ЛЮБОГО simultaneous ambiguous-
+// оверлея проходил бы при открытой форме (ревью Codex PR #1221, P1).
+function isPickerDropPanel(element) {
+  const qa = (element.getAttribute('data-qa') || '').toLowerCase();
+  const cls = (element.getAttribute('class') || '').toLowerCase();
+  return qa === 'drop-base' || cls.includes('magritte-drop-base');
+}
+
 // The #929 policy core applied to a click target. Same fail-closed priority
 // as classifyDisposition: danger anchors outrank apply signals, both refuse.
 // allowApply (#1162) downgrades apply_step refusals — the target's own AND
@@ -148,10 +158,17 @@ function evaluateClickPolicy(target, allowApply) {
       return { verdict: 'allowed', context: 'apply_flow_overlay' };
     }
     // #1220: панель пикера резюме — отдельный ambiguous-оверлей вне семейства
-    // модалки; флоу отклика продолжается, пока форма открыта. Dangerous
-    // сюда не доходит (проверен выше и в classifyDisposition), без флага
-    // и без открытой apply-модалки — прежний отказ.
-    if (allowApply === true && disposition === 'ambiguous' && hasVisibleApplyStepOverlay()) {
+    // модалки; флоу отклика продолжается, пока форма открыта. Сужено до
+    // самой панели (data-qa/class drop-base): посторонний ambiguous-диалог
+    // отказывает и с allowApply (ревью Codex PR #1221). Dangerous сюда не
+    // доходит (проверен выше и в classifyDisposition), без флага или без
+    // открытой apply-модалки — прежний отказ.
+    if (
+      allowApply === true
+      && disposition === 'ambiguous'
+      && isPickerDropPanel(overlay)
+      && hasVisibleApplyStepOverlay()
+    ) {
       return { verdict: 'allowed', context: 'apply_flow_picker_overlay' };
     }
     return { verdict: 'refused', reason: disposition, overlay: info };

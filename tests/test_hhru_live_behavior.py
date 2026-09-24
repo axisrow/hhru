@@ -542,12 +542,17 @@ def test_hhru_live_executor_picker_drop_panel_allowed_with_permission():
     панель пикера резюме (magritte-drop-base, role=dialog) порталится в body
     ВНЕ семейства модалки отклика — текст панели совпал с overlay боевого
     отказа дословно. allowApply + ambiguous-предок + видимая apply_step-
-    модалка на странице = UI стек открытой формы отклика → клик проходит.
-    Без открытой модалки тот же ambiguous отказывает и с allowApply (защита
-    #1215 не ослаблена); dangerous не пускается и с флагом."""
+    модалка на странице = UI стек открытой формы отклика → клик проходит,
+    НО только для самой панели (data-qa/class drop-base): посторонний
+    ambiguous-диалог рядом с apply_step отказывает и с allowApply (ревью
+    Codex PR #1221, P1). Без открытой модалки тот же ambiguous отказывает
+    и с allowApply (защита #1215 не ослаблена); dangerous не пускается и с
+    флагом."""
     scenario = _run_executor_scenario("click_picker_drop_panel_allowed_with_permission")
     assert scenario["allowedContext"] == "apply_flow_picker_overlay"
     assert scenario["allowedClicked"] is True and scenario["clickedOption"] is True
+    assert scenario["strangerError"] == "policy_refused"
+    assert scenario["strangerReason"] == "ambiguous" and scenario["strangerClicked"] is None
     assert scenario["noModalError"] == "policy_refused"
     assert scenario["noModalReason"] == "ambiguous" and scenario["noModalClicked"] is None
     assert scenario["dangerReason"] == "dangerous" and scenario["clickedDanger"] is False

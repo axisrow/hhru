@@ -274,6 +274,19 @@ const SCENARIOS = {
       allowApply: true,
       waitFor: { state: 'visible', dataQa: 'magritte-select-option-287401967', timeoutMs: 1000 },
     });
+    // Посторонний ambiguous-диалог при ОТКРЫТОЙ apply-модалке отказывает и с
+    // allowApply: даунгрейд сужен до панели пикера (ревью Codex PR #1221, P1),
+    // не «любой ambiguous рядом с apply_step».
+    const stranger = el('button', { 'data-qa': 'stranger-ok' }, 'OK');
+    const strangerDialog = el('div', { class: 'modal', role: 'dialog' }, 'Незнакомое окно');
+    strangerDialog.appendChild(stranger);
+    append(strangerDialog);
+    const strangerRefused = await send({
+      action: 'click_element',
+      dataQa: 'stranger-ok',
+      allowApply: true,
+      waitFor: { state: 'visible', dataQa: 'stranger-ok', timeoutMs: 1000 },
+    });
     // Модалка скрылась — панель без apply-контекста отказывает и с флагом
     // (pruneRegistry убирает невидимое при пере-классификации в момент клика).
     modal._setVisible(false);
@@ -298,6 +311,9 @@ const SCENARIOS = {
       allowedContext: allowed.result?.policy?.context ?? null,
       allowedClicked: allowed.result?.clicked ?? null,
       clickedOption: env.clicks.includes(option),
+      strangerError: strangerRefused.error ?? null,
+      strangerReason: strangerRefused.policy?.reason ?? null,
+      strangerClicked: strangerRefused.result?.clicked ?? null,
       noModalError: noModal.error ?? null,
       noModalReason: noModal.policy?.reason ?? null,
       noModalClicked: noModal.result?.clicked ?? null,
