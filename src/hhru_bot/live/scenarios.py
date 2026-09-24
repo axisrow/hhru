@@ -532,22 +532,28 @@ def apply_via_live(
                 return _grey_zone(
                     "клик по опции резюме не подтвердился", acted=False, uncertain=False
                 )
+            # Факт выбора читается при ОТКРЫТОЙ панели (бой 2026-09-25, вак.
+            # 137632978: Magritte размонтирует drop-панель при закрытии —
+            # опций в DOM нет вовсе, и позднее чтение давало ложный «нет
+            # aria-selected» при СОСТОЯВШЕМСЯ выборе; триггер уже показывал
+            # выбранное резюме). Документированный shape #207: aria-selected
+            # ставится кликом, пока панель открыта.
+            if not _read(selected).get("found"):
+                return _grey_zone(
+                    f"выбор резюме {resume_id} не подтверждён (нет aria-selected) — "
+                    "отправка запрещена",
+                    acted=False,
+                    uncertain=False,
+                )
             # Панель НЕ закрывается сама (#207-форма): она перекрывает submit
             # физически — закрываем повторным кликом по триггеру и ждём скрытия
-            # САМОЙ панели (опции внутри остаются visible, пока открыта).
+            # САМОЙ панели.
             if not _click(
                 trigger,
                 {"selector": panel, "state": WAIT_STATE_HIDDEN, "timeoutMs": PANEL_WAIT_TIMEOUT_MS},
             ):
                 return _grey_zone(
                     "панель выбора резюме не закрылась — submit перекрыт, отправка запрещена",
-                    acted=False,
-                    uncertain=False,
-                )
-            if not _read(selected).get("found"):
-                return _grey_zone(
-                    f"выбор резюме {resume_id} не подтверждён (нет aria-selected) — "
-                    "отправка запрещена",
                     acted=False,
                     uncertain=False,
                 )
