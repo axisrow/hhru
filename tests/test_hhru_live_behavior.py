@@ -537,6 +537,28 @@ def test_hhru_live_executor_nested_overlay_family_collapsed_to_topmost():
     assert scenario["clickedInnerOk"] is False
 
 
+def test_hhru_live_executor_picker_drop_panel_allowed_with_permission():
+    """Боевой факт #1220 (testing, 2026-09-24, census той же вкладки): drop-
+    панель пикера резюме (magritte-drop-base, role=dialog) порталится в body
+    ВНЕ семейства модалки отклика — текст панели совпал с overlay боевого
+    отказа дословно. allowApply + ambiguous-предок + видимая apply_step-
+    модалка на странице = UI стек открытой формы отклика → клик проходит,
+    НО только для самой панели (data-qa/class drop-base): посторонний
+    ambiguous-диалог рядом с apply_step отказывает и с allowApply (ревью
+    Codex PR #1221, P1). Без открытой модалки тот же ambiguous отказывает
+    и с allowApply (защита #1215 не ослаблена); dangerous не пускается и с
+    флагом."""
+    scenario = _run_executor_scenario("click_picker_drop_panel_allowed_with_permission")
+    assert scenario["allowedContext"] == "apply_flow_picker_overlay"
+    assert scenario["allowedClicked"] is True and scenario["clickedOption"] is True
+    assert scenario["strangerError"] == "policy_refused"
+    assert scenario["strangerReason"] == "ambiguous" and scenario["strangerClicked"] is None
+    assert scenario["noModalError"] == "policy_refused"
+    assert scenario["noModalReason"] == "ambiguous" and scenario["noModalClicked"] is None
+    assert scenario["dangerReason"] == "dangerous" and scenario["clickedDanger"] is False
+    assert scenario["clickCount"] == 1
+
+
 def test_hhru_live_executor_click_invisible_target_refused():
     """Действие по невидимому контролю — действие без оснований: отказ до
     policy-гейта, кликов 0."""

@@ -98,6 +98,7 @@ class FakeFormChannel:
         overlays: list[dict] | None = None,
         dismiss_error: PrimitiveError | None = None,
         dismiss_lost_effect: bool = False,
+        overlays_error: PrimitiveError | None = None,
     ) -> None:
         self.url = url
         self.login_found = login_found
@@ -127,6 +128,9 @@ class FakeFormChannel:
         # response_lost (#176): ответ потерян, но close-клик мог уйти —
         # dismiss_lost_effect моделирует «дошёл», False — «не дошёл».
         self.dismiss_lost_effect = dismiss_lost_effect
+        # Отказ чтения census (#1220 DX): list_overlays рядом с отказом —
+        # best-effort, мёртвый канал не меняет вердикт.
+        self.overlays_error = overlays_error
         self.dismissed_ids: list[str] = []
         self.apply_clicked = False
         self.toggle_clicked = False
@@ -210,6 +214,8 @@ class FakeFormChannel:
         # Контракт LiveChannel.list_overlays(): развёрнутый список overlay-
         # словарей census (stage-1 ответ — один уровень, без обёрток).
         self.calls.append((ACTION_LIST_OVERLAYS, {}))
+        if self.overlays_error is not None:
+            raise self.overlays_error
         return [dict(overlay) for overlay in self.overlays]
 
     def dismiss_overlay(self, overlay_id: str) -> dict:
@@ -765,6 +771,59 @@ def test_warning_before_form_open_gets_honest_skip_not_crash() -> None:
     )
     assert result.skip_reason == SKIP_REASONS.RESUME_VISIBILITY
     assert channel.dismissed_ids == []
+
+
+def test_refusal_attaches_overlay_census() -> None:
+    # Бой 2026-09-24 (#1220): policy_refused называет только ВЕРХНИЙ overlay
+    # клика, соседние остаются неназванными, а состояние модалки «пассивно
+    # невоспроизводимо». Обработчик отказов достраивает census list_overlays
+    # (id/type/disposition/closeControls/текст) — следующий бой сам назовёт
+    # каждый overlay, без отдельного census-скрипта.
+    channel = FakeFormChannel(
+        fill_error=PrimitiveError("policy_refused", "ambiguous", forwarded=False),
+        overlays=[
+            {
+                "id": "overlay-3",
+                "type": "modal",
+                "disposition": "ambiguous",
+                "closeControls": 0,
+                "text": "Тестировщик 180 000 ₽",
+            },
+            {
+                "id": "overlay-4",
+                "type": "notification",
+                "disposition": "safe",
+                "closeControls": 1,
+                "text": "Рекомендуете ли вы своего работодателя?",
+            },
+        ],
+    )
+    result = _run(channel, require_resume_select=False, verify=_verify_of("not_found"))
+
+    assert (
+        "оверлеи: overlay-3 modal/ambiguous close=0: Тестировщик 180 000 ₽ | "
+        "overlay-4 notification/safe close=1: Рекомендуете ли вы своего работодателя?"
+    ) in result.reason
+    assert (result.acted, result.uncertain) == (False, False)
+
+
+def test_refusal_census_without_overlays_and_dead_channel() -> None:
+    # Пустой реестр и мёртвый канал — суффикс деградирует, вердикт прежний
+    # (best-effort, ревью PR #1216: отказ probe не выходит из обработчика).
+    channel = FakeFormChannel(
+        fill_error=PrimitiveError("policy_refused", "ambiguous", forwarded=False)
+    )
+    result = _run(channel, require_resume_select=False, verify=_verify_of("not_found"))
+    assert "; оверлеи: нет;" in result.reason
+
+    dead = FakeFormChannel(
+        fill_error=PrimitiveError("policy_refused", "ambiguous", forwarded=False),
+        overlays_error=PrimitiveError("client_disconnected", "обрыв", forwarded=False),
+    )
+    result = _run(dead, require_resume_select=False, verify=_verify_of("not_found"))
+    assert "шаг формы не выполнен" in result.reason
+    assert "оверлеи" not in result.reason
+    assert (result.acted, result.uncertain) == (False, False)
 
 
 def test_policy_detail_prints_overlay_text() -> None:

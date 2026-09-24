@@ -22,9 +22,13 @@
 // #1162 (S4 apply scenario): an explicit command MAY carry allowApply=true —
 // the agent's own decision to run the apply flow, the same way it explicitly
 // names the target. It downgrades ONLY the apply_step refusal of the target
-// itself (context 'apply_flow'); DANGEROUS_TEXT and an ambiguous-overlay
-// ancestor still refuse without any click. Stage-1 auto-dismiss semantics
-// (no allowApply) are unchanged.
+// itself (context 'apply_flow') and of its overlay ancestor (context
+// 'apply_flow_overlay'); DANGEROUS_TEXT always refuses without any click.
+// An ambiguous-overlay ancestor refuses too — EXCEPT the picker-drop case
+// (#1220): allowApply + ambiguous + a visible apply_step overlay on the page
+// (the response form is open) is the apply flow's own floating UI (context
+// 'apply_flow_picker_overlay'). Stage-1 auto-dismiss semantics (no
+// allowApply) are unchanged.
 //
 // The ONLY click in this file is target.click() inside clickElement(), the
 // same confirmed click method dismissOverlay() uses (a real DOM click, no
@@ -107,13 +111,37 @@ function findOverlayContext(node) {
   return topmost;
 }
 
+// #1220 (боевой census testing 2026-09-24): drop-панель пикера резюме
+// (magritte-drop-base, role=dialog) порталится Magritte'ом в body ВНЕ
+// семейства модалки отклика — вердикт клика по опции снимается по
+// панельному ambiguous (якорей и close-контролов у панели нет и быть не
+// должно), а apply_step-модалка остаётся отдельным поддеревом. Признак
+// «клик идёт внутри UI стека открытой формы отклика» — видимый
+// apply_step-overlay на странице (решение в момент клика, не из реестра
+// детект-тайма; listOverlays пере-классифицирует и подчищает невидимое).
+function hasVisibleApplyStepOverlay() {
+  return listOverlays().some((overlay) => overlay.disposition === 'apply_step');
+}
+
+// Признаки именно панели пикера (census #1220: data-qa='drop-base' —
+// рабочий селектор APPLY_RESUME_DROPDOWN; класс magritte-drop-base).
+// Без этого сужения allowApply-клик внутри ЛЮБОГО simultaneous ambiguous-
+// оверлея проходил бы при открытой форме (ревью Codex PR #1221, P1).
+function isPickerDropPanel(element) {
+  const qa = (element.getAttribute('data-qa') || '').toLowerCase();
+  const cls = (element.getAttribute('class') || '').toLowerCase();
+  return qa === 'drop-base' || cls.includes('magritte-drop-base');
+}
+
 // The #929 policy core applied to a click target. Same fail-closed priority
 // as classifyDisposition: danger anchors outrank apply signals, both refuse.
 // allowApply (#1162) downgrades apply_step refusals — the target's own AND
 // its overlay ancestor's (the response modal IS the apply flow: picker,
 // letter toggle and submit all sit inside it and match the structural
-// anchors). DANGEROUS targets and ambiguous/dangerous overlays still refuse
-// exactly as before; without the flag nothing changes (#929 stage-1).
+// anchors). DANGEROUS targets always refuse; ambiguous/dangerous overlays
+// refuse exactly as before — except the picker drop panel with allowApply
+// while the apply form is open (#1220, below); without the flag nothing
+// changes (#929 stage-1).
 function evaluateClickPolicy(target, allowApply) {
   const text = collectText(target);
   if (DANGEROUS_TEXT.some((re) => re.test(text))) {
@@ -130,6 +158,20 @@ function evaluateClickPolicy(target, allowApply) {
   if (disposition !== 'safe') {
     if (allowApply === true && disposition === 'apply_step') {
       return { verdict: 'allowed', context: 'apply_flow_overlay' };
+    }
+    // #1220: панель пикера резюме — отдельный ambiguous-оверлей вне семейства
+    // модалки; флоу отклика продолжается, пока форма открыта. Сужено до
+    // самой панели (data-qa/class drop-base): посторонний ambiguous-диалог
+    // отказывает и с allowApply (ревью Codex PR #1221). Dangerous сюда не
+    // доходит (проверен выше и в classifyDisposition), без флага или без
+    // открытой apply-модалки — прежний отказ.
+    if (
+      allowApply === true
+      && disposition === 'ambiguous'
+      && isPickerDropPanel(overlay)
+      && hasVisibleApplyStepOverlay()
+    ) {
+      return { verdict: 'allowed', context: 'apply_flow_picker_overlay' };
     }
     return { verdict: 'refused', reason: disposition, overlay: info };
   }
