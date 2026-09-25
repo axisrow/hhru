@@ -508,7 +508,21 @@ def apply_via_live(
             # Модалки нет: либо страница /applicant/vacancy_response (второй
             # shape), либо one-click уже отправил отклик / relocation-попап /
             # терминальный блокер hh.ru. Различает их только внешний источник.
-            if not _wait(textarea_selector, WAIT_STATE_VISIBLE, PAGE_FORM_WAIT_TIMEOUT_MS):
+            # Маркер формы — КОМПОЗИТ (#1224, бой 00:07 на 137734840): форма
+            # может быть открыта при свёрнутом письме (textarea в DOM нет
+            # вовсе, census: resume-title виден, task-body×2, textarea=0) —
+            # ожидание одной textarea никогда не заканчивалось бы успехом.
+            # One-click/relocation не рендерят ни один из маркеров — прежняя
+            # серая зона сохранена.
+            page_form_marker = ", ".join(
+                (
+                    APPLY_COVER_LETTER_TEXTAREA,
+                    APPLY_COVER_LETTER_TEXTAREA_FORM,
+                    APPLY_RESUME_SELECT,
+                    APPLY_QUESTION_BODY,
+                )
+            )
+            if not _wait(page_form_marker, WAIT_STATE_VISIBLE, PAGE_FORM_WAIT_TIMEOUT_MS):
                 return _grey_zone(
                     "форма отклика не отрисовалась после клика (возможен one-click отклик)",
                     acted=True,

@@ -103,6 +103,9 @@ class FakeFormChannel:
         # после клика не отвечает вовсе (мёртвая вкладка).
         nav_state_settles: bool = True,
         state_error_after_click: PrimitiveError | None = None,
+        # #1224 (раунд 3): полная форма с анкетой при свёрнутом письме —
+        # textarea в DOM нет вовсе; маркер формы не может быть одной textarea.
+        letter_collapsed_on_page_form: bool = False,
         submit_click_error: PrimitiveError | None = None,
         fill_error: PrimitiveError | None = None,
         warning_check_error: PrimitiveError | None = None,
@@ -132,6 +135,7 @@ class FakeFormChannel:
         self.nav_form_url = nav_form_url
         self.nav_state_settles = nav_state_settles
         self.state_error_after_click = state_error_after_click
+        self.letter_collapsed_on_page_form = letter_collapsed_on_page_form
         self._nav_pending = False
         self._nav_recheck_answered = False
         self.submit_click_error = submit_click_error
@@ -236,11 +240,16 @@ class FakeFormChannel:
         result = self.click(selector, wait_for=wait_for, allow_apply=allow_apply)
         return bool((result.get("wait") or {}).get("met", False))
 
+    def _any_present(self, selector: str) -> bool:
+        # CSS-композит («a, b») — OR по частям; _present матчит подстроки
+        # одиночных селекторов и на составной строке выбирает первую ветку.
+        return any(self._present(part.strip())[0] for part in selector.split(","))
+
     def wait(self, selector: str, state: str, timeout_ms: int) -> bool:
         self.calls.append(
             (ACTION_WAIT, {"selector": selector, "state": state, "timeoutMs": timeout_ms})
         )
-        present = self._present(selector)[0]
+        present = self._any_present(selector)
         return present if state == "visible" else not present
 
     def fill(self, selector: str, text: str) -> dict:
@@ -347,7 +356,9 @@ class FakeFormChannel:
         if not self._form_open():
             return False
         if self.page_form:
-            return True
+            # #1224 раунд 3: письмо свёрнуто — textarea в DOM нет, появляется
+            # только после клика по letter-toggle.
+            return not self.letter_collapsed_on_page_form or self.toggle_clicked
         if self.modal_after_click:
             return self.textarea_after_click or self.toggle_clicked
         return False
@@ -355,7 +366,7 @@ class FakeFormChannel:
     def _wait_met(self, wait_for: dict | None) -> bool:
         if not wait_for:
             return True
-        present = self._present(str(wait_for.get("selector", "")))[0]
+        present = self._any_present(str(wait_for.get("selector", "")))
         return present if wait_for.get("state") == "visible" else not present
 
 
@@ -527,6 +538,28 @@ def test_nav_click_race_continues_page_form_flow() -> None:
     # Гейт вкладки + перечитка: первый вызов падает (инъекция отстаёт от
     # коммита навигации, бой 23:40), второй отвечает URL формы.
     assert len(states) == 3
+
+
+def test_page_form_with_questions_and_collapsed_letter_is_has_questions_skip() -> None:
+    # #1224 раунд 3 (бой 00:07, 137734840): полная форма с анкетой при
+    # свёрнутом письме — textarea в DOM нет вовсе, ожидание одной textarea
+    # никогда не распознало бы открытую форму. Композитный маркер (textarea,
+    # пикер, task-body) открывает форму, и анкета уходит в легальный skip.
+    channel = FakeFormChannel(
+        modal_after_click=False,
+        page_form=True,
+        question_count=2,
+        letter_collapsed_on_page_form=True,
+    )
+    result = _run(channel, verify=_verify_of("not_found"), require_resume_select=True)
+
+    # Зеркало test_questions_skip_and_queue_channel_never_answers: сабмита
+    # не было — acted чистый, мутации hh.ru нет.
+    assert (result.success, result.acted, result.uncertain) == (False, False, False)
+    assert result.skipped
+    assert result.skip_reason == SKIP_REASONS.HAS_QUESTIONS
+    assert channel.question_text in result.question_texts
+    assert not channel.submitted
 
 
 def test_nav_click_dead_tab_within_budget_still_fails(
