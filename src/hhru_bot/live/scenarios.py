@@ -87,6 +87,13 @@ PAGE_FORM_WAIT_TIMEOUT_MS = 10_000  # второй shape: textarea полной 
 PANEL_WAIT_TIMEOUT_MS = 5_000  # панель выбора резюме открылась/закрылась
 LETTER_WAIT_TIMEOUT_MS = 5_000  # textarea после клика по letter-toggle
 SUBMIT_WAIT_TIMEOUT_MS = 20_000  # success-маркеры после submit-клика
+# Перечитка вкладки после навигирующего клика кнопки (#1224): инъекция
+# контент-скрипта новой страницы отстаёт от коммита навигации, первый вызов
+# отвечает content_script_unreachable. Бюджет — рендер формы; задержка — шаг
+# ретрая. Не путать с wait_*_TIMEOUT_MS: это сценарные паузы, не бюджеты
+# ожидания ответа канала.
+TAB_RECHECK_BUDGET_S = 10.0
+TAB_RECHECK_DELAY_S = 1.0
 # Маркер shape «модалка» (надёжный маркер — id формы, не letter-toggle, #1006).
 APPLY_MODAL_FORM = "form#RESPONSE_MODAL_FORM_ID"
 # Модалка видимости (#1218, боевой census 2026-09-23): overlay ищется ПОДСТРОКЕ
@@ -406,15 +413,27 @@ def apply_via_live(
         с ответом команды. Разрешает только вкладка: ушла на форму (hh.ru-хост)
         — клик был; мёртвый канал или канонический URL — False, решает прежний
         отказ (fail-closed: нет факта URL — нет продолжения).
+
+        Бой 2026-09-25 23:40 (та же вакансия, уже с фикс-веткой): первый
+        перечитке-вызов упал тем же content_script_unreachable — старый
+        контекст умер, контент-скрипт новой страницы ещё не инжектирован,
+        а навигация доехала секунду позже. Поэтому перечитка — с бюджетом и
+        ретраями: вкладка обязана ОТВЕТИТЬ, прежде чем верить «навигации не
+        было»; вкладка, не ответившая за бюджет (мёртвый канал), — False.
         """
-        try:
-            url = str(channel.get_state().get("url", ""))
-        except (ChannelError, PrimitiveError):
-            return False
-        parts = urlsplit(url)
-        return parts.path.rstrip("/") == "/applicant/vacancy_response" and _is_hh_ru_host(
-            parts.netloc
-        )
+        deadline = time.monotonic() + TAB_RECHECK_BUDGET_S
+        while True:
+            try:
+                url = str(channel.get_state().get("url", ""))
+            except (ChannelError, PrimitiveError):
+                if time.monotonic() >= deadline:
+                    return False
+                time.sleep(TAB_RECHECK_DELAY_S)
+                continue
+            parts = urlsplit(url)
+            return parts.path.rstrip("/") == "/applicant/vacancy_response" and _is_hh_ru_host(
+                parts.netloc
+            )
 
     grey_zone = False  # True с момента клика по кнопке отклика (#207)
     try:

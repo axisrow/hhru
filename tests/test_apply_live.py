@@ -97,6 +97,12 @@ class FakeFormChannel:
         # #1224: навигирующий клик кнопки — вкладка уходит на полную форму ДО
         # потери ответа; None = навигации не было (вкладка осталась на месте).
         nav_form_url: str | None = None,
+        # #1224 (раунд 2): инъекция контент-скрипта новой страницы отстаёт от
+        # коммита навигации — первый get_state после клика падает тем же
+        # content_script_unreachable, второй уже отвечает. None = вкладка
+        # после клика не отвечает вовсе (мёртвая вкладка).
+        nav_state_settles: bool = True,
+        state_error_after_click: PrimitiveError | None = None,
         submit_click_error: PrimitiveError | None = None,
         fill_error: PrimitiveError | None = None,
         warning_check_error: PrimitiveError | None = None,
@@ -124,6 +130,10 @@ class FakeFormChannel:
         self.submit_markers = submit_markers
         self.apply_click_error = apply_click_error
         self.nav_form_url = nav_form_url
+        self.nav_state_settles = nav_state_settles
+        self.state_error_after_click = state_error_after_click
+        self._nav_pending = False
+        self._nav_recheck_answered = False
         self.submit_click_error = submit_click_error
         self.fill_error = fill_error
         self.warning_check_error = warning_check_error
@@ -158,6 +168,22 @@ class FakeFormChannel:
         # Контракт LiveChannel.get_state(): уже развёрнутый {url, ...} (обёртку
         # 'page' транспорта снимает сам канал, как 'element' у check).
         self.calls.append((ACTION_GET_STATE, {}))
+        if self.apply_clicked and self.state_error_after_click is not None:
+            raise self.state_error_after_click
+        if self._nav_pending:
+            if not self._nav_recheck_answered:
+                # Навигация в разгаре: старый контекст умер, контент-скрипт
+                # новой страницы ещё не инжектирован — тот же код отказа.
+                self._nav_recheck_answered = True
+                if not self.nav_state_settles:
+                    self._nav_pending = False
+                raise PrimitiveError(
+                    "content_script_unreachable",
+                    "Receiving end does not exist",
+                    forwarded=False,
+                )
+            self._nav_pending = False
+            self.url = self.nav_form_url
         return {"url": self.url, "title": "Вакансия", "readyState": "complete"}
 
     def check(self, selector: str) -> dict:
@@ -176,10 +202,12 @@ class FakeFormChannel:
         if "vacancy-response-link-top" in selector and "again" not in selector:
             if self.apply_click_error is not None:
                 # #1224: навигирующий клик исполняется — вкладка уходит на
-                # полную форму (факт видит только get_state()), ответ гибнет.
+                # полную форму (факт видит только get_state()), ответ гибнет;
+                # URL переключается перечиткой, не здесь (инъекция отстаёт).
                 if self.nav_form_url is not None:
                     self.apply_clicked = True
-                    self.url = self.nav_form_url
+                    self._nav_pending = True
+                    self._nav_recheck_answered = False
                 raise self.apply_click_error
             self.apply_clicked = True
             if self.modal_after_click:
@@ -496,7 +524,38 @@ def test_nav_click_race_continues_page_form_flow() -> None:
     assert channel.apply_clicked and channel.submitted
     assert channel.option_selected
     states = [payload for action, payload in channel.calls if action == ACTION_GET_STATE]
-    assert len(states) == 2  # гейт вкладки + перечитка после отказа клика
+    # Гейт вкладки + перечитка: первый вызов падает (инъекция отстаёт от
+    # коммита навигации, бой 23:40), второй отвечает URL формы.
+    assert len(states) == 3
+
+
+def test_nav_click_dead_tab_within_budget_still_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Регрессия fail-closed (#1224 раунд 2): вкладка, не ответившая за бюджет
+    # перечитки (мёртвый канал, не навигация), — прежний отказ; ретраи не
+    # превращают «нет факта» в продолжение. Бюджет ужат, чтобы тест не спал.
+    from hhru_bot.live import scenarios as scenarios_module
+
+    monkeypatch.setattr(scenarios_module, "TAB_RECHECK_BUDGET_S", 0.2)
+    monkeypatch.setattr(scenarios_module, "TAB_RECHECK_DELAY_S", 0.05)
+    channel = FakeFormChannel(
+        apply_click_error=PrimitiveError(
+            "content_script_unreachable",
+            "Receiving end does not exist",
+            forwarded=False,
+        ),
+        state_error_after_click=PrimitiveError(
+            "content_script_unreachable",
+            "Receiving end does not exist",
+            forwarded=False,
+        ),
+    )
+    result = _run(channel, verify=_verify_of("not_found"))
+
+    assert (result.success, result.acted, result.uncertain) == (False, False, False)
+    assert "клик по кнопке отклика не выполнен" in result.reason
+    assert not channel.submitted
 
 
 def test_button_click_unreachable_without_navigation_still_fails() -> None:
