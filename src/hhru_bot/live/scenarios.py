@@ -46,7 +46,11 @@ WAIT_STATE_HIDDEN = "hidden"
 # response_lost (#1181): background.js доставил команду во вкладку, но ответ
 # потерян («message port closed before a response») — executor мог кликнуть,
 # а страница уйти в навигацию посреди ожидания; content_script_unreachable —
-# команда НЕ доставлена («Receiving end does not exist»), клика не было.
+# по умолчанию команда НЕ доставлена («Receiving end does not exist»), клика
+# не было. ОДНО исключение (#1224): на клике КНОПКИ ОТКЛИКА тот же код даёт
+# навигирующий клик — hh.ru не перехватил JS (редкий shape полной формы),
+# синхронный <a href> убивает контент-скрипт вместе с ответом. Там факт
+# решает перечитка вкладки (_tab_on_response_form), а не этот набор.
 FORWARD_UNKNOWN_CODES = frozenset(
     {"timeout", "client_disconnected", "bad_response", "unexpected_message", "response_lost"}
 )
@@ -394,6 +398,24 @@ def apply_via_live(
         extra = f" | +ещё {len(census) - len(shown)}" if len(census) > len(shown) else ""
         return "; оверлеи: " + " | ".join(shown) + extra
 
+    def _tab_on_response_form() -> bool:
+        """Вкладка уже на полной форме /applicant/vacancy_response? (факт URL)
+
+        #1224: content_script_unreachable на клике кнопки отклика не доказывает
+        «клика не было» — навигация полной формы убивает контент-скрипт вместе
+        с ответом команды. Разрешает только вкладка: ушла на форму (hh.ru-хост)
+        — клик был; мёртвый канал или канонический URL — False, решает прежний
+        отказ (fail-closed: нет факта URL — нет продолжения).
+        """
+        try:
+            url = str(channel.get_state().get("url", ""))
+        except (ChannelError, PrimitiveError):
+            return False
+        parts = urlsplit(url)
+        return parts.path.rstrip("/") == "/applicant/vacancy_response" and _is_hh_ru_host(
+            parts.netloc
+        )
+
     grey_zone = False  # True с момента клика по кнопке отклика (#207)
     try:
         # --- гейты до клика: чтения, мутировать не могут ---------------------
@@ -446,6 +468,19 @@ def apply_via_live(
             )
         except _ScenarioInterrupted as exc:
             return _grey_zone(str(exc), acted=True, uncertain=True)
+        except _RefusedBeforeAction:
+            # #1224 (бой 2026-09-25, BIV 137734840, дважды):
+            # content_script_unreachable здесь НЕ доказывает «клика не было» —
+            # если hh.ru не перехватил клик JS (редкий shape полной формы),
+            # синхронная навигация на /applicant/vacancy_response убивает
+            # контент-скрипт вместе с ответом команды, и код совпадает с
+            # недоставленной командой. Разрешает факт вкладки: ушла на полную
+            # форму — клик исполнен, серая зона #207, поток продолжается
+            # (модалки нет → ждём textarea полной страницы ниже); осталась на
+            # canonical (policy/цель/мёртвый канал) — прежний отказ.
+            if not _tab_on_response_form():
+                raise
+            modal_met = False
 
         # --- серая зона #207: клик исполнен, fail-исходы финализирует verify -
         grey_zone = True

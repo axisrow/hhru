@@ -33,6 +33,9 @@ pytestmark = pytest.mark.unit
 
 VACANCY_ID = "136789544"
 VACANCY_URL = f"https://hh.ru/vacancy/{VACANCY_ID}"
+# Полная форма отклика (второй shape, #1224): сюда уходит вкладка, когда
+# hh.ru не перехватил клик по кнопке отклика.
+FORM_URL = f"https://hh.ru/applicant/vacancy_response?vacancyId={VACANCY_ID}&hhtmFrom=vacancy"
 RESUME_ID = "0123abcd"
 TEXTAREA = "vacancy-response-popup-form-letter-input"
 SUBMIT_MARKER = "responded-success-attach-cover-letter"
@@ -91,6 +94,9 @@ class FakeFormChannel:
         fill_ok: bool = True,
         submit_markers: bool = True,
         apply_click_error: PrimitiveError | None = None,
+        # #1224: навигирующий клик кнопки — вкладка уходит на полную форму ДО
+        # потери ответа; None = навигации не было (вкладка осталась на месте).
+        nav_form_url: str | None = None,
         submit_click_error: PrimitiveError | None = None,
         fill_error: PrimitiveError | None = None,
         warning_check_error: PrimitiveError | None = None,
@@ -117,6 +123,7 @@ class FakeFormChannel:
         self.fill_ok = fill_ok
         self.submit_markers = submit_markers
         self.apply_click_error = apply_click_error
+        self.nav_form_url = nav_form_url
         self.submit_click_error = submit_click_error
         self.fill_error = fill_error
         self.warning_check_error = warning_check_error
@@ -168,6 +175,11 @@ class FakeFormChannel:
         )
         if "vacancy-response-link-top" in selector and "again" not in selector:
             if self.apply_click_error is not None:
+                # #1224: навигирующий клик исполняется — вкладка уходит на
+                # полную форму (факт видит только get_state()), ответ гибнет.
+                if self.nav_form_url is not None:
+                    self.apply_clicked = True
+                    self.url = self.nav_form_url
                 raise self.apply_click_error
             self.apply_clicked = True
             if self.modal_after_click:
@@ -460,6 +472,50 @@ def test_page_shape_reached_when_modal_absent() -> None:
         payload["timeoutMs"] == PAGE_FORM_WAIT_TIMEOUT_MS and "letter-input" in payload["selector"]
         for payload in waits
     )
+
+
+def test_nav_click_race_continues_page_form_flow() -> None:
+    # #1224 (бой 2026-09-25, BIV 137734840): клик кнопки отклика исполнился,
+    # но синхронная навигация на полную форму убила контент-скрипт вместе с
+    # ответом — исполнитель отдал content_script_unreachable (не-forwarded).
+    # Перечитка вкладки видит форму — клик был, поток продолжается: textarea →
+    # пикер → письмо → submit. Вакансия не сгорает в failed.
+    channel = FakeFormChannel(
+        modal_after_click=False,
+        page_form=True,
+        apply_click_error=PrimitiveError(
+            "content_script_unreachable",
+            "Receiving end does not exist",
+            forwarded=False,
+        ),
+        nav_form_url=FORM_URL,
+    )
+    result = _run(channel, verify=_verify_of("found"), require_resume_select=True)
+
+    assert result.success
+    assert channel.apply_clicked and channel.submitted
+    assert channel.option_selected
+    states = [payload for action, payload in channel.calls if action == ACTION_GET_STATE]
+    assert len(states) == 2  # гейт вкладки + перечитка после отказа клика
+
+
+def test_button_click_unreachable_without_navigation_still_fails() -> None:
+    # Регрессия классификации: тот же код при вкладке, оставшейся на
+    # canonical (policy/цель/мёртвый канал), — прежний отказ «клик не
+    # выполнен», acted=False; навигацию подменять нечему.
+    channel = FakeFormChannel(
+        apply_click_error=PrimitiveError(
+            "content_script_unreachable",
+            "Receiving end does not exist",
+            forwarded=False,
+        ),
+    )
+    result = _run(channel, verify=_verify_of("not_found"))
+
+    assert (result.success, result.acted, result.uncertain) == (False, False, False)
+    assert "клик по кнопке отклика не выполнен" in result.reason
+    assert "content_script_unreachable" in result.reason
+    assert not channel.submitted
 
 
 def _grey_case(modal: bool, page: bool, verify, *, expect):
