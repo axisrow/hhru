@@ -663,6 +663,28 @@ def test_response_lost_dead_tab_stays_uncertain(monkeypatch: pytest.MonkeyPatch)
     assert not channel.submitted
 
 
+def test_nav_click_to_other_vacancy_form_still_fails() -> None:
+    # Ревью PR #1225 (P1): relayToTab посылает команду в ЛЮБУЮ активную
+    # hh.ru-вкладку (background.js:109-121, tabId-привязки в протоколе нет) —
+    # перечитка может прочитать чужую вкладку, уже стоящую на форме ДРУГОГО
+    # отклика. vacancyId в query, не совпавший с целевой вакансией, не
+    # доказывает исполнение нашего клика — прежний отказ, продолжения
+    # (пикер → письмо → submit не туда) нет.
+    channel = FakeFormChannel(
+        apply_click_error=PrimitiveError(
+            "content_script_unreachable",
+            "Receiving end does not exist",
+            forwarded=False,
+        ),
+        nav_form_url="https://hh.ru/applicant/vacancy_response?vacancyId=999999&hhtmFrom=vacancy",
+    )
+    result = _run(channel, verify=_verify_of("not_found"), require_resume_select=True)
+
+    assert (result.success, result.acted, result.uncertain) == (False, False, False)
+    assert "клик по кнопке отклика не выполнен" in result.reason
+    assert not channel.submitted
+
+
 def _grey_case(modal: bool, page: bool, verify, *, expect):
     channel = FakeFormChannel(modal_after_click=modal, page_form=page)
     result = _run(channel, verify=verify, require_resume_select=False)

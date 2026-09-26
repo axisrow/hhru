@@ -19,7 +19,7 @@ import json
 import os
 import threading
 import time
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 # --- Маппинг сценария на действия канала (единая точка контракта S2). ------
 # Имена = ACTION_ALLOWLIST extensions/hhru-live (content.js): check_element и
@@ -410,8 +410,9 @@ def apply_via_live(
 
         #1224: content_script_unreachable на клике кнопки отклика не доказывает
         «клика не было» — навигация полной формы убивает контент-скрипт вместе
-        с ответом команды. Разрешает только вкладка: ушла на форму (hh.ru-хост)
-        — клик был; мёртвый канал или канонический URL — False, решает прежний
+        с ответом команды. Разрешает только вкладка: ушла на форму ЭТОЙ
+        вакансии (hh.ru-хост + vacancyId в query, см. ниже) — клик был;
+        мёртвый канал или канонический URL — False, решает прежний
         отказ (fail-closed: нет факта URL — нет продолжения).
 
         Бой 2026-09-25 23:40 (та же вакансия, уже с фикс-веткой): первый
@@ -431,9 +432,17 @@ def apply_via_live(
                 time.sleep(TAB_RECHECK_DELAY_S)
                 continue
             parts = urlsplit(url)
-            return parts.path.rstrip("/") == "/applicant/vacancy_response" and _is_hh_ru_host(
+            if parts.path.rstrip("/") != "/applicant/vacancy_response" or not _is_hh_ru_host(
                 parts.netloc
-            )
+            ):
+                return False
+            # Форма обязана быть формой ЭТОЙ вакансии (ревью PR #1225, P1):
+            # relayToTab посылает команду в ЛЮБУЮ активную hh.ru-вкладку
+            # (background.js:109-121, tabId-привязки в протоколе нет), поэтому
+            # перечитка может прочитать чужую вкладку, уже стоящую на форме
+            # другого отклика — без сверки vacancyId поток продолжился бы
+            # (пикер → письмо → submit) и отправил отклик не туда.
+            return parse_qs(parts.query).get("vacancyId") == [vacancy_id]
 
     grey_zone = False  # True с момента клика по кнопке отклика (#207)
     try:
