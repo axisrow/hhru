@@ -486,7 +486,19 @@ def apply_via_live(
                 },
             )
         except _ScenarioInterrupted as exc:
-            return _grey_zone(str(exc), acted=True, uncertain=True)
+            # Ревью PR #1225 (P1, тред 2): response_lost здесь —
+            # документированный исход навигирующего клика (background.js:123-132:
+            # «message port closed» = команда ДОШЛА в контент-скрипт, ответ
+            # потерян — страница ушла в навигацию посреди ожидания). Прежний код
+            # сразу финализировал серой зоной: открытие формы переговоров не
+            # создаёт, поэтому verify not_found хоронил живую открытую форму в
+            # failed. Разрешает та же перечитка вкладки: форма ЭТОЙ вакансии
+            # открыта — клик исполнен, поток продолжается; доказать не удалось
+            # (мёртвый канал/канонический URL) — прежний uncertain+acted,
+            # решает внешний verify #207 (fail-closed).
+            if not _tab_on_response_form():
+                return _grey_zone(str(exc), acted=True, uncertain=True)
+            modal_met = False
         except _RefusedBeforeAction:
             # #1224 (бой 2026-09-25, BIV 137734840, дважды):
             # content_script_unreachable здесь НЕ доказывает «клика не было» —

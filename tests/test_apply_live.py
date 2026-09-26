@@ -610,6 +610,59 @@ def test_button_click_unreachable_without_navigation_still_fails() -> None:
     assert not channel.submitted
 
 
+def test_nav_click_response_lost_continues_page_form_flow() -> None:
+    # Ревью PR #1225 (P1, тред 2): response_lost — документированный исход
+    # навигирующего клика (background.js:123-132: команда дошла, ответ потерян —
+    # страница ушла в навигацию). Прежний обработчик _ScenarioInterrupted сразу
+    # финализировал серой зоной: verify not_found (открытие формы переговоров
+    # не создаёт) хоронил живую открытую форму в failed. Перечитка вкладки
+    # видит форму этой вакансии — клик исполнен, поток продолжается до success.
+    channel = FakeFormChannel(
+        modal_after_click=False,
+        page_form=True,
+        apply_click_error=PrimitiveError(
+            "response_lost",
+            "message port closed before a response was received",
+            forwarded=True,
+        ),
+        nav_form_url=FORM_URL,
+    )
+    result = _run(channel, verify=_verify_of("found"), require_resume_select=True)
+
+    assert result.success
+    assert channel.apply_clicked and channel.submitted
+    assert channel.option_selected
+
+
+def test_response_lost_dead_tab_stays_uncertain(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Регрессия fail-closed: response_lost при непрочитаемой вкладке — прежний
+    # исход серой зоны (acted=True, решает внешний verify #207); ретраи не
+    # продолжают поток без факта формы. Бюджет ужат, чтобы тест не спал.
+    from hhru_bot.live import scenarios as scenarios_module
+
+    monkeypatch.setattr(scenarios_module, "TAB_RECHECK_BUDGET_S", 0.2)
+    monkeypatch.setattr(scenarios_module, "TAB_RECHECK_DELAY_S", 0.05)
+    channel = FakeFormChannel(
+        apply_click_error=PrimitiveError(
+            "response_lost",
+            "message port closed before a response was received",
+            forwarded=True,
+        ),
+        state_error_after_click=PrimitiveError(
+            "content_script_unreachable",
+            "Receiving end does not exist",
+            forwarded=False,
+        ),
+    )
+    result = _run(channel, verify=_verify_of("not_found"))
+
+    # not_found: вердикт сайта снимает неопределённость, acted остаётся
+    # (зеркало test_grey_zone_no_form_not_found_is_failed_not_uncertain).
+    assert (result.success, result.acted, result.uncertain) == (False, True, False)
+    assert "внешняя проверка: отклика в /applicant/negotiations нет" in result.reason
+    assert not channel.submitted
+
+
 def _grey_case(modal: bool, page: bool, verify, *, expect):
     channel = FakeFormChannel(modal_after_click=modal, page_form=page)
     result = _run(channel, verify=verify, require_resume_select=False)
