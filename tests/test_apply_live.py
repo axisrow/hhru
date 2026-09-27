@@ -52,6 +52,15 @@ VISIBILITY_OVERLAY = {
         "на «Видно всем работодателям»"
     ),
 }
+# Гео-диалог региона (#1226, боевой census 2026-09-27): alertdialog,
+# ambiguous, close-контроля нет — перехватывает клик кнопки отклика.
+GEO_OVERLAY = {
+    "id": "overlay-9",
+    "type": "modal",
+    "disposition": "ambiguous",
+    "closeControls": 0,
+    "text": "Ваш регион — Москва? Да, верно Нет, другой",
+}
 
 
 class Verdict:
@@ -106,6 +115,9 @@ class FakeFormChannel:
         # #1224 (раунд 3): полная форма с анкетой при свёрнутом письме —
         # textarea в DOM нет вовсе; маркер формы не может быть одной textarea.
         letter_collapsed_on_page_form: bool = False,
+        # #1226: гео-диалог региона появляется ПЕРЕХВАТОМ клика (в census
+        # только после кнопки отклика).
+        geo_overlay_after_click: bool = False,
         submit_click_error: PrimitiveError | None = None,
         fill_error: PrimitiveError | None = None,
         warning_check_error: PrimitiveError | None = None,
@@ -136,6 +148,7 @@ class FakeFormChannel:
         self.nav_state_settles = nav_state_settles
         self.state_error_after_click = state_error_after_click
         self.letter_collapsed_on_page_form = letter_collapsed_on_page_form
+        self.geo_overlay_after_click = geo_overlay_after_click
         self._nav_pending = False
         self._nav_recheck_answered = False
         self.submit_click_error = submit_click_error
@@ -265,7 +278,12 @@ class FakeFormChannel:
         self.calls.append((ACTION_LIST_OVERLAYS, {}))
         if self.overlays_error is not None:
             raise self.overlays_error
-        return [dict(overlay) for overlay in self.overlays]
+        result = [dict(overlay) for overlay in self.overlays]
+        if self.geo_overlay_after_click and self.apply_clicked:
+            # Гео-диалог монтируется ПЕРЕХВАТОМ клика (#1226) — в census
+            # появляется только после кнопки отклика.
+            result.append(dict(GEO_OVERLAY))
+        return result
 
     def dismiss_overlay(self, overlay_id: str) -> dict:
         if self.dismiss_error is not None:
@@ -727,6 +745,36 @@ def test_questions_skip_and_queue_channel_never_answers() -> None:
     assert result.question_texts == ["Ваш опыт с LLM?"]
     assert channel.filled_text is None and not channel.submitted
     assert "вопросы в очередь" in result.reason
+
+
+def test_geo_dialog_intercept_names_blocker_not_oneclick_guess() -> None:
+    # #1226 (бои 10:04/11:15 2026-09-27): hh.ru перехватил клик гео-диалогом
+    # «Ваш регион — Москва?» — прежний вердикт гадал «возможен one-click».
+    # Перехват назван в overlay census; клик исполнен — серая зона, решает
+    # внешний verify (not_found → failed+acted, вакансия повторопригодна).
+    channel = FakeFormChannel(
+        modal_after_click=False,
+        page_form=False,
+        geo_overlay_after_click=True,
+    )
+    result = _run(channel, verify=_verify_of("not_found"))
+
+    assert (result.success, result.acted, result.uncertain) == (False, True, False)
+    assert "гео-диалог региона перехватил клик" in result.reason
+    assert "Ваш регион" in result.reason
+    assert "one-click" not in result.reason
+    assert not channel.submitted
+
+
+def test_geo_dialog_persistent_before_click_fails_without_action() -> None:
+    # #1226: диалог уже висит на странице (персистентный сеанс) — клик уйдёт
+    # в перехват, честный отказ ДО действия: acted=False, повторопригодно.
+    channel = FakeFormChannel(overlays=[dict(GEO_OVERLAY)])
+    result = _run(channel)
+
+    assert (result.success, result.acted, result.uncertain) == (False, False, False)
+    assert "гео-диалог региона перехватит клик" in result.reason
+    assert not channel.apply_clicked
 
 
 def test_hidden_resume_warning_is_skip_with_human_reason() -> None:
