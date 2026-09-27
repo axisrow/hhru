@@ -33,6 +33,9 @@ pytestmark = pytest.mark.unit
 
 VACANCY_ID = "136789544"
 VACANCY_URL = f"https://hh.ru/vacancy/{VACANCY_ID}"
+# Полная форма отклика (второй shape, #1224): сюда уходит вкладка, когда
+# hh.ru не перехватил клик по кнопке отклика.
+FORM_URL = f"https://hh.ru/applicant/vacancy_response?vacancyId={VACANCY_ID}&hhtmFrom=vacancy"
 RESUME_ID = "0123abcd"
 TEXTAREA = "vacancy-response-popup-form-letter-input"
 SUBMIT_MARKER = "responded-success-attach-cover-letter"
@@ -91,6 +94,18 @@ class FakeFormChannel:
         fill_ok: bool = True,
         submit_markers: bool = True,
         apply_click_error: PrimitiveError | None = None,
+        # #1224: навигирующий клик кнопки — вкладка уходит на полную форму ДО
+        # потери ответа; None = навигации не было (вкладка осталась на месте).
+        nav_form_url: str | None = None,
+        # #1224 (раунд 2): инъекция контент-скрипта новой страницы отстаёт от
+        # коммита навигации — первый get_state после клика падает тем же
+        # content_script_unreachable, второй уже отвечает. None = вкладка
+        # после клика не отвечает вовсе (мёртвая вкладка).
+        nav_state_settles: bool = True,
+        state_error_after_click: PrimitiveError | None = None,
+        # #1224 (раунд 3): полная форма с анкетой при свёрнутом письме —
+        # textarea в DOM нет вовсе; маркер формы не может быть одной textarea.
+        letter_collapsed_on_page_form: bool = False,
         submit_click_error: PrimitiveError | None = None,
         fill_error: PrimitiveError | None = None,
         warning_check_error: PrimitiveError | None = None,
@@ -117,6 +132,12 @@ class FakeFormChannel:
         self.fill_ok = fill_ok
         self.submit_markers = submit_markers
         self.apply_click_error = apply_click_error
+        self.nav_form_url = nav_form_url
+        self.nav_state_settles = nav_state_settles
+        self.state_error_after_click = state_error_after_click
+        self.letter_collapsed_on_page_form = letter_collapsed_on_page_form
+        self._nav_pending = False
+        self._nav_recheck_answered = False
         self.submit_click_error = submit_click_error
         self.fill_error = fill_error
         self.warning_check_error = warning_check_error
@@ -151,6 +172,22 @@ class FakeFormChannel:
         # Контракт LiveChannel.get_state(): уже развёрнутый {url, ...} (обёртку
         # 'page' транспорта снимает сам канал, как 'element' у check).
         self.calls.append((ACTION_GET_STATE, {}))
+        if self.apply_clicked and self.state_error_after_click is not None:
+            raise self.state_error_after_click
+        if self._nav_pending:
+            if not self._nav_recheck_answered:
+                # Навигация в разгаре: старый контекст умер, контент-скрипт
+                # новой страницы ещё не инжектирован — тот же код отказа.
+                self._nav_recheck_answered = True
+                if not self.nav_state_settles:
+                    self._nav_pending = False
+                raise PrimitiveError(
+                    "content_script_unreachable",
+                    "Receiving end does not exist",
+                    forwarded=False,
+                )
+            self._nav_pending = False
+            self.url = self.nav_form_url
         return {"url": self.url, "title": "Вакансия", "readyState": "complete"}
 
     def check(self, selector: str) -> dict:
@@ -168,6 +205,13 @@ class FakeFormChannel:
         )
         if "vacancy-response-link-top" in selector and "again" not in selector:
             if self.apply_click_error is not None:
+                # #1224: навигирующий клик исполняется — вкладка уходит на
+                # полную форму (факт видит только get_state()), ответ гибнет;
+                # URL переключается перечиткой, не здесь (инъекция отстаёт).
+                if self.nav_form_url is not None:
+                    self.apply_clicked = True
+                    self._nav_pending = True
+                    self._nav_recheck_answered = False
                 raise self.apply_click_error
             self.apply_clicked = True
             if self.modal_after_click:
@@ -196,11 +240,16 @@ class FakeFormChannel:
         result = self.click(selector, wait_for=wait_for, allow_apply=allow_apply)
         return bool((result.get("wait") or {}).get("met", False))
 
+    def _any_present(self, selector: str) -> bool:
+        # CSS-композит («a, b») — OR по частям; _present матчит подстроки
+        # одиночных селекторов и на составной строке выбирает первую ветку.
+        return any(self._present(part.strip())[0] for part in selector.split(","))
+
     def wait(self, selector: str, state: str, timeout_ms: int) -> bool:
         self.calls.append(
             (ACTION_WAIT, {"selector": selector, "state": state, "timeoutMs": timeout_ms})
         )
-        present = self._present(selector)[0]
+        present = self._any_present(selector)
         return present if state == "visible" else not present
 
     def fill(self, selector: str, text: str) -> dict:
@@ -307,7 +356,9 @@ class FakeFormChannel:
         if not self._form_open():
             return False
         if self.page_form:
-            return True
+            # #1224 раунд 3: письмо свёрнуто — textarea в DOM нет, появляется
+            # только после клика по letter-toggle.
+            return not self.letter_collapsed_on_page_form or self.toggle_clicked
         if self.modal_after_click:
             return self.textarea_after_click or self.toggle_clicked
         return False
@@ -315,7 +366,7 @@ class FakeFormChannel:
     def _wait_met(self, wait_for: dict | None) -> bool:
         if not wait_for:
             return True
-        present = self._present(str(wait_for.get("selector", "")))[0]
+        present = self._any_present(str(wait_for.get("selector", "")))
         return present if wait_for.get("state") == "visible" else not present
 
 
@@ -460,6 +511,178 @@ def test_page_shape_reached_when_modal_absent() -> None:
         payload["timeoutMs"] == PAGE_FORM_WAIT_TIMEOUT_MS and "letter-input" in payload["selector"]
         for payload in waits
     )
+
+
+def test_nav_click_race_continues_page_form_flow() -> None:
+    # #1224 (бой 2026-09-25, BIV 137734840): клик кнопки отклика исполнился,
+    # но синхронная навигация на полную форму убила контент-скрипт вместе с
+    # ответом — исполнитель отдал content_script_unreachable (не-forwarded).
+    # Перечитка вкладки видит форму — клик был, поток продолжается: textarea →
+    # пикер → письмо → submit. Вакансия не сгорает в failed.
+    channel = FakeFormChannel(
+        modal_after_click=False,
+        page_form=True,
+        apply_click_error=PrimitiveError(
+            "content_script_unreachable",
+            "Receiving end does not exist",
+            forwarded=False,
+        ),
+        nav_form_url=FORM_URL,
+    )
+    result = _run(channel, verify=_verify_of("found"), require_resume_select=True)
+
+    assert result.success
+    assert channel.apply_clicked and channel.submitted
+    assert channel.option_selected
+    states = [payload for action, payload in channel.calls if action == ACTION_GET_STATE]
+    # Гейт вкладки + перечитка: первый вызов падает (инъекция отстаёт от
+    # коммита навигации, бой 23:40), второй отвечает URL формы.
+    assert len(states) == 3
+
+
+def test_page_form_with_questions_and_collapsed_letter_is_has_questions_skip() -> None:
+    # #1224 раунд 3 (бой 00:07, 137734840): полная форма с анкетой при
+    # свёрнутом письме — textarea в DOM нет вовсе, ожидание одной textarea
+    # никогда не распознало бы открытую форму. Композитный маркер (textarea,
+    # пикер, task-body) открывает форму, и анкета уходит в легальный skip.
+    channel = FakeFormChannel(
+        modal_after_click=False,
+        page_form=True,
+        question_count=2,
+        letter_collapsed_on_page_form=True,
+    )
+    result = _run(channel, verify=_verify_of("not_found"), require_resume_select=True)
+
+    # Зеркало test_questions_skip_and_queue_channel_never_answers: сабмита
+    # не было — acted чистый, мутации hh.ru нет.
+    assert (result.success, result.acted, result.uncertain) == (False, False, False)
+    assert result.skipped
+    assert result.skip_reason == SKIP_REASONS.HAS_QUESTIONS
+    assert channel.question_text in result.question_texts
+    assert not channel.submitted
+
+
+def test_nav_click_dead_tab_within_budget_still_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Регрессия fail-closed (#1224 раунд 2): вкладка, не ответившая за бюджет
+    # перечитки (мёртвый канал, не навигация), — прежний отказ; ретраи не
+    # превращают «нет факта» в продолжение. Бюджет ужат, чтобы тест не спал.
+    from hhru_bot.live import scenarios as scenarios_module
+
+    monkeypatch.setattr(scenarios_module, "TAB_RECHECK_BUDGET_S", 0.2)
+    monkeypatch.setattr(scenarios_module, "TAB_RECHECK_DELAY_S", 0.05)
+    channel = FakeFormChannel(
+        apply_click_error=PrimitiveError(
+            "content_script_unreachable",
+            "Receiving end does not exist",
+            forwarded=False,
+        ),
+        state_error_after_click=PrimitiveError(
+            "content_script_unreachable",
+            "Receiving end does not exist",
+            forwarded=False,
+        ),
+    )
+    result = _run(channel, verify=_verify_of("not_found"))
+
+    assert (result.success, result.acted, result.uncertain) == (False, False, False)
+    assert "клик по кнопке отклика не выполнен" in result.reason
+    assert not channel.submitted
+
+
+def test_button_click_unreachable_without_navigation_still_fails() -> None:
+    # Регрессия классификации: тот же код при вкладке, оставшейся на
+    # canonical (policy/цель/мёртвый канал), — прежний отказ «клик не
+    # выполнен», acted=False; навигацию подменять нечему.
+    channel = FakeFormChannel(
+        apply_click_error=PrimitiveError(
+            "content_script_unreachable",
+            "Receiving end does not exist",
+            forwarded=False,
+        ),
+    )
+    result = _run(channel, verify=_verify_of("not_found"))
+
+    assert (result.success, result.acted, result.uncertain) == (False, False, False)
+    assert "клик по кнопке отклика не выполнен" in result.reason
+    assert "content_script_unreachable" in result.reason
+    assert not channel.submitted
+
+
+def test_nav_click_response_lost_continues_page_form_flow() -> None:
+    # Ревью PR #1225 (P1, тред 2): response_lost — документированный исход
+    # навигирующего клика (background.js:123-132: команда дошла, ответ потерян —
+    # страница ушла в навигацию). Прежний обработчик _ScenarioInterrupted сразу
+    # финализировал серой зоной: verify not_found (открытие формы переговоров
+    # не создаёт) хоронил живую открытую форму в failed. Перечитка вкладки
+    # видит форму этой вакансии — клик исполнен, поток продолжается до success.
+    channel = FakeFormChannel(
+        modal_after_click=False,
+        page_form=True,
+        apply_click_error=PrimitiveError(
+            "response_lost",
+            "message port closed before a response was received",
+            forwarded=True,
+        ),
+        nav_form_url=FORM_URL,
+    )
+    result = _run(channel, verify=_verify_of("found"), require_resume_select=True)
+
+    assert result.success
+    assert channel.apply_clicked and channel.submitted
+    assert channel.option_selected
+
+
+def test_response_lost_dead_tab_stays_uncertain(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Регрессия fail-closed: response_lost при непрочитаемой вкладке — прежний
+    # исход серой зоны (acted=True, решает внешний verify #207); ретраи не
+    # продолжают поток без факта формы. Бюджет ужат, чтобы тест не спал.
+    from hhru_bot.live import scenarios as scenarios_module
+
+    monkeypatch.setattr(scenarios_module, "TAB_RECHECK_BUDGET_S", 0.2)
+    monkeypatch.setattr(scenarios_module, "TAB_RECHECK_DELAY_S", 0.05)
+    channel = FakeFormChannel(
+        apply_click_error=PrimitiveError(
+            "response_lost",
+            "message port closed before a response was received",
+            forwarded=True,
+        ),
+        state_error_after_click=PrimitiveError(
+            "content_script_unreachable",
+            "Receiving end does not exist",
+            forwarded=False,
+        ),
+    )
+    result = _run(channel, verify=_verify_of("not_found"))
+
+    # not_found: вердикт сайта снимает неопределённость, acted остаётся
+    # (зеркало test_grey_zone_no_form_not_found_is_failed_not_uncertain).
+    assert (result.success, result.acted, result.uncertain) == (False, True, False)
+    assert "внешняя проверка: отклика в /applicant/negotiations нет" in result.reason
+    assert not channel.submitted
+
+
+def test_nav_click_to_other_vacancy_form_still_fails() -> None:
+    # Ревью PR #1225 (P1): relayToTab посылает команду в ЛЮБУЮ активную
+    # hh.ru-вкладку (background.js:109-121, tabId-привязки в протоколе нет) —
+    # перечитка может прочитать чужую вкладку, уже стоящую на форме ДРУГОГО
+    # отклика. vacancyId в query, не совпавший с целевой вакансией, не
+    # доказывает исполнение нашего клика — прежний отказ, продолжения
+    # (пикер → письмо → submit не туда) нет.
+    channel = FakeFormChannel(
+        apply_click_error=PrimitiveError(
+            "content_script_unreachable",
+            "Receiving end does not exist",
+            forwarded=False,
+        ),
+        nav_form_url="https://hh.ru/applicant/vacancy_response?vacancyId=999999&hhtmFrom=vacancy",
+    )
+    result = _run(channel, verify=_verify_of("not_found"), require_resume_select=True)
+
+    assert (result.success, result.acted, result.uncertain) == (False, False, False)
+    assert "клик по кнопке отклика не выполнен" in result.reason
+    assert not channel.submitted
 
 
 def _grey_case(modal: bool, page: bool, verify, *, expect):

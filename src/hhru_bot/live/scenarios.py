@@ -19,7 +19,7 @@ import json
 import os
 import threading
 import time
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 # --- Маппинг сценария на действия канала (единая точка контракта S2). ------
 # Имена = ACTION_ALLOWLIST extensions/hhru-live (content.js): check_element и
@@ -46,7 +46,11 @@ WAIT_STATE_HIDDEN = "hidden"
 # response_lost (#1181): background.js доставил команду во вкладку, но ответ
 # потерян («message port closed before a response») — executor мог кликнуть,
 # а страница уйти в навигацию посреди ожидания; content_script_unreachable —
-# команда НЕ доставлена («Receiving end does not exist»), клика не было.
+# по умолчанию команда НЕ доставлена («Receiving end does not exist»), клика
+# не было. ОДНО исключение (#1224): на клике КНОПКИ ОТКЛИКА тот же код даёт
+# навигирующий клик — hh.ru не перехватил JS (редкий shape полной формы),
+# синхронный <a href> убивает контент-скрипт вместе с ответом. Там факт
+# решает перечитка вкладки (_tab_on_response_form), а не этот набор.
 FORWARD_UNKNOWN_CODES = frozenset(
     {"timeout", "client_disconnected", "bad_response", "unexpected_message", "response_lost"}
 )
@@ -83,6 +87,13 @@ PAGE_FORM_WAIT_TIMEOUT_MS = 10_000  # второй shape: textarea полной 
 PANEL_WAIT_TIMEOUT_MS = 5_000  # панель выбора резюме открылась/закрылась
 LETTER_WAIT_TIMEOUT_MS = 5_000  # textarea после клика по letter-toggle
 SUBMIT_WAIT_TIMEOUT_MS = 20_000  # success-маркеры после submit-клика
+# Перечитка вкладки после навигирующего клика кнопки (#1224): инъекция
+# контент-скрипта новой страницы отстаёт от коммита навигации, первый вызов
+# отвечает content_script_unreachable. Бюджет — рендер формы; задержка — шаг
+# ретрая. Не путать с wait_*_TIMEOUT_MS: это сценарные паузы, не бюджеты
+# ожидания ответа канала.
+TAB_RECHECK_BUDGET_S = 10.0
+TAB_RECHECK_DELAY_S = 1.0
 # Маркер shape «модалка» (надёжный маркер — id формы, не letter-toggle, #1006).
 APPLY_MODAL_FORM = "form#RESPONSE_MODAL_FORM_ID"
 # Модалка видимости (#1218, боевой census 2026-09-23): overlay ищется ПОДСТРОКЕ
@@ -394,6 +405,45 @@ def apply_via_live(
         extra = f" | +ещё {len(census) - len(shown)}" if len(census) > len(shown) else ""
         return "; оверлеи: " + " | ".join(shown) + extra
 
+    def _tab_on_response_form() -> bool:
+        """Вкладка уже на полной форме /applicant/vacancy_response? (факт URL)
+
+        #1224: content_script_unreachable на клике кнопки отклика не доказывает
+        «клика не было» — навигация полной формы убивает контент-скрипт вместе
+        с ответом команды. Разрешает только вкладка: ушла на форму ЭТОЙ
+        вакансии (hh.ru-хост + vacancyId в query, см. ниже) — клик был;
+        мёртвый канал или канонический URL — False, решает прежний
+        отказ (fail-closed: нет факта URL — нет продолжения).
+
+        Бой 2026-09-25 23:40 (та же вакансия, уже с фикс-веткой): первый
+        перечитке-вызов упал тем же content_script_unreachable — старый
+        контекст умер, контент-скрипт новой страницы ещё не инжектирован,
+        а навигация доехала секунду позже. Поэтому перечитка — с бюджетом и
+        ретраями: вкладка обязана ОТВЕТИТЬ, прежде чем верить «навигации не
+        было»; вкладка, не ответившая за бюджет (мёртвый канал), — False.
+        """
+        deadline = time.monotonic() + TAB_RECHECK_BUDGET_S
+        while True:
+            try:
+                url = str(channel.get_state().get("url", ""))
+            except (ChannelError, PrimitiveError):
+                if time.monotonic() >= deadline:
+                    return False
+                time.sleep(TAB_RECHECK_DELAY_S)
+                continue
+            parts = urlsplit(url)
+            if parts.path.rstrip("/") != "/applicant/vacancy_response" or not _is_hh_ru_host(
+                parts.netloc
+            ):
+                return False
+            # Форма обязана быть формой ЭТОЙ вакансии (ревью PR #1225, P1):
+            # relayToTab посылает команду в ЛЮБУЮ активную hh.ru-вкладку
+            # (background.js:109-121, tabId-привязки в протоколе нет), поэтому
+            # перечитка может прочитать чужую вкладку, уже стоящую на форме
+            # другого отклика — без сверки vacancyId поток продолжился бы
+            # (пикер → письмо → submit) и отправил отклик не туда.
+            return parse_qs(parts.query).get("vacancyId") == [vacancy_id]
+
     grey_zone = False  # True с момента клика по кнопке отклика (#207)
     try:
         # --- гейты до клика: чтения, мутировать не могут ---------------------
@@ -445,7 +495,32 @@ def apply_via_live(
                 },
             )
         except _ScenarioInterrupted as exc:
-            return _grey_zone(str(exc), acted=True, uncertain=True)
+            # Ревью PR #1225 (P1, тред 2): response_lost здесь —
+            # документированный исход навигирующего клика (background.js:123-132:
+            # «message port closed» = команда ДОШЛА в контент-скрипт, ответ
+            # потерян — страница ушла в навигацию посреди ожидания). Прежний код
+            # сразу финализировал серой зоной: открытие формы переговоров не
+            # создаёт, поэтому verify not_found хоронил живую открытую форму в
+            # failed. Разрешает та же перечитка вкладки: форма ЭТОЙ вакансии
+            # открыта — клик исполнен, поток продолжается; доказать не удалось
+            # (мёртвый канал/канонический URL) — прежний uncertain+acted,
+            # решает внешний verify #207 (fail-closed).
+            if not _tab_on_response_form():
+                return _grey_zone(str(exc), acted=True, uncertain=True)
+            modal_met = False
+        except _RefusedBeforeAction:
+            # #1224 (бой 2026-09-25, BIV 137734840, дважды):
+            # content_script_unreachable здесь НЕ доказывает «клика не было» —
+            # если hh.ru не перехватил клик JS (редкий shape полной формы),
+            # синхронная навигация на /applicant/vacancy_response убивает
+            # контент-скрипт вместе с ответом команды, и код совпадает с
+            # недоставленной командой. Разрешает факт вкладки: ушла на полную
+            # форму — клик исполнен, серая зона #207, поток продолжается
+            # (модалки нет → ждём textarea полной страницы ниже); осталась на
+            # canonical (policy/цель/мёртвый канал) — прежний отказ.
+            if not _tab_on_response_form():
+                raise
+            modal_met = False
 
         # --- серая зона #207: клик исполнен, fail-исходы финализирует verify -
         grey_zone = True
@@ -454,7 +529,21 @@ def apply_via_live(
             # Модалки нет: либо страница /applicant/vacancy_response (второй
             # shape), либо one-click уже отправил отклик / relocation-попап /
             # терминальный блокер hh.ru. Различает их только внешний источник.
-            if not _wait(textarea_selector, WAIT_STATE_VISIBLE, PAGE_FORM_WAIT_TIMEOUT_MS):
+            # Маркер формы — КОМПОЗИТ (#1224, бой 00:07 на 137734840): форма
+            # может быть открыта при свёрнутом письме (textarea в DOM нет
+            # вовсе, census: resume-title виден, task-body×2, textarea=0) —
+            # ожидание одной textarea никогда не заканчивалось бы успехом.
+            # One-click/relocation не рендерят ни один из маркеров — прежняя
+            # серая зона сохранена.
+            page_form_marker = ", ".join(
+                (
+                    APPLY_COVER_LETTER_TEXTAREA,
+                    APPLY_COVER_LETTER_TEXTAREA_FORM,
+                    APPLY_RESUME_SELECT,
+                    APPLY_QUESTION_BODY,
+                )
+            )
+            if not _wait(page_form_marker, WAIT_STATE_VISIBLE, PAGE_FORM_WAIT_TIMEOUT_MS):
                 return _grey_zone(
                     "форма отклика не отрисовалась после клика (возможен one-click отклик)",
                     acted=True,
