@@ -298,6 +298,32 @@ def apply_via_live(
             skip_reason=SKIP_REASONS.RESUME_VISIBILITY,
         )
 
+    def _overlays_best_effort() -> list[dict] | None:
+        """Census оверлеев best-effort; None — census недоступен (ревью PR #1233).
+
+        Единый скан всех потребителей list_overlays. Широкий лов оставлен
+        НАМЕРЕННО: channel-like фейки команд не реализуют list_overlays, их
+        AttributeError проглатывается (census у командных прогонов нет); битая
+        запись payload (не-dict, расширение несовпадающей версии) нормализуется —
+        иначе AttributeError из цикла скана выбрасывался бы из apply_via_live
+        вопреки контракту «любой сбой — прежний вердикт». None (сбой) и []
+        (подтверждённо пусто) различаются: census-суффикс к отказу печатает
+        «нет» только для второго, мёртвый канал остаётся немым.
+        """
+        try:
+            overlays = channel.list_overlays()
+        except Exception:  # noqa: BLE001 — census best-effort, вердикт прежний
+            return None
+        return [overlay for overlay in overlays or [] if isinstance(overlay, dict)]
+
+    def _overlay_line(overlay: dict, text_limit: int) -> str:
+        """Единый формат census-строки: id type/disposition close=N: текст."""
+        return (
+            f"{overlay.get('id')} {overlay.get('type')}/{overlay.get('disposition')} "
+            f"close={overlay.get('closeControls')}: "
+            f"{str(overlay.get('text') or '').strip()[:text_limit]}"
+        )
+
     def _dismiss_visibility_overlay_once() -> bool:
         """Одна попытка закрыть safe-overlay «поменяйте видимость» (#1218).
 
@@ -327,12 +353,8 @@ def apply_via_live(
         try давал бы NameError мимо best-effort except (ревью PR #1216,
         round 2).
         """
-        try:
-            overlays = channel.list_overlays()
-        except (ChannelError, PrimitiveError):
-            return False
         target = None
-        for overlay in overlays or []:
+        for overlay in _overlays_best_effort() or []:
             if VISIBILITY_MODAL_TEXT_MARKER not in str(overlay.get("text") or ""):
                 continue
             if overlay.get("disposition") != "safe" or not overlay.get("closeControls"):
@@ -398,16 +420,10 @@ def apply_via_live(
         (ревью PR #1216). Best-effort: мёртвый канал — пустой суффикс,
         решает прежний вердикт.
         """
-        try:
-            overlays = channel.list_overlays()
-        except (ChannelError, PrimitiveError):
+        overlays = _overlays_best_effort()
+        if overlays is None:
             return ""
-        census = [
-            f"{overlay.get('id')} {overlay.get('type')}/{overlay.get('disposition')} "
-            f"close={overlay.get('closeControls')}: "
-            f"{str(overlay.get('text') or '').strip()[:60]}"
-            for overlay in overlays or []
-        ]
+        census = [_overlay_line(overlay, 60) for overlay in overlays]
         if not census:
             return "; оверлеи: нет"
         shown = census[:12]
@@ -417,19 +433,18 @@ def apply_via_live(
     def _geo_dialog_detail() -> str:
         """Текст гео-диалога региона в census, '' если его нет (#1226).
 
-        Best-effort широким исключением: census не обязан присутствовать у
-        channel-like объекта (командные фейки реализуют только примитивы
-        сценария), а любой его сбой — «диалога не видно», решает прежний
-        вердикт.
+        Гейт type == "modal" (ревью PR #1233): маркер — подстрока census-
+        текста любого overlay (content.js собирает popup/toast/notification
+        целиком), без гейта тост с «Ваш регион» отказывал бы каждый apply
+        до ручной чистки вкладки (прецедент #998). Реальный диалог —
+        alertdialog→modal, проходит.
         """
-        try:
-            overlays = channel.list_overlays()
-        except Exception:  # noqa: BLE001 — census best-effort, вердикт прежний
-            return ""
-        for overlay in overlays or []:
-            text = str(overlay.get("text") or "")
-            if GEO_DIALOG_TEXT_MARKER in text:
-                return f"{overlay.get('type')}/{overlay.get('disposition')}: {text.strip()[:200]}"
+        for overlay in _overlays_best_effort() or []:
+            if overlay.get("type") != "modal":
+                continue
+            if GEO_DIALOG_TEXT_MARKER not in str(overlay.get("text") or ""):
+                continue
+            return _overlay_line(overlay, 200)
         return ""
 
     def _tab_on_response_form() -> bool:
@@ -545,6 +560,17 @@ def apply_via_live(
             # (мёртвый канал/канонический URL) — прежний uncertain+acted,
             # решает внешний verify #207 (fail-closed).
             if not _tab_on_response_form():
+                # Ревью PR #1233: клик мог быть съеден гео-диалогом (ответ
+                # потерян, вкладка осталась на canonical) — census называет
+                # блокер, вердикт тот же (решает verify #207), причина не
+                # транспортная догадка.
+                geo = _geo_dialog_detail()
+                if geo:
+                    return _grey_zone(
+                        f"гео-диалог региона перехватил клик отклика ({geo})",
+                        acted=True,
+                        uncertain=True,
+                    )
                 return _grey_zone(str(exc), acted=True, uncertain=True)
             modal_met = False
         except _RefusedBeforeAction:
