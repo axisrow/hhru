@@ -51,7 +51,7 @@ CLI — это конструктор примитивов, а не набор �
 | `run` | WRITE-hh-ru | полный цикл apply + bump |
 | `probe` | READ | дамп формы отклика без отправки |
 | `stats` / `query` | READ | сводка / read-only SELECT к истории |
-| `responses` / `funnel` | READ | ответы работодателей / воронка |
+| `responses` / `funnel` | READ | события по откликам / воронка |
 | `whoami` / `list-resumes` | READ | сессия и резюме |
 | `market` | READ | агрегаты рынка |
 | `mark` / `clear-skipped` | WRITE-local | пометка оффера / очистка skipped |

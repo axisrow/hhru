@@ -147,7 +147,7 @@ def run(args: argparse.Namespace) -> None:
     rows = [
         ["Резюме", resume_label],
         ["Откликов за 24ч", f"{applied_24h} / {apply_limit}"],
-        ["Новых ответов 24ч", str(new_responses)],
+        ["Новых событий 24ч", str(new_responses)],
         ["Приглашений", str(invitations)],
         ["Тестов ожидает", str(pending_tests)],
     ]

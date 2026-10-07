@@ -1,4 +1,4 @@
-"""Команда responses: мониторинг ответов работодателей (#12, Этап 2).
+"""Команда responses: мониторинг событий по откликам (#12, Этап 2).
 
 Top-level команда ``hhru_bot responses ...`` — регистрируется автоматически через
 pkgutil.iter_modules в cli.register_commands (cli.py не трогается).
@@ -52,7 +52,7 @@ def _effective_max_pages(max_pages: int | None) -> int:
 def register(subparsers) -> None:
     p = subparsers.add_parser(
         "responses",
-        help="Проверить ответы работодателей (приглашения/отказы/сообщения)",
+        help="Проверить события по откликам (приглашения/отказы/прочтения)",
     )
     p.add_argument("--resume", help="ID резюме из конфига (по умолчанию — все)")
     p.add_argument(
@@ -67,7 +67,7 @@ def register(subparsers) -> None:
         "--since-hours",
         type=float,
         default=24.0,
-        help="Показать ответы, сменившие статус за последние N часов (по умолчанию 24). "
+        help="Показать события, сменившие статус за последние N часов (по умолчанию 24). "
         "0 — выполнить живой обход hh.ru и показать синхронизацию/историю.",
     )
     p.add_argument(
@@ -350,7 +350,7 @@ def run(args: argparse.Namespace) -> CommandExitCode | None:
                     history.mark_responses_alert_success(scan_started_at)
             except (NotAuthenticated, ResponsesIndeterminate, ValueError) as e:
                 # Истёкшая сессия или не подтверждённый DOM: НЕ затираем
-                # историю и НЕ выдаём неопределённость за «нет новых ответов».
+                # историю и НЕ выдаём неопределённость за «нет новых событий».
                 print(f"Ошибка: {e}", file=sys.stderr)
                 sys.exit(1)
                 return
@@ -481,7 +481,7 @@ def run(args: argparse.Namespace) -> CommandExitCode | None:
                 "подтверждено — см. лог warning)"
             )
     else:
-        print("Режим --since-hours 0: обход hh.ru пропущен, вывожу всю историю ответов.")
+        print("Режим --since-hours 0: обход hh.ru пропущен, вывожу всю историю событий.")
 
     # Сводка «что нового» по истории (account-scope — без фильтра по resume_id).
     rows = history.new_responses_since(since_summary)

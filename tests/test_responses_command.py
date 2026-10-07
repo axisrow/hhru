@@ -6,7 +6,7 @@
 
 Браузерный путь (fetch_responses) покрывается через monkeypatch: проверяем, что
 истёкшая сессия (NotAuthenticated) НЕ затирает историю и НЕ выдаёт пустой
-результат за «нет новых ответов», а `--resume` игнорируется с warning.
+результат за «нет новых событий», а `--resume` игнорируется с warning.
 """
 
 from __future__ import annotations
@@ -605,7 +605,7 @@ def test_responses_run_expired_session_does_not_corrupt_history(capsys, tmp_path
     """Истёкшая сессия (NotAuthenticated): exit nonzero, история НЕ затёрта, нет «пусто».
 
     Регрессия Codex-critical: пустой результат выгруженной сессии не должен
-    маскироваться за «нет новых ответов» — иначе приглашения скрываются молча.
+    маскироваться за «нет новых событий» — иначе приглашения скрываются молча.
 
     Браузер НЕ поднимается: launch_context замокан (CI не имеет Chromium), а
     fetch_responses поднимает NotAuthenticated сразу при входе в контекст.
