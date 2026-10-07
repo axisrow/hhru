@@ -184,8 +184,9 @@ def test_responses_run_history_only_prints_ascii_table(capsys, tmp_path):
     responses_cmd.run(_args(config, tmp_path / "h.db"))
     out = capsys.readouterr().out
 
-    # Заголовок секции и таблица с колонками.
-    assert "Ответы работодателей" in out
+    # Заголовок секции и таблица с колонками. «События», а не «ответы»: сюда
+    # попадают и нейтральные записи (Прочитано), где работодатель ничего не писал.
+    assert "События по откликам" in out
     assert "Вакансия" in out
     assert "Работодатель" in out
     assert "Статус" in out
@@ -584,7 +585,7 @@ def test_responses_run_empty_history_does_not_crash(capsys, tmp_path):
     config = _write_config(tmp_path, _minimal_config())
     responses_cmd.run(_args(config, tmp_path / "h.db"))
     out = capsys.readouterr().out
-    assert "нет новых ответов" in out
+    assert "нет новых событий" in out
 
 
 def test_responses_run_resume_arg_is_ignored_with_warning(capsys, tmp_path):

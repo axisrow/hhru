@@ -160,7 +160,7 @@ def _print_responses_table(rows: list[dict], title: str) -> None:
     """ASCII-таблица ответов. rows — dict'и из history.new_responses_since."""
     print(f"\n{title}: {len(rows)}")
     if not rows:
-        print("  (нет новых ответов за период)")
+        print("  (нет новых событий за период)")
         return
 
     # Колонки фиксированной ширины для читаемого выравнивания (чистый ASCII).
@@ -290,9 +290,9 @@ def run(args: argparse.Namespace) -> CommandExitCode | None:
             sys.exit(1)
 
     if fresh_only:
-        print("\n=== Ответы работодателей (вся история, без обхода hh.ru) ===")
+        print("\n=== События по откликам (вся история, без обхода hh.ru) ===")
     elif not alert_new:
-        print(f"\n=== Ответы работодателей (новое за {args.since_hours:g}ч) ===")
+        print(f"\n=== События по откликам (новое за {args.since_hours:g}ч) ===")
 
     # Responses — account-scope: страница /applicant/negotiations общая и НЕ несёт
     # достоверного признака принадлежности ответа конкретному резюме. Поэтому
@@ -471,7 +471,7 @@ def run(args: argparse.Namespace) -> CommandExitCode | None:
             return None
 
         print(
-            f"Новых ответов: {inserted + updated} "
+            f"Новых событий: {inserted + updated} "
             f"(новых записей: {inserted}, смен статуса: {updated})"
         )
         if skipped_ambiguous:
@@ -485,6 +485,6 @@ def run(args: argparse.Namespace) -> CommandExitCode | None:
 
     # Сводка «что нового» по истории (account-scope — без фильтра по resume_id).
     rows = history.new_responses_since(since_summary)
-    _print_responses_table(rows, "Новые ответы работодателей")
+    _print_responses_table(rows, "Новые события по откликам")
     if calendar_hint:
         _print_calendar_hints(rows)
