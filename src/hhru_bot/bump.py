@@ -9,7 +9,7 @@ from playwright.sync_api import Locator, Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from . import selectors as sel
-from .apply.blockers import close_stale_contacts_alert
+from .apply.blockers import BLOCKER_RENDER_TIMEOUT_MS, close_stale_contacts_alert
 from .browser import HH_BASE_URL, goto_hh, has_login_form
 from .config import ResumeConfig, is_resume_url_placeholder
 from .selector_groups.resume_list import RESUME_LIST_CARD_LINK_PREFIX
@@ -24,12 +24,12 @@ BUMP_TIMEOUT_MS = 10_000
 # аналогично OPTIONAL_FIELD_TIMEOUT_MS в apply/steps.py.
 BUMP_HINT_TIMEOUT_MS = 1_500
 
-# #1189: бюджет ожидания монтажа модалки контактов перед close-проверкой.
-# Боевой прогон 2026-09-20: клик на ~5-й секунде опередил монтаж (census-визит
-# на 6-й секунде попап уже виден) — без бюджета быстрый прогон кликает
-# «впритык» до перехвата (#1161). Таймаут собственный, не общий: законно
-# другой экран (CLAUDE.md п.4).
-STALE_ALERT_RENDER_WAIT_MS = 1_500
+# #1189: budget ожидания монтажа модалки контактов перед close-проверкой —
+# BLOCKER_RENDER_TIMEOUT_MS из apply/blockers.py: та же гонка монтажа оверлея
+# (боевой прогон 2026-09-20: клик на ~5-й секунде опередил монтаж, census-визит
+# на 6-й секунде попап уже виден; без бюджета быстрый прогон кликает «впритык»
+# до перехвата, #1161) — один источник значения вместо двух одинаковых
+# констант (#1231).
 
 # #1188: бюджет ожидания состояния кулдауна на карточке после сбоя клика.
 # Если поднятие всё же ушло, SPA перерисовывает карточку (кнопка → hint)
@@ -279,7 +279,7 @@ def bump_resume(page: Page, resume: ResumeConfig, dry_run: bool) -> BumpResult:
     # (прогон 2026-09-20: на ~5-й секунде попап ещё не виден, клик обгонял
     # его впритык к перехвату). dry-run вышел выше: ноль кликов.
     stale_contacts_closed = close_stale_contacts_alert(
-        page, render_wait_ms=STALE_ALERT_RENDER_WAIT_MS
+        page, render_wait_ms=BLOCKER_RENDER_TIMEOUT_MS
     )
 
     # #176: клик по кнопке поднятия — единственное необратимое действие bump.
@@ -306,7 +306,7 @@ def bump_resume(page: Page, resume: ResumeConfig, dry_run: bool) -> BumpResult:
         # съела и следующий прогон; render-wait — тот же, что на pre-click
         # пути: модалка может монтироваться сразу ПОСЛЕ исключения
         # (cycle-review #1190), мгновенный is_visible её не увидит.
-        stale_closed = close_stale_contacts_alert(page, render_wait_ms=STALE_ALERT_RENDER_WAIT_MS)
+        stale_closed = close_stale_contacts_alert(page, render_wait_ms=BLOCKER_RENDER_TIMEOUT_MS)
         suffix = (
             "; модалка «Контакты в резюме могли устареть» закрыта кликом «Закрыть»"
             if stale_closed
