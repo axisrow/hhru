@@ -19,13 +19,24 @@ import json
 import os
 import threading
 import time
+from dataclasses import dataclass
 from urllib.parse import parse_qs, urlsplit
 
-# Якоря и классификация известных модалок — данные реестра (#1229); сценарий
-# применяет записи через собственные структурные гейты (disposition/close-
-# Controls для dismiss, type=="modal" и пр.), fail-closed: записи нет —
-# прежний отказ + census.
-from .modal_registry import GEO_REGION_MODAL, VISIBILITY_MODAL, match_census_text
+# Якоря и классификация известных модалок — данные реестра (#1229); решение
+# по census принимает единая точка resolve_overlay_action (#1230), сценарные
+# точки исполняют её вердикты. Fail-closed: записи нет — прежнее поведение,
+# unknown — отказ + census.
+from .modal_registry import (
+    ACTION_CONTINUE,
+    ACTION_DISMISS,
+    ACTION_SKIP,
+    ACTION_UNKNOWN,
+    GEO_REGION_MODAL,
+    MODAL_REGISTRY,
+    VISIBILITY_MODAL,
+    ModalRecord,
+    match_census_text,
+)
 
 # --- Маппинг сценария на действия канала (единая точка контракта S2). ------
 # Имена = ACTION_ALLOWLIST extensions/hhru-live (content.js): check_element и
@@ -75,6 +86,92 @@ MARKER_GONE_TIMEOUT_MS = 3_000
 # матчил бы чужую карточку. :has() — нативный CSS Chrome; если матчер S2 его
 # не примет, клик честно откажется (PrimitiveError, не наш клик), не промахнётся.
 RESUME_CARD_SCOPE_TEMPLATE = "[data-qa='resume']:has(a[data-qa='resume-card-link-{resume_id}'])"
+
+
+# --- Единая точка решения overlay-policy (#1230). ---------------------------
+# Вердикты: skip/dismiss/continue переиспользуют константы действий реестра
+# (#1229), refuse — честный отказ fail-closed (у записи нет разрешённого
+# действия).
+VERDICT_REFUSE = "refuse"
+
+
+@dataclass(frozen=True)
+class OverlayVerdict:
+    """Вердикт resolve_overlay_action: действие + запись реестра и census-узел,
+    на которых оно решено (у continue оба None — действий нет)."""
+
+    action: str
+    record: ModalRecord | None = None
+    overlay: dict | None = None
+
+
+def _match_registry(text: str, registry: tuple[ModalRecord, ...]) -> ModalRecord | None:
+    """Запись по подстроке census-текста в переданном реестре (тот же приём
+    подстроки, что match_census_text; реестр выбирает вызывающий, #1230)."""
+    for record in registry:
+        if record.text_marker and record.text_marker in text:
+            return record
+    return None
+
+
+def _dismissable(overlay: dict) -> bool:
+    """Гейт dismiss'а (#1218, боевой census 2026-09-23): только safe-overlay
+    с close-контролами; ambiguous-узел и узел без кнопки не закрываются."""
+    return overlay.get("disposition") == "safe" and bool(overlay.get("closeControls"))
+
+
+def resolve_overlay_action(
+    census: list[dict] | None,
+    registry: tuple[ModalRecord, ...] = MODAL_REGISTRY,
+) -> OverlayVerdict:
+    """Единая точка решения policy поверх реестра (#1230): census -> вердикт.
+
+    Порядок правил — по убыванию честности, деградации вердиктов нет:
+
+    1. refuse — запись с действием unknown на узле type=="modal" (гейт типа —
+       ревью PR #1233: тост с маркером модалки не отказывает apply, прецедент
+       #998). Доминирует над вторым проходом: refuse-worthy оверлей не
+       маскируется соседним dismissable.
+    2. dismiss — запись skip/dismiss-действия на dismissable узле: сценарий
+       закроет safe-overlay и перепроверит свой якорь (у видимости — warning
+       data-qa, #1218). Владелец dismiss'а — запись с минимальным priority
+       (равные — первый в census): совместный census [stale_contacts,
+       видимость] закрывает видимость (10 < 20), чей warning перечитывает
+       потребитель, а не чужую модалку (ревью PR #1239). skip-запись без
+       dismissable узла во всём census — терминальный skip (#1216);
+       dismiss-запись без гейта вердикта не даёт.
+    3. continue — незнакомый overlay (записи нет — действия нет, #1229),
+       пустой census или битая запись (не-dict пропускается, прецедент ревью
+       PR #1233). Клик-семантика остаётся исполнителю: allowApply (#1221) и
+       верхний matching-предок (#1215) в CLI не дублируются — функция только
+       интерпретирует census, кликов не решает.
+    """
+    overlays = [overlay for overlay in census or [] if isinstance(overlay, dict)]
+    for overlay in overlays:
+        record = _match_registry(str(overlay.get("text") or ""), registry)
+        if (
+            record is not None
+            and record.action == ACTION_UNKNOWN
+            and overlay.get("type") == "modal"
+        ):
+            return OverlayVerdict(VERDICT_REFUSE, record, overlay)
+    skip_fallback: OverlayVerdict | None = None
+    dismiss_best: OverlayVerdict | None = None
+    best_priority = 0
+    for overlay in overlays:
+        record = _match_registry(str(overlay.get("text") or ""), registry)
+        if record is None or record.action in (ACTION_UNKNOWN, ACTION_CONTINUE):
+            continue
+        if _dismissable(overlay):
+            # Владелец dismiss'а — запись с меньшим priority (равные — первый
+            # в census), а не первый узел census: чужая dismissable модалка
+            # не должна съедать попытку блокируемой записи.
+            if dismiss_best is None or record.priority < best_priority:
+                dismiss_best = OverlayVerdict(ACTION_DISMISS, record, overlay)
+                best_priority = record.priority
+        elif record.action == ACTION_SKIP and skip_fallback is None:
+            skip_fallback = OverlayVerdict(ACTION_SKIP, record, overlay)
+    return dismiss_best or skip_fallback or OverlayVerdict(ACTION_CONTINUE)
 
 
 def _is_hh_ru_host(netloc: str) -> bool:
@@ -278,19 +375,20 @@ def apply_via_live(
         в модалке до Lines-пикера), и обработчики отказов зовут этот хелпер
         из любой точки сценария. Warning — ОБЪЯСНЕНИЕ неудавшегося выбора
         резюме, не терминальный признак (ревью PR #1215; зеркало
-        apply/steps.py); терминален только провал выбора. data-qa-якорь —
-        запись VISIBILITY_MODAL реестра (#1229), из живых дампов probe
-        testing 2026-09-09.
+        apply/steps.py); терминален только провал выбора. Закрывать ли
+        overlay перед вердиктом — решает общий механизм (#1230):
+        resolve_overlay_action вернёт dismiss для safe-узла (#1218) или
+        терминальный skip (#1216); data-qa-якорь — запись VISIBILITY_MODAL
+        реестра (#1229), из живых дампов probe testing 2026-09-09.
         """
         warning_selector = f"[data-qa='{VISIBILITY_MODAL.data_qa}']"
         warning = _read(warning_selector)
         if not (warning.get("found") or warning.get("visible")):
             return None
-        # #1218: модалка видимости поверх формы закрывается close'ом
-        # safe-overlay — одна попытка; warning исчез → штатный флоу
+        # Вердикт dismiss — одна попытка; warning исчез → штатный флоу
         # продолжается (пикер выберет публичное резюме), остался →
         # честный skip ниже.
-        if _dismiss_visibility_overlay_once():
+        if _dismiss_once_per_policy():
             warning = _read(warning_selector)
             if not (warning.get("found") or warning.get("visible")):
                 return None
@@ -338,17 +436,15 @@ def apply_via_live(
             line += f" [{record.name}->{record.action}]"
         return line
 
-    def _dismiss_visibility_overlay_once() -> bool:
-        """Одна попытка закрыть safe-overlay «поменяйте видимость» (#1218).
+    def _dismiss_once_per_policy() -> bool:
+        """Одна попытка закрыть оверлей по dismiss-вердикту общего механизма.
 
-        Цель — ровно один overlay из list_overlays: census-текст содержит
-        маркер модалки, disposition == "safe" И есть close-контролы
-        (боевой census 2026-09-23: outer-узел safe с 2 close-контролами;
-        inner ambiguous-узел dismiss'у не подлежит — не трогаем). Жёсткий
-        гейт всё равно у исполнителя: он re-классифицирует overlay в
-        момент клика и кликает только close-контрол — переключатель
-        видимости (мутация профиля) не нажимается ни этим сценарием, ни
-        каналом.
+        Решение (матч реестра + гейты safe/closeControls, #1218) принял
+        resolve_overlay_action (#1230); здесь только исполнение его
+        dismiss-вердикта. Жёсткий гейт всё равно у исполнителя: он
+        re-классифицирует overlay в момент клика и кликает только
+        close-контрол — переключатель видимости (мутация профиля) не
+        нажимается ни этим сценарием, ни каналом.
 
         True — попытка dismiss'а СОСТОЯЛАСЬ: вызывающий код перечитывает
         warning и решает (исчез → флоу продолжается, остался → честный
@@ -358,28 +454,20 @@ def apply_via_live(
         (read-only check бесплатен), а не классификация отказа (ревью
         #1219); refused-отказы (overlay_not_found/not_safe/no_close_
         control) проходят тот же путь безвредно — warning остался бы.
-        False — попытки не было (overlay не перечислен / не safe / без
-        close-контролов / канал не отвечает на list_overlays): skip
-        #1216 без изменений; повторных попыток нет.
+        False — вердикт не dismiss (skip/refuse/continue) или census не
+        читается: попытки нет, skip #1216 без изменений; повторных
+        попыток нет.
 
         Определён РЯДОМ С _visibility_skip_if_warned ДО try: probe зовётся
         из обработчика отказов, достижимого до секции формы, — def внутри
         try давал бы NameError мимо best-effort except (ревью PR #1216,
-        round 2). Якорь-подстрока — text_marker записи VISIBILITY_MODAL
-        реестра (#1229).
+        round 2).
         """
-        target = None
-        for overlay in _overlays_best_effort() or []:
-            if VISIBILITY_MODAL.text_marker not in str(overlay.get("text") or ""):
-                continue
-            if overlay.get("disposition") != "safe" or not overlay.get("closeControls"):
-                continue
-            target = overlay
-            break
-        if target is None:
+        verdict = resolve_overlay_action(_overlays_best_effort())
+        if verdict.action != ACTION_DISMISS or verdict.overlay is None:
             return False
         try:
-            channel.dismiss_overlay(str(target["id"]))
+            channel.dismiss_overlay(str(verdict.overlay.get("id")))
         except (ChannelError, PrimitiveError):
             pass  # попытка сделана: решит перечитка warning'а, не классификация отказа
         return True
@@ -445,22 +533,20 @@ def apply_via_live(
         return "; оверлеи: " + " | ".join(shown) + extra
 
     def _geo_dialog_detail() -> str:
-        """Текст гео-диалога региона в census, '' если его нет (#1226).
+        """Census-строка гео-диалога региона, '' если его нет (#1226).
 
-        Гейт type == "modal" (ревью PR #1233): маркер — подстрока census-
-        текста любого overlay (content.js собирает popup/toast/notification
-        целиком), без гейта тост с «Ваш регион» отказывал бы каждый apply
-        до ручной чистки вкладки (прецедент #998). Реальный диалог —
-        alertdialog→modal, проходит. Якорь-подстрока — text_marker записи
-        GEO_REGION_MODAL реестра (#1229); действие записи unknown — код
-        диалог не закрывает и не отвечает (кнопки не подтверждены).
+        Вердикт принял resolve_overlay_action (#1230): refuse записи
+        GEO_REGION_MODAL (действие unknown — код диалог не закрывает и не
+        отвечает, кнопки не подтверждены живым DOM) с гейтом type == "modal"
+        из ревью PR #1233 — тост с «Ваш регион» отказывать apply не может
+        (прецедент #998). Здесь только имя блокера для reason.
         """
-        for overlay in _overlays_best_effort() or []:
-            if overlay.get("type") != "modal":
-                continue
-            if GEO_REGION_MODAL.text_marker not in str(overlay.get("text") or ""):
-                continue
-            return _overlay_line(overlay, 200)
+        verdict = resolve_overlay_action(_overlays_best_effort())
+        if verdict.action == VERDICT_REFUSE and verdict.record is GEO_REGION_MODAL:
+            # refuse-вердикт всегда несёт узел; пустая защита — хелпер только
+            # называет блокер, аномалия не должна ронять сценарий.
+            if verdict.overlay is not None:
+                return _overlay_line(verdict.overlay, 200)
         return ""
 
     def _tab_on_response_form() -> bool:
