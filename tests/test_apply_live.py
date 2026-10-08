@@ -45,6 +45,19 @@ from hhru_bot.search import VacancyCard
 
 pytestmark = pytest.mark.unit
 
+
+@pytest.fixture(autouse=True)
+def _fast_overlay_settle(monkeypatch):
+    """Settle-гонок монтажа (#1231) поллит канал реальными паузами; в
+    юнит-контуре окно стабильности сжимается — устойчивость доказывается
+    числом чтений фейка, а не wall-clock (боевые окна живут в константах
+    модуля overlay_settle и покрываются его собственными тестами)."""
+    from hhru_bot.live import overlay_settle as _settle
+
+    monkeypatch.setattr(_settle, "OVERLAY_SETTLE_STABLE_MS", 20)
+    monkeypatch.setattr(_settle, "OVERLAY_SETTLE_POLL_MS", 5)
+
+
 VACANCY_ID = "136789544"
 VACANCY_URL = f"https://hh.ru/vacancy/{VACANCY_ID}"
 # Полная форма отклика (второй shape, #1224): сюда уходит вкладка, когда
@@ -137,6 +150,9 @@ class FakeFormChannel:
         warning_check_error: PrimitiveError | None = None,
         warning_needs_form: bool = True,
         overlays: list[dict] | None = None,
+        # Гонка монтажа #1231: ПЕРВЫЙ снимок census пуст (модалка ещё не в
+        # DOM), все следующие — с этим набором. Несовместимо с overlays.
+        overlays_late: list[dict] | None = None,
         dismiss_error: PrimitiveError | None = None,
         dismiss_lost_effect: bool = False,
         overlays_error: PrimitiveError | None = None,
@@ -172,6 +188,8 @@ class FakeFormChannel:
         # узел бывает и при применимой вакансии).
         self.warning_needs_form = warning_needs_form
         self.overlays = list(overlays or [])
+        self.overlays_late = list(overlays_late) if overlays_late is not None else None
+        self._census_reads = 0
         self.dismiss_error = dismiss_error
         # response_lost (#176): ответ потерян, но close-клик мог уйти —
         # dismiss_lost_effect моделирует «дошёл», False — «не дошёл».
@@ -297,6 +315,13 @@ class FakeFormChannel:
         self.calls.append((ACTION_LIST_OVERLAYS, {}))
         if self.overlays_error is not None:
             raise self.overlays_error
+        if self.overlays_late is not None:
+            # Гонка монтажа #1231: первый снимок — домонтировочный (пустой),
+            # последующие — с модалкой.
+            self._census_reads += 1
+            if self._census_reads == 1:
+                return []
+            return [dict(overlay) for overlay in self.overlays_late]
         result = [dict(overlay) for overlay in self.overlays]
         if self.geo_overlay_after_click and self.apply_clicked:
             # Гео-диалог монтируется ПЕРЕХВАТОМ клика (#1226) — в census
@@ -789,6 +814,19 @@ def test_geo_dialog_persistent_before_click_fails_without_action() -> None:
     # #1226: диалог уже висит на странице (персистентный сеанс) — клик уйдёт
     # в перехват, честный отказ ДО действия: acted=False, повторопригодно.
     channel = FakeFormChannel(overlays=[dict(GEO_OVERLAY)])
+    result = _run(channel)
+
+    assert (result.success, result.acted, result.uncertain) == (False, False, False)
+    assert "гео-диалог региона перехватит клик" in result.reason
+    assert not channel.apply_clicked
+
+
+def test_geo_dialog_mounting_late_refuses_before_click() -> None:
+    # Гонка монтажа #1231 (relocation-класс #1135): модалка появляется
+    # ПОСЛЕ первого чтения census — pre-click гейт выносит вердикт по
+    # устаканившемуся снимку (второй проход её видит), а не по устаревшему
+    # пустому: отказ ДО клика, вакансия не сгорает в серой зоне #207.
+    channel = FakeFormChannel(overlays_late=[dict(GEO_OVERLAY)])
     result = _run(channel)
 
     assert (result.success, result.acted, result.uncertain) == (False, False, False)
