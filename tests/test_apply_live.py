@@ -12,6 +12,18 @@ import pytest
 
 from hhru_bot.config import ResumeConfig, SearchFilters
 from hhru_bot.history import SKIP_REASONS
+from hhru_bot.live.modal_registry import (
+    ACTION_CONTINUE,
+    ACTION_DISMISS,
+    ACTION_SKIP,
+    ACTION_UNKNOWN,
+    GEO_REGION_MODAL,
+    MUTATION_EXTERNAL,
+    MUTATION_NONE,
+    MUTATION_PROFILE,
+    VISIBILITY_MODAL,
+    ModalRecord,
+)
 from hhru_bot.live.scenarios import (
     ACTION_CHECK,
     ACTION_CLICK,
@@ -23,9 +35,11 @@ from hhru_bot.live.scenarios import (
     FORM_WAIT_TIMEOUT_MS,
     PAGE_FORM_WAIT_TIMEOUT_MS,
     SUBMIT_WAIT_TIMEOUT_MS,
+    VERDICT_REFUSE,
     ApplyLiveResult,
     PrimitiveError,
     apply_via_live,
+    resolve_overlay_action,
 )
 from hhru_bot.search import VacancyCard
 
@@ -1256,6 +1270,169 @@ def test_every_refusal_verdict_carries_census_in_payload() -> None:
         result = _run(channel, require_resume_select=False, verify=_verify_of("not_found"))
         assert not result.success, name
         assert result.overlay_census is not None, f"{name}: отказной вердикт без census в payload"
+
+
+# --- Единая точка решения overlay-policy (#1230): resolve_overlay_action. ----
+
+
+def test_resolve_refuses_named_unknown_modal_dominating_dismiss() -> None:
+    # Честный refuse не деградирует (#1230): unknown-запись на modal-узле
+    # (гео-диалог) отказывает, даже когда рядом в census есть dismissable
+    # safe-overlay — опасный оверлей не маскируется соседним.
+    verdict = resolve_overlay_action([dict(VISIBILITY_OVERLAY), dict(GEO_OVERLAY)])
+
+    assert verdict.action == VERDICT_REFUSE
+    assert verdict.record is GEO_REGION_MODAL
+    assert verdict.overlay is not None and verdict.overlay["id"] == "overlay-9"
+
+
+def test_resolve_unknown_marker_off_modal_is_continue() -> None:
+    # Гейт type == modal (ревью PR #1233) живёт в общем механизме: тост с
+    # маркером гео-диалога refuse не даёт — прецедент #998 (8 ложных
+    # «Городов»).
+    toast = dict(GEO_OVERLAY, id="overlay-toast", type="toast")
+    verdict = resolve_overlay_action([toast])
+
+    assert verdict.action == ACTION_CONTINUE
+    assert verdict.record is None and verdict.overlay is None
+
+
+def test_resolve_unmatched_census_is_continue() -> None:
+    # Записи нет — действия нет (#1229): незнакомый оверлей не отказ и не
+    # dismiss; клик-семантика остаётся исполнителю (allowApply #1221, верхний
+    # matching-предок #1215 в CLI не дублируются).
+    stranger = {
+        "id": "overlay-6",
+        "type": "modal",
+        "disposition": "ambiguous",
+        "closeControls": 0,
+        "text": "Тестировщик 180 000 ₽",
+    }
+    for census in ([stranger], [], None):
+        verdict = resolve_overlay_action(census)
+        assert verdict.action == ACTION_CONTINUE
+        assert verdict.record is None and verdict.overlay is None
+
+
+def test_resolve_visibility_dismiss_then_skip_by_gates() -> None:
+    # #1218/#1216: dismissable узел (safe+close) — вердикт dismiss (сценарий
+    # закроет и перепроверит warning data-qa); ambiguous/без close-контролов —
+    # терминальный skip записи.
+    verdict = resolve_overlay_action([dict(VISIBILITY_OVERLAY)])
+    assert verdict.action == ACTION_DISMISS
+    assert verdict.record is VISIBILITY_MODAL
+    assert verdict.overlay is not None and verdict.overlay["id"] == "overlay-1"
+
+    for patch in ({"disposition": "ambiguous"}, {"closeControls": 0}):
+        verdict = resolve_overlay_action([{**VISIBILITY_OVERLAY, **patch}])
+        assert verdict.action == ACTION_SKIP
+        assert verdict.record is VISIBILITY_MODAL
+
+
+def test_resolve_picks_safe_ancestor_over_ambiguous_inner() -> None:
+    # #1215: семейство модалки в census идёт узлами (outer safe / inner
+    # ambiguous) — dismiss-вердикт берёт safe-предка, ambiguous-inner
+    # не подлежит закрытию в любом порядке census.
+    inner = dict(VISIBILITY_OVERLAY, id="overlay-1-inner", disposition="ambiguous", closeControls=0)
+    for census in ([inner, dict(VISIBILITY_OVERLAY)], [dict(VISIBILITY_OVERLAY), inner]):
+        verdict = resolve_overlay_action(census)
+        assert verdict.action == ACTION_DISMISS
+        assert verdict.overlay is not None and verdict.overlay["id"] == "overlay-1"
+
+
+def test_resolve_apply_overlays_stay_executor_side() -> None:
+    # allowApply (#1221) и вердикт клика (#1215) — исполнительная семантика
+    # расширения: apply-оверлеи (форма отклика, пикер-панель) в реестре не
+    # значатся, общий механизм их не интерпретирует и клик-разрешений
+    # не выдаёт — даже safe-узел без записи не становится dismiss.
+    apply_modal = {
+        "id": "overlay-a",
+        "type": "modal",
+        "disposition": "safe",
+        "closeControls": 2,
+        "text": "QA Engineer Тестировщик ПО 180 000 ₽",
+    }
+    picker = dict(
+        GEO_OVERLAY,
+        id="overlay-p",
+        text="QA Engineer Тестировщик ПО (Python, автотесты) 180 000 ₽",
+        disposition="ambiguous",
+    )
+    verdict = resolve_overlay_action([apply_modal, picker])
+
+    assert verdict.action == ACTION_CONTINUE
+
+
+def test_resolve_honors_custom_registry_actions() -> None:
+    # Функция читает переданный реестр (#1230 — сигнатура с registry):
+    # skip/dismiss/unknown-записи дают свои вердикты — страж будущих записей,
+    # а не только текущего кортежа.
+    dismiss_record = ModalRecord(
+        name="banner",
+        mutation=MUTATION_NONE,
+        action=ACTION_DISMISS,
+        priority=1,
+        text_marker="закройте баннер",
+    )
+    skip_record = ModalRecord(
+        name="wall",
+        mutation=MUTATION_PROFILE,
+        action=ACTION_SKIP,
+        priority=2,
+        text_marker="аккаунт заблокирован",
+        skip_reason="account_blocked",
+    )
+    unknown_record = ModalRecord(
+        name="odd",
+        mutation=MUTATION_EXTERNAL,
+        action=ACTION_UNKNOWN,
+        priority=3,
+        text_marker="странная модалка",
+    )
+    registry = (dismiss_record, skip_record, unknown_record)
+
+    banner = {
+        "id": "b",
+        "type": "modal",
+        "disposition": "safe",
+        "closeControls": 1,
+        "text": "закройте баннер, пожалуйста",
+    }
+    verdict = resolve_overlay_action([banner], registry)
+    assert verdict.action == ACTION_DISMISS and verdict.record is dismiss_record
+
+    # skip-запись на dismissable узле — тоже dismiss (закрыть и перепроверить
+    # якорь потребителя, как у видимости #1218); без гейта — терминальный skip.
+    wall = {
+        "id": "w",
+        "type": "modal",
+        "disposition": "safe",
+        "closeControls": 1,
+        "text": "аккаунт заблокирован навсегда",
+    }
+    verdict = resolve_overlay_action([wall], registry)
+    assert verdict.action == ACTION_DISMISS and verdict.record is skip_record
+    verdict = resolve_overlay_action([dict(wall, disposition="ambiguous")], registry)
+    assert verdict.action == ACTION_SKIP and verdict.record is skip_record
+
+    odd = {
+        "id": "o",
+        "type": "modal",
+        "disposition": "ambiguous",
+        "closeControls": 0,
+        "text": "странная модалка без выхода",
+    }
+    verdict = resolve_overlay_action([odd], registry)
+    assert verdict.action == VERDICT_REFUSE and verdict.record is unknown_record
+
+
+def test_resolve_ignores_malformed_census_entries() -> None:
+    # Битая запись census (не-dict) не роняет скан — соседний dict решает
+    # (прецедент ревью PR #1233); защита прямым вызовам resolve, канал
+    # фильтрует раньше (_overlays_best_effort).
+    verdict = resolve_overlay_action(["мусор", dict(GEO_OVERLAY)])  # type: ignore[list-item]
+
+    assert verdict.action == VERDICT_REFUSE
 
 
 def test_policy_detail_prints_overlay_text() -> None:
