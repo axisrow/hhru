@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import json
 from pathlib import Path
 
 import pytest
@@ -161,6 +162,8 @@ def test_apply_live_success_records_action_and_run(tmp_path, monkeypatch, capsys
     assert action["run_id"] == row["run_id"]
     out = capsys.readouterr().out
     assert "[RUN]" in out and "[OK]" in out
+    # Успех — без census-дампа отказа (#1228).
+    assert not list(tmp_path.glob("*.overlay-census.json"))
 
 
 def test_apply_live_dry_run_writes_no_action(tmp_path, monkeypatch, capsys) -> None:
@@ -235,3 +238,36 @@ def test_apply_live_questions_queue_on_skip(tmp_path, monkeypatch) -> None:
         skipped = conn.execute("SELECT reason FROM skipped").fetchone()
     assert [row["question_text"] for row in pending] == ["Опыт с LLM?"]
     assert skipped is not None
+
+
+def test_apply_live_refusal_writes_census_dump(tmp_path, monkeypatch) -> None:
+    # #1228: отказной вердикт live-канала несёт census list_overlays и в
+    # payload вердикта, и в дамп data/logs — рядом с HTML-снимками
+    # Playwright-пути (dump_page_html пишет в тот же LOG_DIR).
+    config = _config(tmp_path)
+    _patch_runtime(monkeypatch, config, verdict="indeterminate")
+    monkeypatch.setattr("hhru_bot.logging_setup.LOG_DIR", tmp_path)
+
+    class _LostSubmitChannel(FakeLiveChannel):
+        def click_wait_met(self, selector: str, wait_for: dict, allow_apply: bool = False) -> bool:
+            return "vacancy-response-submit" not in selector
+
+        def list_overlays(self) -> list[dict]:
+            return [
+                {
+                    "id": "overlay-1",
+                    "type": "modal",
+                    "disposition": "ambiguous",
+                    "closeControls": 0,
+                    "text": "модалка",
+                }
+            ]
+
+    monkeypatch.setattr("hhru_bot.live.scenarios.LiveChannel", _LostSubmitChannel)
+
+    assert apply_live_command.run(_args(tmp_path)) is True
+
+    dump = next(tmp_path.glob("apply_live_*_*.overlay-census.json"))
+    payload = json.loads(dump.read_text())
+    assert [o["id"] for o in payload["overlays"]] == ["overlay-1"]
+    assert "маркер успешной отправки" in payload["reason"]

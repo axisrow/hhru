@@ -116,7 +116,9 @@ class ApplyLiveResult:
     """Исход apply_via_live — структурно совместим с ApplyProgress.finish() и
     action_status() (success/uncertain/acted/skipped/skip_reason), как
     BumpResult у боевого bump. question_texts — census-тексты вопросов анкеты
-    для очереди обучения (#482); их пишет команда, не сценарий."""
+    для очереди обучения (#482); их пишет команда, не сценарий.
+    overlay_census — полный снимок list_overlays отказного вердикта (#1228):
+    None — census недоступен (мёртвый канал, best-effort)."""
 
     def __init__(
         self,
@@ -130,6 +132,7 @@ class ApplyLiveResult:
         skipped: bool = False,
         skip_reason: str = "",
         question_texts: list[str] | None = None,
+        overlay_census: list[dict] | None = None,
     ) -> None:
         self.resume_id = resume_id
         self.vacancy_id = vacancy_id
@@ -140,6 +143,7 @@ class ApplyLiveResult:
         self.skipped = skipped
         self.skip_reason = skip_reason
         self.question_texts = question_texts or []
+        self.overlay_census = overlay_census
 
 
 def apply_via_live(
@@ -199,6 +203,15 @@ def apply_via_live(
         skip_reason: str = "",
         question_texts: list[str] | None = None,
     ) -> ApplyLiveResult:
+        # Единая точка сборки отказного вердикта (#1228): каждый fail/uncertain
+        # несёт полный census list_overlays в payload (overlay_census) и в
+        # CLI-вывод (суффикс reason) — достройка в отдельных обработчиках
+        # (#1220/#1221) перенесена сюда. Skips — не отказные: у них свой
+        # честный skip_reason.
+        census = None
+        if not success and not skipped:
+            census = _overlays_best_effort()
+            reason += _overlay_census_suffix(census)
         return ApplyLiveResult(
             resume_id,
             vacancy_id,
@@ -209,6 +222,7 @@ def apply_via_live(
             skipped=skipped,
             skip_reason=skip_reason,
             question_texts=question_texts,
+            overlay_census=census,
         )
 
     if is_resume_url_placeholder(resume.resume_url):
@@ -408,19 +422,18 @@ def apply_via_live(
             uncertain=False,
         )
 
-    def _overlay_census_suffix() -> str:
+    def _overlay_census_suffix(overlays: list[dict] | None) -> str:
         """Census оверлеев к отказу исполнителя (#1220, DX по образцу #1214).
 
         policy_refused называет только ВЕРХНИЙ overlay клика; соседние
         остаются неназванными, а состояние «пассивно невоспроизводимо» —
         модалка к моменту census уже закрыта. Отказ — «действия не было»,
         вкладка жива: list_overlays рядом с вердиктом дёшев и называет
-        каждый overlay (id/type/disposition/closeControls/текст). Определён
-        РЯДОМ С обёртками примитивов ДО try: зовётся из обработчика отказов
-        (ревью PR #1216). Best-effort: мёртвый канал — пустой суффикс,
-        решает прежний вердикт.
+        каждый overlay (id/type/disposition/closeControls/текст). Сборка
+        перенесена в единую точку _result (#1228): инвариант каждого
+        отказного вердикта, а не достройка отдельных обработчиков.
+        Best-effort: None (мёртвый канал) — пустой суффикс, вердикт прежний.
         """
-        overlays = _overlays_best_effort()
         if overlays is None:
             return ""
         census = [_overlay_line(overlay, 60) for overlay in overlays]
@@ -797,13 +810,13 @@ def apply_via_live(
         if blocked:
             return blocked
         if not grey_zone:
-            census = _overlay_census_suffix()
-            return _result(False, f"клик по кнопке отклика не выполнен: {exc}{census}")
+            return _result(False, f"клик по кнопке отклика не выполнен: {exc}")
         # Отказ исполнителя до конкретного клика: мутации не было (как у
         # PlaywrightError заполнения в боевом пути) — флаги чистые; вердикт
-        # всё равно финализирует внешний источник.
+        # всё равно финализирует внешний источник. Census достроит общая
+        # точка _result (#1228).
         return _grey_zone(
-            f"шаг формы не выполнен: {exc}{_overlay_census_suffix()}",
+            f"шаг формы не выполнен: {exc}",
             acted=False,
             uncertain=False,
         )

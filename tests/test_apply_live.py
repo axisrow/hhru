@@ -1148,7 +1148,12 @@ def test_refusal_census_without_overlays_and_dead_channel() -> None:
         fill_error=PrimitiveError("policy_refused", "ambiguous", forwarded=False)
     )
     result = _run(channel, require_resume_select=False, verify=_verify_of("not_found"))
-    assert "; оверлеи: нет;" in result.reason
+    # Сборка в _result (#1228): census-суффикс замыкает reason ПОСЛЕ текста
+    # внешней проверки — инвариант «census в конце каждого отказа».
+    assert result.reason.endswith("; оверлеи: нет")
+    # Пустой реестр — это ПОДТВЕРЖДЁННО пустой census в payload (#1228),
+    # не отсутствие census.
+    assert result.overlay_census == []
 
     dead = FakeFormChannel(
         fill_error=PrimitiveError("policy_refused", "ambiguous", forwarded=False),
@@ -1157,7 +1162,44 @@ def test_refusal_census_without_overlays_and_dead_channel() -> None:
     result = _run(dead, require_resume_select=False, verify=_verify_of("not_found"))
     assert "шаг формы не выполнен" in result.reason
     assert "оверлеи" not in result.reason
+    assert result.overlay_census is None
     assert (result.acted, result.uncertain) == (False, False)
+
+
+def test_every_refusal_verdict_carries_census_in_payload() -> None:
+    # #1228: census — инвариант КАЖДОГО отказного вердикта live-канала
+    # (policy_refused/refused, response_lost, fail), собирается единой точкой
+    # _result, а не достройкой в отдельных обработчиках. Гард: отказной
+    # вердикт при живом census без overlay_census в payload роняет сюиту —
+    # новый отказной выход мимо общей точки ловится здесь.
+    refusal_cases = [
+        (
+            "policy_refused исполнителя",
+            FakeFormChannel(
+                fill_error=PrimitiveError("policy_refused", "ambiguous", forwarded=False)
+            ),
+        ),
+        (
+            "response_lost клика кнопки отклика",
+            FakeFormChannel(
+                apply_click_error=PrimitiveError("response_lost", "port closed", forwarded=True)
+            ),
+        ),
+        (
+            "fail: форма не отрисовалась после клика",
+            FakeFormChannel(modal_after_click=False),
+        ),
+        (
+            "response_lost submit-клика",
+            FakeFormChannel(
+                submit_click_error=PrimitiveError("response_lost", "port closed", forwarded=True)
+            ),
+        ),
+    ]
+    for name, channel in refusal_cases:
+        result = _run(channel, require_resume_select=False, verify=_verify_of("not_found"))
+        assert not result.success, name
+        assert result.overlay_census is not None, f"{name}: отказной вердикт без census в payload"
 
 
 def test_policy_detail_prints_overlay_text() -> None:
