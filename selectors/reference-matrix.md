@@ -344,13 +344,9 @@ These rows are extracted from the approved upstream projects even when hhru does
 | `[data-qa="vacancy-response-link-bottom"]` | tgeruzov, yamakayama |
 | `[data-qa="vacancy-response-link-top"]` | steev, tgeruzov, yamakayama |
 | `[data-qa="vacancy-response-link-view-topic"]` | tgeruzov, yamakayama |
-| `[data-qa="vacancy-response-submit-popup"]` | tgeruzov, yamakayama |
 | `[data-qa="vacancy-serp__vacancy-employer"]` | steev, yamakayama |
 | `[data-qa="vacancy-title"]` | steev, tgeruzov, yamakayama |
 | `[data-qa="vacancy-view-employment-mode"]` | steev, yamakayama |
-| `[data-qa="vacancy-view-location"]` | steev, tgeruzov |
-| `[data-qa="vacancy-view-raw-address"]` | steev, tgeruzov |
-| `h1[data-qa="vacancy-title"]` | steev, tgeruzov |
 
 ## Apply/response candidate decisions
 
@@ -363,5 +359,4 @@ Every apply/response candidate is explicitly resolved; rejected WRITE candidates
 | `[data-qa="vacancy-response-link-bottom"]` | reject | vacancy_page.VACANCY_APPLY_BUTTON | duplicate apply role covered by VACANCY_APPLY_BUTTON; adding a bottom-link fallback would expand the WRITE path without a local DOM snapshot. |
 | `[data-qa="vacancy-response-link-top"]` | reject | vacancy_page.VACANCY_APPLY_BUTTON | duplicate of the existing VACANCY_APPLY_BUTTON contract; no second local apply contract is needed. |
 | `[data-qa="vacancy-response-link-view-topic"]` | reject | vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT | duplicate of VACANCY_ALREADY_RESPONDED_CHAT; the already-responded control is already represented in the local response flow. |
-| `[data-qa="vacancy-response-submit-popup"]` | reject | apply_form.APPLY_SUBMIT_BUTTON | duplicate of APPLY_SUBMIT_BUTTON; the popup submit control is already the local WRITE submit contract. |
 | `[data-qa="vacancy-serp__vacancy-employer"]` | reject | search_page.VACANCY_CARD_COMPANY | duplicate of VACANCY_CARD_COMPANY; the read-only SERP employer role is already represented locally. |

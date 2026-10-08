@@ -7659,40 +7659,6 @@ upstream_consensus:
   last_verified_at: '2026-08-25'
   verified_flow: python scripts/selector_contracts.py check
   verified_by: human
-- value: '[data-qa="vacancy-response-submit-popup"]'
-  references:
-  - tgeruzov
-  - yamakayama
-  sources:
-    tgeruzov:
-    - file: hh-apply-assistant.user.js
-      line: 108
-      key: hh-apply-assistant.user.js::module.SELECTORS.letterSubmit#0::4
-      value: '[data-qa="vacancy-response-submit-popup"]'
-    - file: hh-apply-assistant.user.js
-      line: 3382
-      key: hh-apply-assistant.user.js::fillLetterAndSubmit#2::0
-      value: '[data-qa="vacancy-response-submit-popup"]'
-    yamakayama:
-    - file: app/parsers/hh_playwright.py
-      line: 366
-      key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy.submit_btn#0::0
-      value: '[data-qa="vacancy-response-submit-popup"]'
-  decision: reject
-  reason: duplicate of APPLY_SUBMIT_BUTTON; the popup submit control is already the local WRITE submit contract.
-  target: apply_form.APPLY_SUBMIT_BUTTON
-  origin: reference_consensus
-  verification: contract_tested
-  evidence:
-    source: selectors/reference-map.yaml:upstream_consensus
-    note: 'Explicit manual reject: the candidate is already covered by the target contract; no new selector or fallback is
-      generated.'
-    reference_commits:
-      tgeruzov: 981f2809f3ae4b8c24e447d6376dae84e02b9ca6
-      yamakayama: bfb46696aec658b6b8fe7b9660376e0b286f056b
-  last_verified_at: '2026-08-25'
-  verified_flow: python scripts/selector_contracts.py check
-  verified_by: human
 - value: '[data-qa="vacancy-serp__vacancy-employer"]'
   references:
   - steev
@@ -7763,63 +7729,6 @@ upstream_consensus:
   logical_id: vacancy_page.VACANCY_VIEW_EMPLOYMENT_MODE
   origin: reference_consensus
   verification: contract_tested
-- value: '[data-qa="vacancy-view-location"]'
-  references:
-  - steev
-  - tgeruzov
-  sources:
-    steev:
-    - file: lib/vacancy-parse.mjs
-      line: 16
-      key: lib/vacancy-parse.mjs::t#7::0
-      value: '[data-qa="vacancy-view-location"]'
-    tgeruzov:
-    - file: script.js
-      line: 1362
-      key: script.js::pick#4::0
-      value: '[data-qa="vacancy-view-location"]'
-  decision: port_exact
-  logical_id: vacancy_page.VACANCY_VIEW_LOCATION
-  origin: reference_consensus
-  verification: contract_tested
-- value: '[data-qa="vacancy-view-raw-address"]'
-  references:
-  - steev
-  - tgeruzov
-  sources:
-    steev:
-    - file: lib/vacancy-parse.mjs
-      line: 16
-      key: lib/vacancy-parse.mjs::t#8::0
-      value: '[data-qa="vacancy-view-raw-address"]'
-    tgeruzov:
-    - file: script.js
-      line: 1364
-      key: script.js::pick#5::0
-      value: '[data-qa="vacancy-view-raw-address"]'
-  decision: port_exact
-  logical_id: vacancy_page.VACANCY_VIEW_RAW_ADDRESS
-  origin: reference_consensus
-  verification: contract_tested
-- value: h1[data-qa="vacancy-title"]
-  references:
-  - steev
-  - tgeruzov
-  sources:
-    steev:
-    - file: scripts/scan-telegram.mjs
-      line: 81
-      key: scripts/scan-telegram.mjs::t#0::0
-      value: h1[data-qa="vacancy-title"]
-    tgeruzov:
-    - file: script.js
-      line: 1356
-      key: script.js::pick#1::0
-      value: h1[data-qa="vacancy-title"]
-  decision: reject
-  reason_code: duplicate_local_role
-  reason: 'Дубликат локального vacancy_page.VACANCY_TITLE: canonical [data-qa="vacancy-title"] уже покрывает ту же роль; fallback
-    не добавляется.'
 binding_definitions:
   apply.success.APPLY_SUCCESS_MARKER:
     yamakayama:

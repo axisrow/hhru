@@ -112,15 +112,16 @@ VACANCY_SINGLE_REFERENCE_PORTS = {
 }
 
 
+# PR 1241: view-location/raw-address/h1-title держались на tgeruzov-литералах
+# (pick#4/pick#5/pick#1), исчезнувших в upstream-коммите 605f24fb, — consensus
+# на них недостижим, refresh выпадает записи из upstream_consensus; ожидаемый
+# набор сужен до живых consensus-значений.
 VACANCY_CANDIDATE_VALUES = {
     '[data-qa="vacancy-description"]',
     '[data-qa="vacancy-experience"]',
     '[data-qa="vacancy-response-letter-submit"]',
     '[data-qa="vacancy-response-link-bottom"]',
     '[data-qa="vacancy-view-employment-mode"]',
-    '[data-qa="vacancy-view-location"]',
-    '[data-qa="vacancy-view-raw-address"]',
-    'h1[data-qa="vacancy-title"]',
 }
 
 
@@ -436,13 +437,15 @@ def test_apply_response_upstream_candidates_have_explicit_safe_decisions():
         for row in catalog["upstream_consensus"]
         if contracts._is_apply_response_candidate(row["value"])
     }
+    # PR 1241: submit-popup выпал — единственный tgeruzov-литерал (letterSubmit#0::4,
+    # fillLetterAndSubmit#2::0) исчез в upstream-коммите 605f24fb, остался один
+    # yamakayama; строка понесена в selectors как live_dom (APPLY_SUBMIT_BUTTON).
     expected = {
         '[data-qa="vacancy-response-letter-submit"]',
         '[data-qa="vacancy-response-letter-toggle"]',
         '[data-qa="vacancy-response-link-bottom"]',
         '[data-qa="vacancy-response-link-top"]',
         '[data-qa="vacancy-response-link-view-topic"]',
-        '[data-qa="vacancy-response-submit-popup"]',
         '[data-qa="vacancy-serp__vacancy-employer"]',
     }
     assert set(candidates) == expected
