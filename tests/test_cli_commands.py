@@ -1090,3 +1090,30 @@ def test_solve_captcha_origin_check_is_shared_between_guards():
     assert sc._origin_mismatch("https://hh.ru/vacancy/1") is False
     assert sc._origin_mismatch("https://attacker.hh.ru/") is True
     assert sc._origin_mismatch("http://hh.ru/") is True
+
+
+def test_global_flags_accepted_after_subcommand_any_depth():
+    """#1235: глобальные флаги-пути принимаются после подкоманды на любом
+    уровне вложенности, правый дубль выигрывает. Заодно страж load-bearing
+    default=SUPPRESS: без него дефолт подкоманды (None) молча затирает
+    корневое значение, и первая форма ниже резолвила бы None вместо "X"."""
+    from hhru_bot.cli import build_parser
+
+    parse = build_parser().parse_args
+    assert parse(["--config", "X", "whoami"]).config == "X"
+    assert parse(["whoami", "--config", "X"]).config == "X"
+    assert parse(["account", "create", "default", "--config", "X"]).config == "X"
+    assert parse(["--config", "A", "whoami", "--config", "B"]).config == "B"
+
+
+def test_history_and_account_accepted_after_subcommand():
+    """#1235 cycle-review: рваная поверхность недопустима — если --config
+    работает после подкоманды, соседние глобальные флаги того же механизма
+    обязаны работать так же (плоский и вложенный уровень)."""
+    from hhru_bot.cli import build_parser
+
+    parse = build_parser().parse_args
+    flat = parse(["whoami", "--history", "h.db", "--account", "work"])
+    assert (flat.history, flat.account) == ("h.db", "work")
+    nested = parse(["account", "create", "default", "--account", "work"])
+    assert nested.account == "work"

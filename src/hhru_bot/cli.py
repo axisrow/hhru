@@ -201,6 +201,14 @@ def register_commands(subparsers: argparse._SubParsersAction) -> list[str]:
     return registered
 
 
+def _iter_subparsers(action):
+    """Все парсеры команд дерева subparsers, включая вложенные (`account create ...`)."""
+    for sub in action.choices.values():
+        yield sub
+        for nested in (a for a in sub._actions if isinstance(a, argparse._SubParsersAction)):
+            yield from _iter_subparsers(nested)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="hhru_bot",
@@ -230,6 +238,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command", required=True)
     register_commands(subparsers)
+    # Глобальные флаги-пути/имена принимаются и ПОСЛЕ подкоманды на любом
+    # уровне вложенности (`whoami --config X`, `account create default
+    # --config X`), а не только до неё. default=SUPPRESS не даёт дефолту
+    # подкоманды затереть корневое значение — все формы пишут в один dest,
+    # при дубле выигрывает правый. Булевы флаги не копируются: live-browser
+    # определяет свой --headless, слепая копия конфликтовала бы на build_parser().
+    for sub in _iter_subparsers(subparsers):
+        for flag in ("--config", "--history", "--account"):
+            # help=SUPPRESS: флаги уже документированы на корневом парсере, а
+            # видимый help у копии рендерил бы в docs мусорный default '==SUPPRESS=='.
+            sub.add_argument(flag, default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     return parser
 
 
