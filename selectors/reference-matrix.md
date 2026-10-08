@@ -26,7 +26,7 @@
 | apply.antibot.ANTIBOT_MARKER_SELECTORS.0.1 | `[data-qa='captcha']` | — | — | — | safety_guard |
 | apply.antibot.ANTIBOT_MARKER_SELECTORS.1.1 | `[data-qa='account-captcha-input']` | — | — | — | safety_guard |
 | apply.antibot.ANTIBOT_MARKER_SELECTORS.2.1 | `[data-qa='account-captcha-picture']` | — | — | — | safety_guard |
-| apply.success.APPLY_SUCCESS_MARKER | `[data-qa='vacancy-response-sent-message']` | — | [data-qa="vacancy-response-success"] | [data-qa*="response-success"] | unavailable |
+| apply.success.APPLY_SUCCESS_MARKER | `[data-qa='vacancy-response-sent-message']` | — | — | [data-qa*="response-success"] | unavailable |
 | apply_form.APPLY_COVER_LETTER_TEXTAREA | `textarea[data-qa='vacancy-response-popup-form-letter-input']` | — | textarea[data-qa="vacancy-response-popup-form-letter-input"] | [data-qa="vacancy-response-popup-form-letter-input"] | live_dom |
 | apply_form.APPLY_COVER_LETTER_TEXTAREA_FORM | `textarea[data-qa='vacancy-response-form-letter-input']` | — | — | — | documented_live |
 | apply_form.APPLY_COVER_LETTER_TOGGLE | `[data-qa='vacancy-response-letter-toggle']` | — | [data-qa="vacancy-response-letter-toggle"] | [data-qa="vacancy-response-letter-toggle"] | consensus |
@@ -38,7 +38,7 @@
 | apply_form.APPLY_RESUME_OPTION | `[data-qa='magritte-select-option-{resume_id}']` | — | — | [data-qa="vacancy-response-popup-form-resume-option"] | live_dom |
 | apply_form.APPLY_RESUME_SELECT | `[data-qa='resume-title']` | — | — | [data-qa="vacancy-response-popup-form-resume-dropdown"] | live_dom |
 | apply_form.APPLY_RESUME_TOGGLE | `[data-qa='resume-title'] >> xpath=ancestor::*[@role='button'][1]` | — | — | — | live_dom |
-| apply_form.APPLY_SUBMIT_BUTTON | `[data-qa='vacancy-response-submit-popup']` | — | [data-qa="vacancy-response-submit-popup"] | [data-qa="vacancy-response-submit-popup"] | consensus |
+| apply_form.APPLY_SUBMIT_BUTTON | `[data-qa='vacancy-response-submit-popup']` | — | — | [data-qa="vacancy-response-submit-popup"] | live_dom |
 | browser.LOGIN_FORM | `[data-qa='account-login-form']` | — | — | — | live_dom |
 | competitor_resume.DETAIL_PERSONAL_ADDRESS | `[data-qa='resume-personal-address']` | — | — | — | live_dom |
 | competitor_resume.DETAIL_PERSONAL_INFO | `main p:has([data-qa^='relocation_'])` | — | — | — | live_dom |
@@ -314,7 +314,7 @@
 | vacancy_page.VACANCY_ALREADY_RESPONDED_AGAIN | `[data-qa='vacancy-response-link-top-again']` | — | — | — | live_dom |
 | vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT | `[data-qa='vacancy-response-link-view-topic']` | — | [data-qa="vacancy-response-link-view-topic"] | [data-qa="vacancy-response-link-view-topic"] | consensus |
 | vacancy_page.VACANCY_APPLY_BUTTON | `[data-qa='vacancy-response-link-top']` | [data-qa="vacancy-response-link-top"] | [data-qa="vacancy-response-link-top"] | [data-qa="vacancy-response-link-top"] | consensus |
-| vacancy_page.VACANCY_COMPANY_NAME | `[data-qa='vacancy-company-name']` | [data-qa="vacancy-company-name"] | [data-qa="vacancy-company-name"] | — | consensus |
+| vacancy_page.VACANCY_COMPANY_NAME | `[data-qa='vacancy-company-name']` | [data-qa="vacancy-company-name"] | — | — | live_dom |
 | vacancy_page.VACANCY_DESCRIPTION | `[data-qa="vacancy-description"]` | [data-qa="vacancy-description"] | — | [data-qa="vacancy-description"] | consensus |
 | vacancy_page.VACANCY_DIRECT_APPLICATION_ALERT | `[data-qa="magritte-alert"]` | — | — | — | documented_live |
 | vacancy_page.VACANCY_DIRECT_APPLICATION_CANCEL | `[data-qa="vacancy-response-link-advertising-cancel"]` | — | — | — | documented_live |
@@ -322,13 +322,13 @@
 | vacancy_page.VACANCY_HIDDEN_RESUME_WARNING | `[data-qa='hidden-resume-warning']` | — | — | — | live_dom |
 | vacancy_page.VACANCY_LIMIT_ERROR | `[data-qa-popup-error-code="negotiations-limit-exceeded"]` | — | — | — | documented_live |
 | vacancy_page.VACANCY_RELOCATION_CONFIRM | `[data-qa="relocation-warning-confirm"]` | — | [data-qa="relocation-warning-confirm"] | — | documented_live |
-| vacancy_page.VACANCY_RESPONSE_ERROR | `[data-qa="vacancy-response-error-notification"]` | — | [data-qa="vacancy-response-error-notification"] | — | documented_live |
+| vacancy_page.VACANCY_RESPONSE_ERROR | `[data-qa="vacancy-response-error-notification"]` | — | — | — | documented_live |
 | vacancy_page.VACANCY_RESPONSE_REJECT_WARNING | `[data-qa="response-reject-warning"]` | — | [data-qa="response-reject-warning"] | — | documented_live |
 | vacancy_page.VACANCY_SIMILAR_VACANCIES_CLOSE | `[data-qa="vacancy-response-similar-vacancies-close"]` | — | — | — | documented_live |
-| vacancy_page.VACANCY_TITLE | `[data-qa='vacancy-title']` | [data-qa="vacancy-title"] | [data-qa="vacancy-title"] | [data-qa="vacancy-title"] | consensus |
+| vacancy_page.VACANCY_TITLE | `[data-qa='vacancy-title']` | [data-qa="vacancy-title"] | — | [data-qa="vacancy-title"] | consensus |
 | vacancy_page.VACANCY_VIEW_EMPLOYMENT_MODE | `[data-qa="vacancy-view-employment-mode"]` | [data-qa="vacancy-view-employment-mode"] | — | [data-qa="vacancy-view-employment-mode"] | consensus |
-| vacancy_page.VACANCY_VIEW_LOCATION | `[data-qa="vacancy-view-location"]` | [data-qa="vacancy-view-location"] | [data-qa="vacancy-view-location"] | — | consensus |
-| vacancy_page.VACANCY_VIEW_RAW_ADDRESS | `[data-qa="vacancy-view-raw-address"]` | [data-qa="vacancy-view-raw-address"] | [data-qa="vacancy-view-raw-address"] | — | consensus |
+| vacancy_page.VACANCY_VIEW_LOCATION | `[data-qa="vacancy-view-location"]` | [data-qa="vacancy-view-location"] | — | — | documented_live |
+| vacancy_page.VACANCY_VIEW_RAW_ADDRESS | `[data-qa="vacancy-view-raw-address"]` | [data-qa="vacancy-view-raw-address"] | — | — | documented_live |
 
 ## Raw 2-of-3 reference consensus
 
@@ -344,13 +344,9 @@ These rows are extracted from the approved upstream projects even when hhru does
 | `[data-qa="vacancy-response-link-bottom"]` | tgeruzov, yamakayama |
 | `[data-qa="vacancy-response-link-top"]` | steev, tgeruzov, yamakayama |
 | `[data-qa="vacancy-response-link-view-topic"]` | tgeruzov, yamakayama |
-| `[data-qa="vacancy-response-submit-popup"]` | tgeruzov, yamakayama |
 | `[data-qa="vacancy-serp__vacancy-employer"]` | steev, yamakayama |
 | `[data-qa="vacancy-title"]` | steev, tgeruzov, yamakayama |
 | `[data-qa="vacancy-view-employment-mode"]` | steev, yamakayama |
-| `[data-qa="vacancy-view-location"]` | steev, tgeruzov |
-| `[data-qa="vacancy-view-raw-address"]` | steev, tgeruzov |
-| `h1[data-qa="vacancy-title"]` | steev, tgeruzov |
 
 ## Apply/response candidate decisions
 
@@ -363,5 +359,4 @@ Every apply/response candidate is explicitly resolved; rejected WRITE candidates
 | `[data-qa="vacancy-response-link-bottom"]` | reject | vacancy_page.VACANCY_APPLY_BUTTON | duplicate apply role covered by VACANCY_APPLY_BUTTON; adding a bottom-link fallback would expand the WRITE path without a local DOM snapshot. |
 | `[data-qa="vacancy-response-link-top"]` | reject | vacancy_page.VACANCY_APPLY_BUTTON | duplicate of the existing VACANCY_APPLY_BUTTON contract; no second local apply contract is needed. |
 | `[data-qa="vacancy-response-link-view-topic"]` | reject | vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT | duplicate of VACANCY_ALREADY_RESPONDED_CHAT; the already-responded control is already represented in the local response flow. |
-| `[data-qa="vacancy-response-submit-popup"]` | reject | apply_form.APPLY_SUBMIT_BUTTON | duplicate of APPLY_SUBMIT_BUTTON; the popup submit control is already the local WRITE submit contract. |
 | `[data-qa="vacancy-serp__vacancy-employer"]` | reject | search_page.VACANCY_CARD_COMPANY | duplicate of VACANCY_CARD_COMPANY; the read-only SERP employer role is already represented locally. |

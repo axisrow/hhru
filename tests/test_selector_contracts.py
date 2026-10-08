@@ -94,26 +94,34 @@ VACANCY_CONSENSUS_PORTS = {
         "value": '[data-qa="vacancy-view-employment-mode"]',
         "references": {"steev", "yamakayama"},
     },
+}
+
+# tgeruzov вынес хелпер pick (исчез в upstream-коммите 605f24fb) — литералы
+# vacancy-view-* остались только у steev, consensus (2 референса) на них
+# недостижим; селекторы живы и обязаны оставаться активными на локальном
+# документированном evidence.
+VACANCY_SINGLE_REFERENCE_PORTS = {
     "vacancy_page.VACANCY_VIEW_LOCATION": {
         "value": '[data-qa="vacancy-view-location"]',
-        "references": {"steev", "tgeruzov"},
+        "references": {"steev"},
     },
     "vacancy_page.VACANCY_VIEW_RAW_ADDRESS": {
         "value": '[data-qa="vacancy-view-raw-address"]',
-        "references": {"steev", "tgeruzov"},
+        "references": {"steev"},
     },
 }
 
 
+# PR 1241: view-location/raw-address/h1-title держались на tgeruzov-литералах
+# (pick#4/pick#5/pick#1), исчезнувших в upstream-коммите 605f24fb, — consensus
+# на них недостижим, refresh выпадает записи из upstream_consensus; ожидаемый
+# набор сужен до живых consensus-значений.
 VACANCY_CANDIDATE_VALUES = {
     '[data-qa="vacancy-description"]',
     '[data-qa="vacancy-experience"]',
     '[data-qa="vacancy-response-letter-submit"]',
     '[data-qa="vacancy-response-link-bottom"]',
     '[data-qa="vacancy-view-employment-mode"]',
-    '[data-qa="vacancy-view-location"]',
-    '[data-qa="vacancy-view-raw-address"]',
-    'h1[data-qa="vacancy-title"]',
 }
 
 
@@ -310,6 +318,21 @@ def test_vacancy_consensus_ports_are_exact_reference_literals(logical_id, expect
             assert source["value"] == expected["value"]
 
 
+@pytest.mark.parametrize("logical_id, expected", VACANCY_SINGLE_REFERENCE_PORTS.items())
+def test_vacancy_single_reference_ports_stay_backed(logical_id, expected):
+    """Vacancy-порт, потерявший второй upstream-референс, обязан оставаться
+    активным на локальном документированном evidence, а не падать в inactive."""
+    row = contracts.load_catalog()["selectors"][logical_id]
+
+    assert row["decision"] in {"documented_live", "live_dom"}
+    assert row.get("active", True)
+    assert row["criticality"] == "read"
+    assert set(row["sources"]) == expected["references"]
+    assert row["value"] == expected["value"]
+    assert row["evidence"].get("source")
+    assert row["evidence"].get("note")
+
+
 def test_every_vacancy_upstream_candidate_has_an_explicit_decision():
     catalog = contracts.load_catalog()
     candidates = {
@@ -325,7 +348,9 @@ def test_every_vacancy_upstream_candidate_has_an_explicit_decision():
     for row in candidates.values():
         assert row["decision"] in {"port_exact", "reject"}
         if row["decision"] == "port_exact":
-            assert row["logical_id"] in VACANCY_CONSENSUS_PORTS
+            assert row["logical_id"] in (
+                set(VACANCY_CONSENSUS_PORTS) | set(VACANCY_SINGLE_REFERENCE_PORTS)
+            )
             assert row["origin"] == "reference_consensus"
             assert row["verification"] == "contract_tested"
         else:
@@ -412,13 +437,15 @@ def test_apply_response_upstream_candidates_have_explicit_safe_decisions():
         for row in catalog["upstream_consensus"]
         if contracts._is_apply_response_candidate(row["value"])
     }
+    # PR 1241: submit-popup выпал — единственный tgeruzov-литерал (letterSubmit#0::4,
+    # fillLetterAndSubmit#2::0) исчез в upstream-коммите 605f24fb, остался один
+    # yamakayama; строка понесена в selectors как live_dom (APPLY_SUBMIT_BUTTON).
     expected = {
         '[data-qa="vacancy-response-letter-submit"]',
         '[data-qa="vacancy-response-letter-toggle"]',
         '[data-qa="vacancy-response-link-bottom"]',
         '[data-qa="vacancy-response-link-top"]',
         '[data-qa="vacancy-response-link-view-topic"]',
-        '[data-qa="vacancy-response-submit-popup"]',
         '[data-qa="vacancy-serp__vacancy-employer"]',
     }
     assert set(candidates) == expected
@@ -672,6 +699,11 @@ def test_issue_609_resume_search_rows_have_explicit_evidence_resolution():
     # a "Добавить" control, it just uses the shared data-qa='link' scoped to the
     # experience card, so the row moved off the unavailable set entirely.
     reverified_in_773 = {"resume_experience.EXPERIENCE_ADD_BUTTON"}
+    # PR 1241: единственный upstream-источник VACANCY_RESPONSE_ERROR (tgeruzov)
+    # исчез в коммите 605f24fb (переименование script.js) — строка честно
+    # переведена в needs_live_evidence/unverified до живой проверки, вместо
+    # ложного contract_tested. Разрешено как аннотированное исключение.
+    unverified_after_upstream_loss = {"vacancy_page.VACANCY_RESPONSE_ERROR"}
     for logical_id in target_ids:
         row = catalog["selectors"][logical_id]
         assert row["origin"] in {
@@ -681,12 +713,15 @@ def test_issue_609_resume_search_rows_have_explicit_evidence_resolution():
             "browser_dom",
             "manual",
         }
-        assert row["verification"] in {
+        allowed_verifications = {
             "browser_observed",
             "contract_tested",
             "failed",
             "unavailable",
         }
+        if logical_id in unverified_after_upstream_loss:
+            allowed_verifications.add("unverified")
+        assert row["verification"] in allowed_verifications
         assert row["evidence"]["source"]
         if row["bindings"]:
             assert row["evidence"].get("references")
