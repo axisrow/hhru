@@ -1107,6 +1107,24 @@ def test_warning_before_form_open_gets_honest_skip_not_crash() -> None:
     assert channel.dismissed_ids == []
 
 
+def test_placeholder_resume_url_verdict_goes_through_result() -> None:
+    # Ревью PR #1237: _result зовёт census-хелперы, чьи def стояли ниже
+    # плейсхолдерной ветки — вызов до их def ронял ветку NameError вместо
+    # честного [FAIL]-вердикта. Гард: плейсхолдер проходит через _result
+    # (census в payload, если канал жив), а не traceback.
+    resume = ResumeConfig(
+        id="resume",
+        resume_url="https://hh.ru/resume/XXXXXXXX",
+        search=SearchFilters(text="python"),
+    )
+    result = apply_via_live(FakeFormChannel(), resume, _vacancy(), "Здравствуйте!", False)
+
+    assert result.success is False
+    assert "плейсхолдер resume_url" in result.reason
+    # Канал жив — census подтверждённо пуст, вердикт всё равно отказной.
+    assert result.overlay_census == []
+
+
 def test_refusal_attaches_overlay_census() -> None:
     # Бой 2026-09-24 (#1220): policy_refused называет только ВЕРХНИЙ overlay
     # клика, соседние остаются неназванными, а состояние модалки «пассивно

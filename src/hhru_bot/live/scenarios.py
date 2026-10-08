@@ -225,9 +225,6 @@ def apply_via_live(
             overlay_census=census,
         )
 
-    if is_resume_url_placeholder(resume.resume_url):
-        return _result(False, "плейсхолдер resume_url в конфиге — укажите реальный URL")
-
     # Позитивные success-маркеры submit (#7): только структурные data-qa;
     # vacancy-response-link-top (кнопка отклика позади модалки) и legacy
     # селекторы не идут — ложный positive дал бы выдуманный success.
@@ -498,6 +495,13 @@ def apply_via_live(
             # другого отклика — без сверки vacancyId поток продолжился бы
             # (пикер → письмо → submit) и отправил отклик не туда.
             return parse_qs(parts.query).get("vacancyId") == [vacancy_id]
+
+    # Плейсхолдер resume_url — проверка ПОСЛЕ всех вложенных def (ревью PR
+    # #1237): _result зовёт census-хелперы _overlays_best_effort и
+    # _overlay_census_suffix, а тело apply_via_live исполняется линейно —
+    # вызов _result выше их def падал NameError вместо честного [FAIL].
+    if is_resume_url_placeholder(resume.resume_url):
+        return _result(False, "плейсхолдер resume_url в конфиге — укажите реальный URL")
 
     grey_zone = False  # True с момента клика по кнопке отклика (#207)
     try:
