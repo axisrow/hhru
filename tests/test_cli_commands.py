@@ -347,6 +347,7 @@ def test_all_commands_registered():
         "upload-portfolio-image",
         "delete-photo",
         "wizard-next",
+        "overlay-census",
     }
 
 
@@ -441,6 +442,7 @@ def test_register_commands_returns_names():
         "upload_portfolio_image",
         "delete_photo",
         "wizard_next",
+        "overlay_census",
     }
 
 
