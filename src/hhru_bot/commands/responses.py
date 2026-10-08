@@ -1,4 +1,4 @@
-"""Команда responses: мониторинг ответов работодателей (#12, Этап 2).
+"""Команда responses: мониторинг событий по откликам (#12, Этап 2).
 
 Top-level команда ``hhru_bot responses ...`` — регистрируется автоматически через
 pkgutil.iter_modules в cli.register_commands (cli.py не трогается).
@@ -52,7 +52,7 @@ def _effective_max_pages(max_pages: int | None) -> int:
 def register(subparsers) -> None:
     p = subparsers.add_parser(
         "responses",
-        help="Проверить ответы работодателей (приглашения/отказы/сообщения)",
+        help="Проверить события по откликам (приглашения/отказы/прочтения)",
     )
     p.add_argument("--resume", help="ID резюме из конфига (по умолчанию — все)")
     p.add_argument(
@@ -67,7 +67,7 @@ def register(subparsers) -> None:
         "--since-hours",
         type=float,
         default=24.0,
-        help="Показать ответы, сменившие статус за последние N часов (по умолчанию 24). "
+        help="Показать события, сменившие статус за последние N часов (по умолчанию 24). "
         "0 — выполнить живой обход hh.ru и показать синхронизацию/историю.",
     )
     p.add_argument(
@@ -160,7 +160,7 @@ def _print_responses_table(rows: list[dict], title: str) -> None:
     """ASCII-таблица ответов. rows — dict'и из history.new_responses_since."""
     print(f"\n{title}: {len(rows)}")
     if not rows:
-        print("  (нет новых ответов за период)")
+        print("  (нет новых событий за период)")
         return
 
     # Колонки фиксированной ширины для читаемого выравнивания (чистый ASCII).
@@ -290,9 +290,9 @@ def run(args: argparse.Namespace) -> CommandExitCode | None:
             sys.exit(1)
 
     if fresh_only:
-        print("\n=== Ответы работодателей (вся история, без обхода hh.ru) ===")
+        print("\n=== События по откликам (вся история, без обхода hh.ru) ===")
     elif not alert_new:
-        print(f"\n=== Ответы работодателей (новое за {args.since_hours:g}ч) ===")
+        print(f"\n=== События по откликам (новое за {args.since_hours:g}ч) ===")
 
     # Responses — account-scope: страница /applicant/negotiations общая и НЕ несёт
     # достоверного признака принадлежности ответа конкретному резюме. Поэтому
@@ -350,7 +350,7 @@ def run(args: argparse.Namespace) -> CommandExitCode | None:
                     history.mark_responses_alert_success(scan_started_at)
             except (NotAuthenticated, ResponsesIndeterminate, ValueError) as e:
                 # Истёкшая сессия или не подтверждённый DOM: НЕ затираем
-                # историю и НЕ выдаём неопределённость за «нет новых ответов».
+                # историю и НЕ выдаём неопределённость за «нет новых событий».
                 print(f"Ошибка: {e}", file=sys.stderr)
                 sys.exit(1)
                 return
@@ -471,7 +471,7 @@ def run(args: argparse.Namespace) -> CommandExitCode | None:
             return None
 
         print(
-            f"Новых ответов: {inserted + updated} "
+            f"Новых событий: {inserted + updated} "
             f"(новых записей: {inserted}, смен статуса: {updated})"
         )
         if skipped_ambiguous:
@@ -481,10 +481,10 @@ def run(args: argparse.Namespace) -> CommandExitCode | None:
                 "подтверждено — см. лог warning)"
             )
     else:
-        print("Режим --since-hours 0: обход hh.ru пропущен, вывожу всю историю ответов.")
+        print("Режим --since-hours 0: обход hh.ru пропущен, вывожу всю историю событий.")
 
     # Сводка «что нового» по истории (account-scope — без фильтра по resume_id).
     rows = history.new_responses_since(since_summary)
-    _print_responses_table(rows, "Новые ответы работодателей")
+    _print_responses_table(rows, "Новые события по откликам")
     if calendar_hint:
         _print_calendar_hints(rows)

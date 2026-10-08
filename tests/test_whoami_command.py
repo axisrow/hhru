@@ -236,9 +236,9 @@ def test_summary_counts_from_history(tmp_path, capsys):
     assert "python" in out and "data" in out
     # Откликов за 24ч: 3 успеха (2 + 1), формат "3 / 40"
     assert "3 / 40" in out
-    # Приглашений: 1; Новых ответов 24ч: ≥2 (invitation + read).
+    # Приглашений: 1; Новых событий 24ч: ≥2 (invitation + read).
     assert "Приглашений" in out
-    assert "Новых ответов" in out
+    assert "Новых событий" in out
 
 
 def test_summary_table_has_header_and_borders(tmp_path, capsys):

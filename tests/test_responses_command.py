@@ -6,7 +6,7 @@
 
 Браузерный путь (fetch_responses) покрывается через monkeypatch: проверяем, что
 истёкшая сессия (NotAuthenticated) НЕ затирает историю и НЕ выдаёт пустой
-результат за «нет новых ответов», а `--resume` игнорируется с warning.
+результат за «нет новых событий», а `--resume` игнорируется с warning.
 """
 
 from __future__ import annotations
@@ -184,8 +184,9 @@ def test_responses_run_history_only_prints_ascii_table(capsys, tmp_path):
     responses_cmd.run(_args(config, tmp_path / "h.db"))
     out = capsys.readouterr().out
 
-    # Заголовок секции и таблица с колонками.
-    assert "Ответы работодателей" in out
+    # Заголовок секции и таблица с колонками. «События», а не «ответы»: сюда
+    # попадают и нейтральные записи (Прочитано), где работодатель ничего не писал.
+    assert "События по откликам" in out
     assert "Вакансия" in out
     assert "Работодатель" in out
     assert "Статус" in out
@@ -584,7 +585,7 @@ def test_responses_run_empty_history_does_not_crash(capsys, tmp_path):
     config = _write_config(tmp_path, _minimal_config())
     responses_cmd.run(_args(config, tmp_path / "h.db"))
     out = capsys.readouterr().out
-    assert "нет новых ответов" in out
+    assert "нет новых событий" in out
 
 
 def test_responses_run_resume_arg_is_ignored_with_warning(capsys, tmp_path):
@@ -604,7 +605,7 @@ def test_responses_run_expired_session_does_not_corrupt_history(capsys, tmp_path
     """Истёкшая сессия (NotAuthenticated): exit nonzero, история НЕ затёрта, нет «пусто».
 
     Регрессия Codex-critical: пустой результат выгруженной сессии не должен
-    маскироваться за «нет новых ответов» — иначе приглашения скрываются молча.
+    маскироваться за «нет новых событий» — иначе приглашения скрываются молча.
 
     Браузер НЕ поднимается: launch_context замокан (CI не имеет Chromium), а
     fetch_responses поднимает NotAuthenticated сразу при входе в контекст.
