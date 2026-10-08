@@ -230,6 +230,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command", required=True)
     register_commands(subparsers)
+    # --config принимается и ПОСЛЕ подкоманды (`whoami --config X`), а не только
+    # до неё (`--config X whoami`). default=SUPPRESS не даёт дефолту подкоманды
+    # затереть корневое значение — обе формы пишут в один args.config.
+    for sub in subparsers.choices.values():
+        # help=SUPPRESS: флаг уже документирован на корневом парсере, а видимый
+        # help у копии рендерил бы в docs мусорный default '==SUPPRESS=='.
+        sub.add_argument("--config", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     return parser
 
 
