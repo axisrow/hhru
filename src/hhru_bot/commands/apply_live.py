@@ -12,6 +12,8 @@ Playwright-контексте со storage_state аккаунта (чтение 
 from __future__ import annotations
 
 import argparse
+import json
+import time
 from typing import TYPE_CHECKING, Any
 
 from ..exit_codes import CommandExitCode
@@ -52,6 +54,37 @@ def register(subparsers: Any) -> None:
         help=f"Порт канала на 127.0.0.1 (расширение слушает {DEFAULT_LIVE_PORT})",
     )
     p.set_defaults(func=run)
+
+
+def _dump_refusal_census(card, result) -> None:
+    """Census оверлеев отказного вердикта live-канала — в дамп data/logs (#1228).
+
+    Рядом с HTML-снимками Playwright-пути (dump_page_html пишет .html +
+    .census.txt в тот же LOG_DIR): live-канал HTML вкладки не читает, честный
+    снимок отказа — JSON census из payload вердикта (result.overlay_census).
+    Best-effort: None (мёртвый канал) — дампа нет, любая OSError глушится —
+    диагностика не ломает боевой путь (канон dump_page_html).
+    """
+    from ..logging_setup import LOG_DIR
+
+    if result.overlay_census is None:
+        return
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        path = LOG_DIR / (
+            f"apply_live_{card.vacancy_id}_{time.strftime('%Y%m%d_%H%M%S')}.overlay-census.json"
+        )
+        path.write_text(
+            json.dumps(
+                {"reason": result.reason, "overlays": result.overlay_census},
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    except OSError:
+        return
+    print(f"[INFO] census оверлеев отказа: {path}")
 
 
 def _run(
@@ -233,6 +266,7 @@ def _run(
     if result.success:
         print(f"  [OK] {card.title} — {card.company}" + (" (dry-run)" if args.dry_run else ""))
     else:
+        _dump_refusal_census(card, result)
         print(f"  [FAIL] {card.title} — {result.reason}")
 
     # Анти-бан-пауза только после реального действия — тот же инвариант,
