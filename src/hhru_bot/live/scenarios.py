@@ -134,8 +134,12 @@ def resolve_overlay_action(
        маскируется соседним dismissable.
     2. dismiss — запись skip/dismiss-действия на dismissable узле: сценарий
        закроет safe-overlay и перепроверит свой якорь (у видимости — warning
-       data-qa, #1218). skip-запись без dismissable узла во всём census —
-       терминальный skip (#1216); dismiss-запись без гейта вердикта не даёт.
+       data-qa, #1218). Владелец dismiss'а — запись с минимальным priority
+       (равные — первый в census): совместный census [stale_contacts,
+       видимость] закрывает видимость (10 < 20), чей warning перечитывает
+       потребитель, а не чужую модалку (ревью PR #1239). skip-запись без
+       dismissable узла во всём census — терминальный skip (#1216);
+       dismiss-запись без гейта вердикта не даёт.
     3. continue — незнакомый overlay (записи нет — действия нет, #1229),
        пустой census или битая запись (не-dict пропускается, прецедент ревью
        PR #1233). Клик-семантика остаётся исполнителю: allowApply (#1221) и
@@ -152,15 +156,22 @@ def resolve_overlay_action(
         ):
             return OverlayVerdict(VERDICT_REFUSE, record, overlay)
     skip_fallback: OverlayVerdict | None = None
+    dismiss_best: OverlayVerdict | None = None
+    best_priority = 0
     for overlay in overlays:
         record = _match_registry(str(overlay.get("text") or ""), registry)
         if record is None or record.action in (ACTION_UNKNOWN, ACTION_CONTINUE):
             continue
         if _dismissable(overlay):
-            return OverlayVerdict(ACTION_DISMISS, record, overlay)
-        if record.action == ACTION_SKIP and skip_fallback is None:
+            # Владелец dismiss'а — запись с меньшим priority (равные — первый
+            # в census), а не первый узел census: чужая dismissable модалка
+            # не должна съедать попытку блокируемой записи.
+            if dismiss_best is None or record.priority < best_priority:
+                dismiss_best = OverlayVerdict(ACTION_DISMISS, record, overlay)
+                best_priority = record.priority
+        elif record.action == ACTION_SKIP and skip_fallback is None:
             skip_fallback = OverlayVerdict(ACTION_SKIP, record, overlay)
-    return skip_fallback or OverlayVerdict(ACTION_CONTINUE)
+    return dismiss_best or skip_fallback or OverlayVerdict(ACTION_CONTINUE)
 
 
 def _is_hh_ru_host(netloc: str) -> bool:

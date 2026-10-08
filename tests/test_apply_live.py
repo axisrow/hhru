@@ -947,6 +947,31 @@ def test_visibility_modal_dismiss_returns_picker_trigger() -> None:
     assert channel.dismissed_ids == ["overlay-1"]
 
 
+def test_joint_dismissable_census_dismisses_visibility_not_foreign_modal() -> None:
+    # Ревью PR #1239: совместный census [stale_contacts safe+close, видимость
+    # safe+close] — владелец dismiss'а по приоритету записи (10 < 20):
+    # закрывается видимость, warning перечитывается, штатный флоу до submit —
+    # как на main, где dismiss матчил строго видимость. Чужая dismissable
+    # модалка попытку не съедает.
+    stale_overlay = {
+        "id": "overlay-2",
+        "type": "modal",
+        "disposition": "safe",
+        "closeControls": 1,
+        "text": "Контакты в резюме могли устареть. Заменить на новые из профиля?",
+    }
+    channel = FakeFormChannel(
+        hidden_warning=True,
+        option_present=False,
+        overlays=[stale_overlay, dict(VISIBILITY_OVERLAY)],
+    )
+    result = _run(channel, verify=_verify_of("found"))
+
+    assert (result.success, result.acted, result.skipped) == (True, True, False)
+    assert channel.dismissed_ids == ["overlay-1"]
+    assert channel.submitted and channel.filled_text == "Здравствуйте!"
+
+
 def test_visibility_modal_not_listed_is_skip_like_1216() -> None:
     # Overlay с текстом модалки не перечислен: dismiss не выполняется —
     # честный skip #1216 без изменений.
@@ -1337,6 +1362,27 @@ def test_resolve_picks_safe_ancestor_over_ambiguous_inner() -> None:
     for census in ([inner, dict(VISIBILITY_OVERLAY)], [dict(VISIBILITY_OVERLAY), inner]):
         verdict = resolve_overlay_action(census)
         assert verdict.action == ACTION_DISMISS
+        assert verdict.overlay is not None and verdict.overlay["id"] == "overlay-1"
+
+
+def test_resolve_dismiss_owner_is_min_priority_record() -> None:
+    # Ревью PR #1239: владелец dismiss'а при совместном dismissable-census —
+    # запись с минимальным priority (равные — первый в census), а не первый
+    # узел census: видимость (10) бьёт stale_contacts (20) в любом порядке.
+    stale_overlay = {
+        "id": "overlay-2",
+        "type": "modal",
+        "disposition": "safe",
+        "closeControls": 1,
+        "text": "Контакты в резюме могли устареть. Заменить на новые из профиля?",
+    }
+    for census in (
+        [stale_overlay, dict(VISIBILITY_OVERLAY)],
+        [dict(VISIBILITY_OVERLAY), stale_overlay],
+    ):
+        verdict = resolve_overlay_action(census)
+        assert verdict.action == ACTION_DISMISS
+        assert verdict.record is VISIBILITY_MODAL
         assert verdict.overlay is not None and verdict.overlay["id"] == "overlay-1"
 
 
