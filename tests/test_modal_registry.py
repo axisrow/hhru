@@ -54,6 +54,20 @@ def test_registry_priorities_ordered_and_unique() -> None:
     assert len(priorities) == len(set(priorities))
 
 
+def test_registry_text_markers_do_not_overlap() -> None:
+    # Матчинг — первый матч по кортежу: пересекающиеся (тем более равные)
+    # text_marker молча сменили бы запись-владельца матча. Страж запрещает
+    # подстрочное пересечение в обе стороны; пара с осознанным пересечением
+    # заводится правкой ЭТОГО теста вместе с приоритетом, выбирающим
+    # владельца матча (докстринг match_census_text).
+    markers = [(r.name, r.text_marker) for r in MODAL_REGISTRY if r.text_marker]
+    for i, (name_a, marker_a) in enumerate(markers):
+        for name_b, marker_b in markers[i + 1 :]:
+            assert marker_a not in marker_b and marker_b not in marker_a, (
+                f"{name_a} и {name_b}: text_marker пересекаются — матч уйдёт не той записи"
+            )
+
+
 def test_registry_actions_never_mutate_profile() -> None:
     # Граница #1229: primary-кнопки-мутации не адресуются — словарь действий
     # закрыт (dismiss/skip/continue/unknown), у profile-записи продолжение
