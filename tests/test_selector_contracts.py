@@ -696,6 +696,11 @@ def test_issue_609_resume_search_rows_have_explicit_evidence_resolution():
     # a "Добавить" control, it just uses the shared data-qa='link' scoped to the
     # experience card, so the row moved off the unavailable set entirely.
     reverified_in_773 = {"resume_experience.EXPERIENCE_ADD_BUTTON"}
+    # PR 1241: единственный upstream-источник VACANCY_RESPONSE_ERROR (tgeruzov)
+    # исчез в коммите 605f24fb (переименование script.js) — строка честно
+    # переведена в needs_live_evidence/unverified до живой проверки, вместо
+    # ложного contract_tested. Разрешено как аннотированное исключение.
+    unverified_after_upstream_loss = {"vacancy_page.VACANCY_RESPONSE_ERROR"}
     for logical_id in target_ids:
         row = catalog["selectors"][logical_id]
         assert row["origin"] in {
@@ -705,12 +710,15 @@ def test_issue_609_resume_search_rows_have_explicit_evidence_resolution():
             "browser_dom",
             "manual",
         }
-        assert row["verification"] in {
+        allowed_verifications = {
             "browser_observed",
             "contract_tested",
             "failed",
             "unavailable",
         }
+        if logical_id in unverified_after_upstream_loss:
+            allowed_verifications.add("unverified")
+        assert row["verification"] in allowed_verifications
         assert row["evidence"]["source"]
         if row["bindings"]:
             assert row["evidence"].get("references")

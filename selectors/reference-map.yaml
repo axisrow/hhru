@@ -7215,15 +7215,15 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/vacancy_page.py:19
-      note: Exact selector value is bound to the approved reference source(s) recorded above; no local selector value was
-        changed.
+      note: Заимствован из reference-проектов, живым DOM не подтверждён (#342/PR 435 waiver). Единственный upstream-источник
+        tgeruzov исчез в коммите 605f24fb (переименование script.js); live-подтверждение требуется до боевого использования.
       runtime_authoritative: true
       references: []
     active: true
     bindings: {}
-    coverage_status: reference_binding
+    coverage_status: needs_live_evidence
     origin: reference_single
-    verification: contract_tested
+    verification: unverified
     last_verified_at: '2026-08-25'
     verified_flow: reference_selector_scan_and_contract_check
     verified_by: codex
