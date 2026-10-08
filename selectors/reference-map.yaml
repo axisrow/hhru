@@ -6007,6 +6007,11 @@ selectors:
         line: 61
         key: app/parsers/hh.py::module.HHParser.search_vacancies.cards#0::0
         value: '[data-qa="vacancy-serp__vacancy"]'
+      tgeruzov:
+      - file: hh-apply-assistant.user.js
+        line: 96
+        key: hh-apply-assistant.user.js::module.SELECTORS.vacancyCard#0::1
+        value: div[data-qa="vacancy-serp__vacancy"]
     coverage_status: reference_binding
     origin: reference_single
     verification: contract_tested
@@ -6402,6 +6407,11 @@ selectors:
         line: 77
         key: app/parsers/hh.py::module.HHParser._parse_card.title_el#0::0
         value: '[data-qa="serp-item__title"]'
+      tgeruzov:
+      - file: hh-apply-assistant.user.js
+        line: 95
+        key: hh-apply-assistant.user.js::module.SELECTORS.vacancyLink#0::1
+        value: a[data-qa="serp-item__title"]
     coverage_status: reference_binding
     origin: reference_single
     verification: contract_tested
@@ -7357,8 +7367,8 @@ selectors:
     active: true
     criticality: read
     declared_at: src/hhru_bot/selector_groups/vacancy_page.py:27
-    decision: consensus
-    origin: reference_consensus
+    decision: documented_live
+    origin: reference_single
     verification: contract_tested
     sources:
       steev:
@@ -7366,22 +7376,12 @@ selectors:
         line: 16
         key: lib/vacancy-parse.mjs::t#7::0
         value: '[data-qa="vacancy-view-location"]'
-      tgeruzov:
-      - file: hh-apply-assistant.user.js
-        line: 2946
-        key: hh-apply-assistant.user.js::pick#4::0
-        value: '[data-qa="vacancy-view-location"]'
     live_matches: []
     bindings:
       steev:
       - file: lib/vacancy-parse.mjs
         line: 16
         key: lib/vacancy-parse.mjs::t#7::0
-        value: '[data-qa="vacancy-view-location"]'
-      tgeruzov:
-      - file: hh-apply-assistant.user.js
-        line: 2946
-        key: hh-apply-assistant.user.js::pick#4::0
         value: '[data-qa="vacancy-view-location"]'
     coverage_status: reference_binding
     evidence:
@@ -7391,7 +7391,6 @@ selectors:
       runtime_authoritative: true
       references:
       - steev
-      - tgeruzov
     last_verified_at: '2026-08-25'
     verified_flow: reference_selector_scan_and_contract_check
     verified_by: codex
@@ -7400,8 +7399,8 @@ selectors:
     active: true
     criticality: read
     declared_at: src/hhru_bot/selector_groups/vacancy_page.py:28
-    decision: consensus
-    origin: reference_consensus
+    decision: documented_live
+    origin: reference_single
     verification: contract_tested
     sources:
       steev:
@@ -7409,22 +7408,12 @@ selectors:
         line: 16
         key: lib/vacancy-parse.mjs::t#8::0
         value: '[data-qa="vacancy-view-raw-address"]'
-      tgeruzov:
-      - file: hh-apply-assistant.user.js
-        line: 2948
-        key: hh-apply-assistant.user.js::pick#5::0
-        value: '[data-qa="vacancy-view-raw-address"]'
     live_matches: []
     bindings:
       steev:
       - file: lib/vacancy-parse.mjs
         line: 16
         key: lib/vacancy-parse.mjs::t#8::0
-        value: '[data-qa="vacancy-view-raw-address"]'
-      tgeruzov:
-      - file: hh-apply-assistant.user.js
-        line: 2948
-        key: hh-apply-assistant.user.js::pick#5::0
         value: '[data-qa="vacancy-view-raw-address"]'
     coverage_status: reference_binding
     evidence:
@@ -7434,7 +7423,6 @@ selectors:
       runtime_authoritative: true
       references:
       - steev
-      - tgeruzov
     last_verified_at: '2026-08-25'
     verified_flow: reference_selector_scan_and_contract_check
     verified_by: codex
@@ -7834,8 +7822,6 @@ upstream_consensus:
     не добавляется.'
 binding_definitions:
   apply.success.APPLY_SUCCESS_MARKER:
-    tgeruzov:
-    - hh-apply-assistant.user.js::hasExactResponseConfirmation#0::1
     yamakayama:
     - app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy#6::1
   apply_form.APPLY_COVER_LETTER_TEXTAREA:

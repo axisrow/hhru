@@ -94,13 +94,20 @@ VACANCY_CONSENSUS_PORTS = {
         "value": '[data-qa="vacancy-view-employment-mode"]',
         "references": {"steev", "yamakayama"},
     },
+}
+
+# tgeruzov вынес хелпер pick (исчез в upstream-коммите 605f24fb) — литералы
+# vacancy-view-* остались только у steev, consensus (2 референса) на них
+# недостижим; селекторы живы и обязаны оставаться активными на локальном
+# документированном evidence.
+VACANCY_SINGLE_REFERENCE_PORTS = {
     "vacancy_page.VACANCY_VIEW_LOCATION": {
         "value": '[data-qa="vacancy-view-location"]',
-        "references": {"steev", "tgeruzov"},
+        "references": {"steev"},
     },
     "vacancy_page.VACANCY_VIEW_RAW_ADDRESS": {
         "value": '[data-qa="vacancy-view-raw-address"]',
-        "references": {"steev", "tgeruzov"},
+        "references": {"steev"},
     },
 }
 
@@ -310,6 +317,21 @@ def test_vacancy_consensus_ports_are_exact_reference_literals(logical_id, expect
             assert source["value"] == expected["value"]
 
 
+@pytest.mark.parametrize("logical_id, expected", VACANCY_SINGLE_REFERENCE_PORTS.items())
+def test_vacancy_single_reference_ports_stay_backed(logical_id, expected):
+    """Vacancy-порт, потерявший второй upstream-референс, обязан оставаться
+    активным на локальном документированном evidence, а не падать в inactive."""
+    row = contracts.load_catalog()["selectors"][logical_id]
+
+    assert row["decision"] in {"documented_live", "live_dom"}
+    assert row.get("active", True)
+    assert row["criticality"] == "read"
+    assert set(row["sources"]) == expected["references"]
+    assert row["value"] == expected["value"]
+    assert row["evidence"].get("source")
+    assert row["evidence"].get("note")
+
+
 def test_every_vacancy_upstream_candidate_has_an_explicit_decision():
     catalog = contracts.load_catalog()
     candidates = {
@@ -325,7 +347,9 @@ def test_every_vacancy_upstream_candidate_has_an_explicit_decision():
     for row in candidates.values():
         assert row["decision"] in {"port_exact", "reject"}
         if row["decision"] == "port_exact":
-            assert row["logical_id"] in VACANCY_CONSENSUS_PORTS
+            assert row["logical_id"] in (
+                set(VACANCY_CONSENSUS_PORTS) | set(VACANCY_SINGLE_REFERENCE_PORTS)
+            )
             assert row["origin"] == "reference_consensus"
             assert row["verification"] == "contract_tested"
         else:

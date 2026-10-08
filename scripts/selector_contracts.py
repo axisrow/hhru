@@ -269,7 +269,9 @@ EXTRA_CONTRACTS: dict[str, dict[str, str]] = {
 # keeps an older HH.ru variant).  Exact matches are bound automatically.
 REFERENCE_BINDING_KEYS: dict[str, dict[str, tuple[str, ...]]] = {
     "apply.success.APPLY_SUCCESS_MARKER": {
-        "tgeruzov": ("hh-apply-assistant.user.js::hasExactResponseConfirmation#0::1",),
+        # tgeruzov-пин hh-apply-assistant.user.js::hasExactResponseConfirmation#0::1
+        # удалён: в upstream-коммите 605f24fb функция селектор-литералов не содержит,
+        # пин давал вечный binding_gap на каждом refresh.
         "yamakayama": ("app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy#6::1",),
     },
     "apply_form.APPLY_COVER_LETTER_TEXTAREA": {
