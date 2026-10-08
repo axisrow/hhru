@@ -37,6 +37,7 @@ from .modal_registry import (
     ModalRecord,
     match_census_text,
 )
+from .overlay_settle import wait_overlay_settled
 
 # --- Маппинг сценария на действия канала (единая точка контракта S2). ------
 # Имена = ACTION_ALLOWLIST extensions/hhru-live (content.js): check_element и
@@ -419,6 +420,20 @@ def apply_via_live(
             return None
         return [overlay for overlay in overlays or [] if isinstance(overlay, dict)]
 
+    def _settled_overlays() -> list[dict] | None:
+        """Устойчивый снимок оверлеев для вердиктных точек (#1231).
+
+        Модалки монтируются в окне 1.5-8 с (relocation-класс #1135):
+        одиночный снимок может быть домонтировочным, и вердикт по нему —
+        вердикт по устаревшему DOM. Читает через лямбду: доступ к
+        несуществующему list_overlays у старых channel-like фейков поднимается
+        ВНУТРИ ридера и глотается best-effort ловом wait_overlay_settled —
+        None, гейт ведёт себя как сегодня. Диагностический census-суффикс
+        отказов (#1228) остаётся одиночным `_overlays_best_effort`: вердикт
+        к моменту суффикса уже принят, замедлять его стабилизацией не нужно.
+        """
+        return wait_overlay_settled(lambda: channel.list_overlays())
+
     def _overlay_line(overlay: dict, text_limit: int) -> str:
         """Единый формат census-строки: id type/disposition close=N: текст.
 
@@ -532,16 +547,19 @@ def apply_via_live(
         extra = f" | +ещё {len(census) - len(shown)}" if len(census) > len(shown) else ""
         return "; оверлеи: " + " | ".join(shown) + extra
 
-    def _geo_dialog_detail() -> str:
+    def _geo_dialog_detail(overlays: list[dict] | None) -> str:
         """Census-строка гео-диалога региона, '' если его нет (#1226).
 
         Вердикт принял resolve_overlay_action (#1230): refuse записи
         GEO_REGION_MODAL (действие unknown — код диалог не закрывает и не
         отвечает, кнопки не подтверждены живым DOM) с гейтом type == "modal"
         из ревью PR #1233 — тост с «Ваш регион» отказывать apply не может
-        (прецедент #998). Здесь только имя блокера для reason.
+        (прецедент #998). Здесь только имя блокера для reason. Снимок
+        передаёт вызывающий: вердиктные точки дают УСТОЙЧИВЫЙ census
+        (#1231) — модалка, смонтировавшаяся после первого чтения, видна
+        во втором проходе; None (канал/таймаут) — '' , прежнее поведение.
         """
-        verdict = resolve_overlay_action(_overlays_best_effort())
+        verdict = resolve_overlay_action(overlays)
         if verdict.action == VERDICT_REFUSE and verdict.record is GEO_REGION_MODAL:
             # refuse-вердикт всегда несёт узел; пустая защита — хелпер только
             # называет блокер, аномалия не должна ронять сценарий.
@@ -626,7 +644,7 @@ def apply_via_live(
         # клик уйдёт в перехват — честный отказ без действия, вакансия
         # остаётся повторопригодной. Селектор кнопок не подтверждён — код
         # диалог не закрывает и не отвечает на него.
-        geo = _geo_dialog_detail()
+        geo = _geo_dialog_detail(_settled_overlays())
         if geo:
             return _result(
                 False,
@@ -673,7 +691,7 @@ def apply_via_live(
                 # потерян, вкладка осталась на canonical) — census называет
                 # блокер, вердикт тот же (решает verify #207), причина не
                 # транспортная догадка.
-                geo = _geo_dialog_detail()
+                geo = _geo_dialog_detail(_settled_overlays())
                 if geo:
                     return _grey_zone(
                         f"гео-диалог региона перехватил клик отклика ({geo})",
@@ -722,7 +740,7 @@ def apply_via_live(
                 # прежний вердикт назывался догадкой «возможен one-click»,
                 # хотя реальный блокер назван в overlay census. Действие
                 # исполнено (клик ушёл) — серая зона, решает внешний verify.
-                geo = _geo_dialog_detail()
+                geo = _geo_dialog_detail(_settled_overlays())
                 if geo:
                     return _grey_zone(
                         f"гео-диалог региона перехватил клик отклика ({geo})",
