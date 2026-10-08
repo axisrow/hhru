@@ -1159,6 +1159,44 @@ def test_refusal_attaches_overlay_census() -> None:
     assert (result.acted, result.uncertain) == (False, False)
 
 
+def test_refusal_census_annotates_known_modals_from_registry() -> None:
+    # #1229: матчинг реестра при отказах — census-строка известной модалки
+    # помечается [name->action] (запись каталога и её действие), незнакомый
+    # overlay остаётся без пометки. Матч по census сам действий не выполняет:
+    # dismiss/skip решает data-qa-якорь warning'а, здесь hidden_warning=False.
+    channel = FakeFormChannel(
+        fill_error=PrimitiveError("policy_refused", "ambiguous", forwarded=False),
+        overlays=[
+            dict(VISIBILITY_OVERLAY),
+            dict(GEO_OVERLAY),
+            {
+                "id": "overlay-5",
+                "type": "modal",
+                "disposition": "safe",
+                "closeControls": 1,
+                "text": "Контакты в резюме могли устареть. Заменить на новые из профиля?",
+            },
+            {
+                "id": "overlay-6",
+                "type": "modal",
+                "disposition": "ambiguous",
+                "closeControls": 0,
+                "text": "Тестировщик 180 000 ₽",
+            },
+        ],
+    )
+    result = _run(channel, require_resume_select=False, verify=_verify_of("not_found"))
+
+    assert "[resume_visibility->skip]" in result.reason
+    assert "[geo_region->unknown]" in result.reason
+    assert "[stale_contacts->dismiss]" in result.reason
+    # overlay-6 в census последний: строка без пометки завершает и reason.
+    assert result.reason.endswith("overlay-6 modal/ambiguous close=0: Тестировщик 180 000 ₽")
+    # Матч по census не триггерит действий: dismiss не звался, verdict прежний.
+    assert channel.dismissed_ids == []
+    assert (result.skipped, result.acted, result.uncertain) == (False, False, False)
+
+
 def test_refusal_census_without_overlays_and_dead_channel() -> None:
     # Пустой реестр и мёртвый канал — суффикс деградирует, вердикт прежний
     # (best-effort, ревью PR #1216: отказ probe не выходит из обработчика).

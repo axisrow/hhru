@@ -21,6 +21,12 @@ import threading
 import time
 from urllib.parse import parse_qs, urlsplit
 
+# Якоря и классификация известных модалок — данные реестра (#1229); сценарий
+# применяет записи через собственные структурные гейты (disposition/close-
+# Controls для dismiss, type=="modal" и пр.), fail-closed: записи нет —
+# прежний отказ + census.
+from .modal_registry import GEO_REGION_MODAL, VISIBILITY_MODAL, match_census_text
+
 # --- Маппинг сценария на действия канала (единая точка контракта S2). ------
 # Имена = ACTION_ALLOWLIST extensions/hhru-live (content.js): check_element и
 # get_page_state — этап 1 (#930), click_element/wait_element — исполнитель #1160,
@@ -96,20 +102,8 @@ TAB_RECHECK_BUDGET_S = 10.0
 TAB_RECHECK_DELAY_S = 1.0
 # Маркер shape «модалка» (надёжный маркер — id формы, не letter-toggle, #1006).
 APPLY_MODAL_FORM = "form#RESPONSE_MODAL_FORM_ID"
-# Гео-диалог региона (#1226, боевой census 2026-09-27): alertdialog «Ваш
-# регион — Москва? Да, верно / Нет, другой» перехватывает клик кнопки
-# отклика вместо формы; disposition=ambiguous, closeControls=0 — policy-ядро
-# само его не закроет, безопасного close-контроля нет. Детект — по тексту
-# overlay census. Кнопки диалога НЕ подтверждены живым DOM: перехват
-# нестабилен (бои 10:04/11:15 09-27 — да, пробы 09-27 вечером и ночи — нет),
-# угадывать селекторы запрещено (CLAUDE.md «Селекторы — статус проверки»);
-# клик по диалогу — отдельное решение владельца (симметрия #1132), не код.
-GEO_DIALOG_TEXT_MARKER = "Ваш регион"
-# Модалка видимости (#1218, боевой census 2026-09-23): overlay ищется ПОДСТРОКЕ
-# этого текста в census list_overlays. Переключатель видимости — мутация
-# профиля — не кликается никогда; dismiss ходит только в close-контрол
-# safe-overlay (второй гейт — сам исполнитель, policy.js + content.js).
-VISIBILITY_MODAL_TEXT_MARKER = "поменяйте видимость"
+# Якоря известных модалок (видимость #1218, гео-диалог #1226, контакты #1189)
+# живут данными в modal_registry (#1229) — не константами сценария.
 
 
 class ApplyLiveResult:
@@ -187,7 +181,6 @@ def apply_via_live(
         VACANCY_ALREADY_RESPONDED_AGAIN,
         VACANCY_ALREADY_RESPONDED_CHAT,
         VACANCY_APPLY_BUTTON,
-        VACANCY_HIDDEN_RESUME_WARNING,
     )
 
     resume_id = resume.resume_id
@@ -285,10 +278,12 @@ def apply_via_live(
         в модалке до Lines-пикера), и обработчики отказов зовут этот хелпер
         из любой точки сценария. Warning — ОБЪЯСНЕНИЕ неудавшегося выбора
         резюме, не терминальный признак (ревью PR #1215; зеркало
-        apply/steps.py); терминален только провал выбора. Селектор из
-        живых дампов probe testing 2026-09-09.
+        apply/steps.py); терминален только провал выбора. data-qa-якорь —
+        запись VISIBILITY_MODAL реестра (#1229), из живых дампов probe
+        testing 2026-09-09.
         """
-        warning = _read(VACANCY_HIDDEN_RESUME_WARNING)
+        warning_selector = f"[data-qa='{VISIBILITY_MODAL.data_qa}']"
+        warning = _read(warning_selector)
         if not (warning.get("found") or warning.get("visible")):
             return None
         # #1218: модалка видимости поверх формы закрывается close'ом
@@ -296,17 +291,16 @@ def apply_via_live(
         # продолжается (пикер выберет публичное резюме), остался →
         # честный skip ниже.
         if _dismiss_visibility_overlay_once():
-            warning = _read(VACANCY_HIDDEN_RESUME_WARNING)
+            warning = _read(warning_selector)
             if not (warning.get("found") or warning.get("visible")):
                 return None
         detail = str(warning.get("text") or "").strip()
         suffix = f": {detail[:120]}" if detail else ""
         return _result(
             False,
-            "hh.ru требует публичную видимость резюме — поменяйте видимость "
-            f"вручную, автоматом переключатель не кликается{suffix}",
+            f"{VISIBILITY_MODAL.reason}{suffix}",
             skipped=True,
-            skip_reason=SKIP_REASONS.RESUME_VISIBILITY,
+            skip_reason=VISIBILITY_MODAL.skip_reason,
         )
 
     def _overlays_best_effort() -> list[dict] | None:
@@ -328,12 +322,21 @@ def apply_via_live(
         return [overlay for overlay in overlays or [] if isinstance(overlay, dict)]
 
     def _overlay_line(overlay: dict, text_limit: int) -> str:
-        """Единый формат census-строки: id type/disposition close=N: текст."""
-        return (
+        """Единый формат census-строки: id type/disposition close=N: текст.
+
+        Известная модалка (#1229) помечается суффиксом [name->action] —
+        матчинг реестра при отказах называет оператору запись каталога и её
+        действие; незнакомый overlay остаётся без пометки.
+        """
+        text = str(overlay.get("text") or "").strip()
+        line = (
             f"{overlay.get('id')} {overlay.get('type')}/{overlay.get('disposition')} "
-            f"close={overlay.get('closeControls')}: "
-            f"{str(overlay.get('text') or '').strip()[:text_limit]}"
+            f"close={overlay.get('closeControls')}: {text[:text_limit]}"
         )
+        record = match_census_text(text)
+        if record is not None:
+            line += f" [{record.name}->{record.action}]"
+        return line
 
     def _dismiss_visibility_overlay_once() -> bool:
         """Одна попытка закрыть safe-overlay «поменяйте видимость» (#1218).
@@ -362,11 +365,12 @@ def apply_via_live(
         Определён РЯДОМ С _visibility_skip_if_warned ДО try: probe зовётся
         из обработчика отказов, достижимого до секции формы, — def внутри
         try давал бы NameError мимо best-effort except (ревью PR #1216,
-        round 2).
+        round 2). Якорь-подстрока — text_marker записи VISIBILITY_MODAL
+        реестра (#1229).
         """
         target = None
         for overlay in _overlays_best_effort() or []:
-            if VISIBILITY_MODAL_TEXT_MARKER not in str(overlay.get("text") or ""):
+            if VISIBILITY_MODAL.text_marker not in str(overlay.get("text") or ""):
                 continue
             if overlay.get("disposition") != "safe" or not overlay.get("closeControls"):
                 continue
@@ -447,12 +451,14 @@ def apply_via_live(
         текста любого overlay (content.js собирает popup/toast/notification
         целиком), без гейта тост с «Ваш регион» отказывал бы каждый apply
         до ручной чистки вкладки (прецедент #998). Реальный диалог —
-        alertdialog→modal, проходит.
+        alertdialog→modal, проходит. Якорь-подстрока — text_marker записи
+        GEO_REGION_MODAL реестра (#1229); действие записи unknown — код
+        диалог не закрывает и не отвечает (кнопки не подтверждены).
         """
         for overlay in _overlays_best_effort() or []:
             if overlay.get("type") != "modal":
                 continue
-            if GEO_DIALOG_TEXT_MARKER not in str(overlay.get("text") or ""):
+            if GEO_REGION_MODAL.text_marker not in str(overlay.get("text") or ""):
                 continue
             return _overlay_line(overlay, 200)
         return ""
