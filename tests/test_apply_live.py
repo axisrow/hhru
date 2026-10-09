@@ -18,6 +18,7 @@ from hhru_bot.live.modal_registry import (
     ACTION_SKIP,
     ACTION_UNKNOWN,
     GEO_REGION_MODAL,
+    HH_PRO_PROMO_MODAL,
     MUTATION_EXTERNAL,
     MUTATION_NONE,
     MUTATION_PROFILE,
@@ -74,6 +75,19 @@ GEO_OVERLAY = {
     "disposition": "ambiguous",
     "closeControls": 0,
     "text": "Ваш регион — Москва? Да, верно Нет, другой",
+}
+# Промо-модалка hh PRO (#1242, боевой census 2026-10-09, дамп
+# overlay_census_20261009_023322.json, узел overlay-12): apply_step, близко
+# к цели клика отклика, close-контроля нет.
+HH_PRO_OVERLAY = {
+    "id": "overlay-12",
+    "type": "modal",
+    "disposition": "apply_step",
+    "closeControls": 0,
+    "text": (
+        "Хотите быстрее получить приглашение? С hh PRO: ... Подключить hh PRO "
+        "Нажимая, вы соглашаетесь с офертой и регулярными платежами"
+    ),
 }
 
 
@@ -1320,6 +1334,18 @@ def test_resolve_unknown_marker_off_modal_is_continue() -> None:
 
     assert verdict.action == ACTION_CONTINUE
     assert verdict.record is None and verdict.overlay is None
+
+
+def test_resolve_refuses_hh_pro_promo_modal() -> None:
+    # #1242: промо-модалка hh PRO опознана реестром, но действий у записи нет
+    # (кнопка подписки — финансовая мутация, крестик не подтверждён) — узел
+    # apply_step из боевого дампа даёт честный refuse с именованной записью,
+    # не continue незнакомца и не выдуманный dismiss.
+    verdict = resolve_overlay_action([dict(HH_PRO_OVERLAY)])
+
+    assert verdict.action == VERDICT_REFUSE
+    assert verdict.record is HH_PRO_PROMO_MODAL
+    assert verdict.overlay is not None and verdict.overlay["id"] == "overlay-12"
 
 
 def test_resolve_unmatched_census_is_continue() -> None:

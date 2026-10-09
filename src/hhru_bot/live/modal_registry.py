@@ -124,12 +124,38 @@ GEO_REGION_MODAL = ModalRecord(
     reason="гео-диалог региона перехватывает клики — ответьте в живой вкладке вручную",
 )
 
+# Промо-модалка hh PRO (#1242, боевой census live-канала 2026-10-09, дамп
+# data/logs/overlay_census_20261009_023322.json): 4 узла apply_step + футер
+# ambiguous, семейство magritte-modal-overlay -> magritte-modal (role=dialog)
+# -> content-wrapper -> scroll-container -> magritte-modal-footer,
+# closeControls=0 у всех пяти. Первичная кнопка «Подключить hh PRO» — платная
+# подписка с регулярными платежами (оферта прямо в тексте футера) — ФИНАНСОВАЯ
+# мутация: в действия реестра не попадает никогда. data-qa якоря и крестик
+# census не снял (payload list_overlays атрибутов не несёт), живой DOM с
+# модалкой повторно read-only не воспроизведён — dismiss НЕ подтверждён и не
+# адресуется; действие unknown = прежний отказ + census, симметрия #1226.
+# После живого подтверждения не-мутационного крестика запись переезжает на
+# dismiss (по образцу stale_contacts).
+HH_PRO_PROMO_MODAL = ModalRecord(
+    name="hh_pro_promo",
+    text_marker="Хотите быстрее получить приглашение",
+    mutation=MUTATION_EXTERNAL,
+    action=ACTION_UNKNOWN,
+    priority=40,
+    reason=(
+        "промо-модалка hh PRO: кнопка «Подключить hh PRO» — платная подписка "
+        "(финансовая мутация), код её не кликает никогда; решите модалку в "
+        "живой вкладке вручную"
+    ),
+)
+
 # Порядок кортежа = приоритет матчинга (меньше — раньше); новые записи
 # добавляются сюда с приоритетом, различающим пересекающиеся маркеры.
 MODAL_REGISTRY: tuple[ModalRecord, ...] = (
     VISIBILITY_MODAL,
     STALE_CONTACTS_MODAL,
     GEO_REGION_MODAL,
+    HH_PRO_PROMO_MODAL,
 )
 
 
