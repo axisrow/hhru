@@ -415,12 +415,17 @@ def _resolve_paths(args: argparse.Namespace) -> None:
         if account_paths is not None
         else DEFAULT_CONFIG_PATH
     )
+    # #1244: дефолт истории — рядом с файлом конфига, без сниффинга путей.
+    # data/config.yaml даёт data/history.db (= DEFAULT_HISTORY_PATH) как
+    # раньше, accounts/<name>/config.yaml без --account даёт свою
+    # accounts/<name>/history.db, а не общий data/history.db. Приоритет
+    # явного --history и --account сохранён (ветки выше).
     args.history = str(
         Path(args.history)
         if args.history is not None
         else account_paths.history
         if account_paths is not None
-        else DEFAULT_HISTORY_PATH
+        else Path(args.config).parent / "history.db"
     )
     # Keep the managed account directory separate from the user-controlled
     # config path.  A caller may combine --account with an explicit --config;
