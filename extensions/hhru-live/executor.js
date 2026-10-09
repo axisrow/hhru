@@ -30,10 +30,12 @@
 // 'apply_flow_picker_overlay'). Stage-1 auto-dismiss semantics (no
 // allowApply) are unchanged.
 //
-// The ONLY click in this file is target.click() inside clickElement(), the
-// same confirmed click method dismissOverlay() uses (a real DOM click, no
-// synthetic event construction). It is reached only after: unambiguous
-// target -> visible -> policy allowed -> an explicit waitFor declared.
+// The ONLY click in this file is the real-event sequence inside clickElement()
+// (#1249: pointerdown → mousedown → pointerup → mouseup → click, как у
+// Playwright-клика боевого пути). До этого боя был голый target.click() — тот
+// же метод, что и у dismissOverlay() (у close-контролов голого клика хватает,
+// он там и остался). clickElement добирается до диспетча только после:
+// unambiguous target -> visible -> policy allowed -> explicit waitFor.
 // visible != hydrated (CLAUDE.md): the outcome of a click that triggers a
 // React re-render is proven only by waiting for the declared DOM condition,
 // never by the click call returning — so a click without waitFor is refused
@@ -241,6 +243,63 @@ function describeMatches(params) {
   };
 }
 
+// #1249 (бои 2026-10-09, вак. 137661057): панель пикера резюме закрывается
+// pointer-веткой (Magritte Drop слушает pointerdown вне панели), а голый
+// target.click() не несёт pointer-события — панель ОТКРЫВАЛАСЬ кликом (у
+// триггера есть click-handler), но не закрывалась ни по внутреннему узлу,
+// ни по карточке-контейнеру. Боевой путь тем же целевым элементом закрывает
+// панель Playwright-кликом — то есть решает ПОЛНАЯ последовательность
+// реального клика: pointerdown → mousedown → pointerup → mouseup → click
+// (bubbles, cancelable, координаты — центр цели). Policy-ядро отработало ДО
+// диспетча и не меняется; события неотменяемых фаз не диспетчируются, если
+// предыдущая preventDefault'нута — как у настоящего клика.
+function dispatchRealClick(target) {
+  // Координаты — у живого DOM; фейки js-харнесса без геометрии диспетчат
+  // те же фазы без clientX/Y.
+  const rect = typeof target.getBoundingClientRect === 'function'
+    ? target.getBoundingClientRect()
+    : null;
+  const opts = {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+    button: 0,
+  };
+  if (rect) {
+    opts.clientX = Math.round(rect.left + rect.width / 2);
+    opts.clientY = Math.round(rect.top + rect.height / 2);
+  }
+  // Глобальные конструкторы с typeof-стражами: node-харнесс без
+  // MouseEvent/PointerEvent диспетчит те же фазы голым Event (он есть и в
+  // браузере — фолбэк там недостижим, конструкторы на месте).
+  const pointerCtor = typeof PointerEvent === 'function' ? PointerEvent : null;
+  const mouseCtor = typeof MouseEvent === 'function' ? MouseEvent : null;
+  const fire = (Ctor, type) => {
+    let event;
+    if (typeof Ctor === 'function') {
+      event = new Ctor(type, opts);
+    } else if (
+      typeof document === 'object' && document !== null
+      && typeof document.createEvent === 'function'
+    ) {
+      // Путь fillElement (#1162): у node-харнесса из конструкторов событий
+      // есть только document.createEvent; в браузере недостижимо —
+      // конструкторы на месте.
+      event = document.createEvent('Event');
+      event.initEvent(type, true, true);
+    } else {
+      return true;
+    }
+    target.dispatchEvent(event);
+    return !event.defaultPrevented;
+  };
+  if (!fire(pointerCtor, 'pointerdown')) return;
+  if (!fire(mouseCtor, 'mousedown')) return;
+  if (!fire(pointerCtor, 'pointerup')) return;
+  if (!fire(mouseCtor, 'mouseup')) return;
+  fire(mouseCtor, 'click');
+}
+
 function clickElement(params, sendResponse) {
   const resolved = resolveTargets(params);
   if (resolved.error) { sendResponse({ ok: false, error: resolved.error, modes: resolved.modes ?? null }); return; }
@@ -291,7 +350,7 @@ function clickElement(params, sendResponse) {
   const wait = resolveWait(params.waitFor);
   if (wait.error) { sendResponse({ ok: false, error: wait.error }); return; }
   const descriptor = describeTarget(target);
-  target.click();
+  dispatchRealClick(target);
   waitForCondition(wait, (outcome) => {
     sendResponse({
       ok: true,
@@ -359,7 +418,13 @@ function fillElement(params, sendResponse) {
   }
   ['input', 'change'].forEach((type) => {
     if (typeof document.createEvent === 'function' && typeof target.dispatchEvent === 'function') {
-      target.dispatchEvent(new Event(type, { bubbles: true }));
+      // #1249: node-харнесс без конструкторов событий идёт через
+      // createEvent-стаб; в браузере — настоящий Event, как раньше.
+      const event = typeof Event === 'function'
+        ? new Event(type, { bubbles: true })
+        : document.createEvent('Event');
+      if (typeof event.initEvent === 'function') event.initEvent(type, true, true);
+      target.dispatchEvent(event);
     }
   });
   const matches = target.value === wanted;
