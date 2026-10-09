@@ -63,6 +63,16 @@ const CLOSE_LABEL = /закрыт|close|dismiss/i;
 // clickable just because of the attribute (PR #935 review).
 const CLOSE_GLYPH = /^[×✕]$/;
 const CLOSE_LATIN_X = /^x$/i;
+// #1243 (боевой census 2026-10-09): cancel-кнопка модалки «Контакты в резюме
+// могли устареть» (#1189) — её единственный dismiss-контрол, но ни один
+// close-маркер её не находит: data-qa `...-alert-cancel` без «close», текст
+// «Закрыть» здесь не читается (только aria-label/title). Из-за этого живой
+// census давал closeControls=0/ambiguous и dismiss-ветка resolve_overlay_action
+// (#1230) была недостижима в бою. Список — ТОЧНЫЕ data-qa известных
+// dismiss-кнопок (не подстрока и не текст «Отмена»/«Закрыть»: чужая
+// cancel-кнопка необратимого диалога не должна становиться close-контролом);
+// расширяется вместе с реестром известных модалок и живым подтверждением.
+const CLOSE_QA_KNOWN = ['profile-contacts-sync-alert-cancel'];
 
 function isVisible(element) {
   // offsetWidth/offsetHeight/getClientRects() only react to display:none —
@@ -138,6 +148,12 @@ function findCloseControls(element) {
     const weaklyInteractive = qa !== '' || cls.includes('close');
     if (!tagInteractive && !weaklyInteractive) return;
     if (/close/.test(qa) || /close/.test(cls) || CLOSE_GLYPH.test(text)) {
+      controls.push(node);
+      return;
+    }
+    // Точный data-qa из списка известных dismiss-кнопок (#1243): остальное
+    // имя атрибута close-маркером не является.
+    if (CLOSE_QA_KNOWN.includes(qa)) {
       controls.push(node);
       return;
     }
