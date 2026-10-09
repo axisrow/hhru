@@ -110,6 +110,43 @@ const SCENARIOS = {
       'Формат работы: удалённая. Отменить | Сохранить');
     return { disposition: context.classifyDisposition(modal, context.classify(modal)) };
   },
+
+  // #1243 (боевой census 2026-10-09): модалка «Контакты в резюме могли
+  // устареть» (#1189) несёт accept «Заменить на новые из профиля» и cancel
+  // «Закрыть» (data-qa ...-alert-cancel, ни одного close-маркера в тексте,
+  // aria-label нет). До CLOSE_QA_KNOWN находила closeControls=0 → ambiguous;
+  // теперь cancel — единственный close-контрол, модалка safe (dismiss), а
+  // accept мутация профиля кликабельным close-контролом не становится.
+  stale_contacts_cancel_is_close: () => {
+    const accept = el('button', { 'data-qa': 'profile-contacts-sync-alert-accept' },
+      'Заменить на новые из профиля');
+    const cancel = el('button', { 'data-qa': 'profile-contacts-sync-alert-cancel' }, 'Закрыть');
+    const modal = el('div', { class: 'magritte-desktop-container___26vkq', role: 'alertdialog' },
+      'Контакты в резюме могли устареть Давайте возьмём актуальные из профиля');
+    modal.appendChild(accept);
+    modal.appendChild(cancel);
+    const controls = context.findCloseControls(modal);
+    return {
+      closeCount: controls.length,
+      onlyCancel: controls.length === 1 && controls[0] === cancel,
+      acceptNotClose: !controls.includes(accept),
+      disposition: context.classifyDisposition(modal, context.classify(modal)),
+    };
+  },
+
+  // Тот же стем «cancel» в ЧУЖОМ data-qa списку не подчиняется: точное имя,
+  // не подстрока — cancel-кнопка необратимого диалога остаётся не-close.
+  foreign_cancel_qa_not_close: () => {
+    const cancel = el('button', { 'data-qa': 'resume-delete-dialog-cancel' }, 'Отмена');
+    const modal = el('div', { class: 'magritte-modal___C4o5U', role: 'dialog' },
+      'Удалить резюме? Действие необратимо');
+    modal.appendChild(cancel);
+    const controls = context.findCloseControls(modal);
+    return {
+      closeCount: controls.length,
+      disposition: context.classifyDisposition(modal, context.classify(modal)),
+    };
+  },
 };
 
 async function main() {

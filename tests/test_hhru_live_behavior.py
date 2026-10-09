@@ -337,6 +337,29 @@ def test_hhru_live_policy_core_remote_work_not_dangerous():
     assert scenario["disposition"] == "ambiguous"
 
 
+def test_hhru_live_policy_core_stale_contacts_cancel_is_close():
+    """#1243 (боевой census 2026-10-09): cancel-кнопка модалки «Контакты в
+    резюме могли устареть» (#1189) не несёт ни одного close-маркера — до
+    CLOSE_QA_KNOWN модалка была ambiguous/close=0 и dismiss-ветка #1230 не
+    стреляла в бою. Точный data-qa из списка делает её единственным
+    close-контролом (модалка safe/dismiss), accept-мутация контактов
+    кликабельным close-контролом не становится."""
+    scenario = _run_policy_scenario("stale_contacts_cancel_is_close")
+    assert scenario["closeCount"] == 1
+    assert scenario["onlyCancel"] is True
+    assert scenario["acceptNotClose"] is True
+    assert scenario["disposition"] == "safe"
+
+
+def test_hhru_live_policy_core_foreign_cancel_qa_not_close():
+    """CLOSE_QA_KNOWN — точные имена, не подстрока: «cancel» в чужом data-qa
+    close-контролом не становится, необратимый диалог остаётся без
+    кликабельной отмены (fail-closed приоритет якорей опасности на месте)."""
+    scenario = _run_policy_scenario("foreign_cancel_qa_not_close")
+    assert scenario["closeCount"] == 0
+    assert scenario["disposition"] == "dangerous"
+
+
 # ---------------------------------------------------------------------------
 # Транспорт agent-канала (issue #931): popup -> background relay -> активная
 # hh.ru-вкладка. Сценарии исполняют background.js по-настоящему через
