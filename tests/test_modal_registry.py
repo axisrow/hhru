@@ -17,6 +17,7 @@ from hhru_bot.live.modal_registry import (
     ACTION_UNKNOWN,
     ACTIONS,
     GEO_REGION_MODAL,
+    HH_PRO_PROMO_MODAL,
     MODAL_REGISTRY,
     MUTATION_EXTERNAL,
     MUTATION_PROFILE,
@@ -34,6 +35,13 @@ BATTLE_VISIBILITY_TEXT = (
 )
 # Боевой census гео-диалога (2026-09-27).
 BATTLE_GEO_TEXT = "Ваш регион — Москва? Да, верно Нет, другой"
+# Боевой census промо-модалки hh PRO (#1242, 2026-10-09, дамп
+# overlay_census_20261009_023322.json, узел overlay-13).
+BATTLE_HH_PRO_TEXT = (
+    "Хотите быстрее получить приглашение? С hh PRO: Резюме будет выше в "
+    "результатах поиска ... Подключить hh PRO Нажимая, вы соглашаетесь "
+    "с офертой и регулярными платежами"
+)
 
 
 def test_registry_rows_are_unique_and_typed() -> None:
@@ -84,6 +92,7 @@ def test_match_census_text_substring_and_unknown() -> None:
         is STALE_CONTACTS_MODAL
     )
     assert match_census_text(BATTLE_GEO_TEXT) is GEO_REGION_MODAL
+    assert match_census_text(BATTLE_HH_PRO_TEXT) is HH_PRO_PROMO_MODAL
     assert match_census_text("Тестировщик 180 000 ₽") is None
     assert match_census_text("") is None
 
@@ -111,6 +120,19 @@ def test_geo_record_is_unknown_without_automated_click() -> None:
     assert GEO_REGION_MODAL.action == ACTION_UNKNOWN
     assert GEO_REGION_MODAL.mutation == MUTATION_EXTERNAL
     assert GEO_REGION_MODAL.data_qa == ""
+
+
+def test_hh_pro_record_is_unknown_financial_promo() -> None:
+    # #1242: «Подключить hh PRO» — платная подписка с регулярными платежами,
+    # финансовая мутация — в действия реестра не попадает никогда. Крестик
+    # живым DOM не подтверждён (census атрибуты не несёт, повторно модалка
+    # read-only не воспроизведена) — dismiss не адресуется: действие unknown,
+    # data-qa якорей нет.
+    assert HH_PRO_PROMO_MODAL.action == ACTION_UNKNOWN
+    assert HH_PRO_PROMO_MODAL.mutation == MUTATION_EXTERNAL
+    assert HH_PRO_PROMO_MODAL.data_qa == ""
+    assert "Подключить hh PRO" in HH_PRO_PROMO_MODAL.reason
+    assert "никогда" in HH_PRO_PROMO_MODAL.reason
 
 
 def test_scenarios_use_registry_not_local_marker_copies() -> None:
