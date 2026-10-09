@@ -236,6 +236,15 @@ function createEnvironment() {
     _recordMutation: (...args) => documentElement._recordMutation(...args),
     querySelectorAll: (sel) => documentElement.querySelectorAll(sel),
     createElement: (tag) => new Element(tag),
+    // Путь fillElement/dispatchRealClick (#1249): в node нет конструкторов
+    // событий — createEvent + initEvent, как в старом DOM API.
+    createEvent: () => {
+      const event = { type: '', defaultPrevented: false };
+      event.initEvent = function (type) {
+        this.type = type;
+      };
+      return event;
+    },
   };
   documentElement.parentNode = document;
   const sentMessages = [];
@@ -245,6 +254,14 @@ function createEnvironment() {
   const clicks = [];
   Element.prototype.click = function () {
     clicks.push(this);
+  };
+  // #1249: click_element диспетчит реальную последовательность
+  // pointerdown/mousedown/pointerup/mouseup/click вместо голого .click() —
+  // стаб считает кликом КЛИК-ФАЗУ диспатча (терминальную), pointer-фазы
+  // пропускает: сценариев с pointer-обработчиками у стаба нет.
+  Element.prototype.dispatchEvent = function (event) {
+    if (event && event.type === 'click') clicks.push(this);
+    return true;
   };
   const chrome = makeChrome(sentMessages);
 

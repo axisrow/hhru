@@ -88,18 +88,27 @@ def test_hhru_live_extension_transport_allowlist_is_exact():
 
 
 def test_hhru_live_executor_click_gate_order():
-    """#1160: у executor.js ровно один клик-сайт (target.click() в
+    """#1160: у executor.js ровно один клик-сайт (диспетч реального клика в
     clickElement), и он стоит ПОСЛЕ обоих fail-closed гейтов — policy_refused
     (dangerous/apply_step/ambiguous без клика) и wait_required (клик без
-    объявленного post-click условия невозможен). DOM не удаляется."""
+    объявленного post-click условия невозможен). DOM не удаляется.
+
+    #1249: голый target.click() заменён на dispatchRealClick (полная
+    pointer-последовательность — панель пикера закрывается pointerdown'ом,
+    не click'ом), инвариант тот же: ОДИН сайт диспетча по подтверждённой
+    цели, до него — оба гейта; синтетических кликов вне clickElement нет
+    (target.click() в файле не встречается вовсе)."""
     from pathlib import Path
 
     root = Path(__file__).parents[1] / "extensions" / "hhru-live"
     executor = (root / "executor.js").read_text()
-    assert executor.count("target.click();") == 1, (
-        "click() разрешён ровно один раз — по подтверждённой цели внутри clickElement"
+    assert executor.count("target.click();") == 0, (
+        "голый синтетический click() в исполнителе не диспетчируется вовсе"
     )
-    click_at = executor.index("target.click();")
+    assert executor.count("dispatchRealClick(target);") == 1, (
+        "диспетч реального клика разрешён ровно один раз — по подтверждённой цели внутри clickElement"
+    )
+    click_at = executor.index("dispatchRealClick(target);")
     assert executor.index("policy_refused") < click_at
     assert executor.index("wait_required") < click_at
     assert "element.remove" not in executor
