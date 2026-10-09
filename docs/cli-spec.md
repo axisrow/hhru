@@ -211,7 +211,17 @@ default_account: "marketing"
 `default_account`, указывающий на несуществующий аккаунт или не-строку, —
 `[FAIL]` при запуске любой команды (fail-closed, не молчаливый fallback).
 `scripts/scheduled_run.sh` транслирует ту же переменную в
-`--account` для плановых задач. Из этого вытекают три инварианта, зафиксированные тестами
+`--account` для плановых задач.
+
+Дефолт `--history` без явного значения — рядом с файлом конфига, единое
+правило без сниффинга путей (#1244): `data/config.yaml` даёт
+`data/history.db` (как всегда), а `--config data/accounts/<name>/config.yaml`
+без `--account` даёт `data/accounts/<name>/history.db` — тот же прецедент,
+что у `storage_state_file`, резолвящегося относительно файла конфига. Приоритет
+явного `--history` и `--account` над этим дефолтом сохранён; write-lock тоже
+скоупится по директории итоговой `history.db`, поэтому `--config`-прогон и
+`--account`-прогон одного аккаунта сериализуются одним локом.
+Из этого вытекают три инварианта, зафиксированные тестами
 `test_multi_account_isolation.py` и `test_account_write_lock_isolation.py`:
 
 - **Изоляция состояния.** У каждого аккаунта своя `history.db` (история,

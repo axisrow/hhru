@@ -207,8 +207,58 @@ def test_default_account_ignored_when_explicit_paths_given(tmp_path, monkeypatch
     args = _build().parse_args(["--config", str(tmp_path / "custom.yaml"), "whoami"])
     _resolve_paths(args)
     assert Path(args.config) == tmp_path / "custom.yaml"
-    assert Path(args.history) == DEFAULT_HISTORY_PATH
+    assert Path(args.history) == tmp_path / "history.db"
     assert args.account_dir is None
+
+
+def test_config_in_account_dir_resolves_history_next_to_config(tmp_path, monkeypatch):
+    """#1244: --config data/accounts/<name>/config.yaml без --account пишет
+    историю в accounts/<name>/history.db, а не в общий data/history.db —
+    дефолт резолвится рядом с файлом конфига, как storage_state_file."""
+    account = _make_account(tmp_path, "testing")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HHRU_ACCOUNT", raising=False)
+
+    args = _build().parse_args(
+        ["--config", str(Path("data") / "accounts" / "testing" / "config.yaml"), "whoami"]
+    )
+    _resolve_paths(args)
+    assert Path(args.history).resolve() == account / "history.db"
+    assert args.account_dir is None
+
+
+def test_explicit_history_beats_config_neighbor_default(tmp_path, monkeypatch):
+    """#1244: явный --history сильнее дефолта «рядом с конфигом»."""
+    _make_account(tmp_path, "testing")
+    monkeypatch.chdir(tmp_path)
+
+    args = _build().parse_args(
+        [
+            "--config",
+            str(Path("data") / "accounts" / "testing" / "config.yaml"),
+            "--history",
+            str(tmp_path / "custom.db"),
+            "whoami",
+        ]
+    )
+    _resolve_paths(args)
+    assert Path(args.history) == tmp_path / "custom.db"
+
+
+def test_account_beats_config_neighbor_when_both_explicit(tmp_path, monkeypatch):
+    """#1244: --account сохраняет приоритет при явном --config — история
+    аккаунтовая, не соседняя с чужим конфигом (смешивать пути разных
+    аккаунтов нельзя)."""
+    account = _make_account(tmp_path, "work")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    args = _build().parse_args(
+        ["--account", "work", "--config", str(elsewhere / "custom.yaml"), "whoami"]
+    )
+    _resolve_paths(args)
+    assert Path(args.history).resolve() == account / "history.db"
 
 
 def _subparser_actions(parser):
