@@ -22,7 +22,7 @@
 | account_profile.RESUME_CONTACT_EMAIL | `[data-qa='resume-contact-email-value']` | — | — | — | live_dom |
 | account_profile.RESUME_CONTACT_PHONE | `[data-qa='resume-contact-phone-value-preferred']` | — | — | — | live_dom |
 | account_profile.RESUME_LIST_PROFILE_NAME | `[data-qa='profile-activator-fullname']` | — | — | — | live_dom |
-| account_profile.WORK_PERMIT_WIZARD | `[data-qa='resume-profile-common-work-ticket-selector']` | — | — | — | documented_live |
+| account_profile.WORK_PERMIT_WIZARD | `[data-qa='resume-profile-common-work-ticket-selector']` | — | — | — | live_dom |
 | apply.antibot.ANTIBOT_MARKER_SELECTORS.0.1 | `[data-qa='captcha']` | — | — | — | safety_guard |
 | apply.antibot.ANTIBOT_MARKER_SELECTORS.1.1 | `[data-qa='account-captcha-input']` | — | — | — | safety_guard |
 | apply.antibot.ANTIBOT_MARKER_SELECTORS.2.1 | `[data-qa='account-captcha-picture']` | — | — | — | safety_guard |
@@ -50,8 +50,8 @@
 | competitor_resume.SEARCH_AREA_AND_RELOCATION | `[data-qa='resume-serp_resume-item-area-and-relocation-content']` | — | — | — | live_dom |
 | competitor_resume.SEARCH_CARD | `[data-qa='resume-serp__resume']` | — | — | — | live_dom |
 | competitor_resume.SEARCH_EMPTY | `[data-qa='empty-search-block']` | — | — | — | live_dom |
-| competitor_resume.SEARCH_RESULT_TITLE_LINK | `[data-qa='serp-item__title']` | — | — | — | live_dom |
-| create_resume.TREE_ITEM_TEXT | `[data-qa*='tree-selector-item-text-']` | — | — | — | workflow_live |
+| competitor_resume.SEARCH_RESULT_TITLE_LINK | `[data-qa='serp-item__title']` | — | — | [data-qa="serp-item__title"] | live_dom |
+| create_resume.TREE_ITEM_TEXT | `[data-qa*='tree-selector-item-text-']` | — | — | — | live_dom |
 | negotiations.CHAT_AUTHOR_HINT | `[data-qa*='author'], [class*='author'], [aria-label], [title]` | — | — | — | documented_live |
 | negotiations.CHAT_MESSAGE_INPUT | `[data-qa='chatik-message-input'] textarea[data-qa='text-input']` | — | — | [data-qa="chatik-new-message-text"] | live_dom |
 | negotiations.CHAT_MESSAGE_ROOT | `[data-qa^='chatik-chat-message-']` | — | — | — | live_dom |
@@ -64,7 +64,7 @@
 | negotiations.LEGACY_NEGOTIATION_STATUS | `[data-qa='negotiations-item__state']` | — | — | — | documented_live |
 | negotiations.LEGACY_NEGOTIATION_VACANCY_LINK | `[data-qa='negotiations-item__vacancy-link']` | — | — | — | structural_read_fallback |
 | negotiations.NEGOTIATIONS_PAGINATION_BLOCK | `[data-qa='pager-block']` | — | — | — | documented_live |
-| negotiations.NEGOTIATIONS_PAGINATION_NEXT | `[data-qa='pager-next']` | — | — | — | documented_live |
+| negotiations.NEGOTIATIONS_PAGINATION_NEXT | `[data-qa='pager-next']` | — | [data-qa="pager-next"] | — | documented_live |
 | negotiations.NEGOTIATIONS_PAGINATION_PAGE | `[data-qa='pager-page']` | — | — | — | documented_live |
 | negotiations.NEGOTIATION_CHAT_LINK | `[data-qa='open_chat']` | — | — | — | documented_live |
 | negotiations.NEGOTIATION_DATE | `[data-qa='negotiations-item-date']` | — | — | — | documented_live |
@@ -270,7 +270,7 @@
 | search_page.COMPANY_RATING_REVIEWS_COUNT | `[data-qa='company-review-rating-reviews-count']` | — | — | — | live_dom |
 | search_page.COMPANY_RATING_VALUE | `[data-qa='company-review-rating-value']` | — | — | — | live_dom |
 | search_page.PAGINATION_BLOCK | `[data-qa='pager-block']` | — | — | — | documented_live |
-| search_page.PAGINATION_NEXT | `[data-qa='pager-next']` | — | — | — | documented_live |
+| search_page.PAGINATION_NEXT | `[data-qa='pager-next']` | — | [data-qa="pager-next"] | — | documented_live |
 | search_page.PAGINATION_PAGE | `[data-qa='pager-page']` | — | — | — | documented_live |
 | search_page.TRUSTED_EMPLOYER_LINK | `[data-qa='trusted-employer-link']` | — | — | — | live_dom |
 | search_page.VACANCY_CARD | `[data-qa='vacancy-serp__vacancy']` | — | div[data-qa="vacancy-serp__vacancy"] | [data-qa="vacancy-serp__vacancy"] | live_dom |
@@ -336,7 +336,6 @@ These rows are extracted from the approved upstream projects even when hhru does
 
 | selector | references |
 |---|---|
-| `[data-qa="vacancy-company-name"]` | steev, tgeruzov |
 | `[data-qa="vacancy-description"]` | steev, yamakayama |
 | `[data-qa="vacancy-experience"]` | steev, yamakayama |
 | `[data-qa="vacancy-response-letter-submit"]` | tgeruzov, yamakayama |
@@ -344,9 +343,11 @@ These rows are extracted from the approved upstream projects even when hhru does
 | `[data-qa="vacancy-response-link-bottom"]` | tgeruzov, yamakayama |
 | `[data-qa="vacancy-response-link-top"]` | steev, tgeruzov, yamakayama |
 | `[data-qa="vacancy-response-link-view-topic"]` | tgeruzov, yamakayama |
+| `[data-qa="vacancy-response-popup-form"]` | steev, tgeruzov |
 | `[data-qa="vacancy-serp__vacancy-employer"]` | steev, yamakayama |
-| `[data-qa="vacancy-title"]` | steev, tgeruzov, yamakayama |
+| `[data-qa="vacancy-title"]` | steev, yamakayama |
 | `[data-qa="vacancy-view-employment-mode"]` | steev, yamakayama |
+| `a[data-qa*="vacancy-response-link"]` | tgeruzov, yamakayama |
 
 ## Apply/response candidate decisions
 
