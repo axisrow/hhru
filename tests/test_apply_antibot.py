@@ -91,6 +91,7 @@ def test_generic_captcha_markup_is_not_queried_or_matched():
     [
         'iframe[src*="recaptcha" i]',
         'iframe[src*="hcaptcha" i]',
+        'iframe[src*="smartcaptcha" i]',
         ".g-recaptcha",
         ".h-captcha",
     ],
@@ -108,6 +109,7 @@ def test_visible_vendor_captcha_widget_is_terminal(vendor_selector):
     [
         'iframe[src*="recaptcha" i]',
         'iframe[src*="hcaptcha" i]',
+        'iframe[src*="smartcaptcha" i]',
         ".g-recaptcha",
         ".h-captcha",
     ],
@@ -116,6 +118,56 @@ def test_hidden_vendor_captcha_widget_does_not_halt_run(vendor_selector):
     page = _Page("https://hh.ru/vacancy/1", {vendor_selector: (True, False)})
 
     assert detect_antibot_on_page(page) is None
+
+
+@pytest.mark.parametrize(
+    "hh_marker_selector",
+    [
+        "[data-qa='account-captcha-input']",
+        "[data-qa='account-captcha-picture']",
+    ],
+)
+def test_visible_hh_captcha_control_is_terminal(hh_marker_selector):
+    # Боевые дампы 2026-09-08/09 (#1248): это РЕАЛЬНАЯ разметка капчи hh.ru.
+    page = _Page("https://hh.ru/resume/edit/x", {hh_marker_selector: (True, True)})
+
+    result = detect_antibot_on_page(page)
+
+    assert result is not None
+
+
+@pytest.mark.parametrize(
+    "hh_marker_selector",
+    [
+        "[data-qa='account-captcha-input']",
+        "[data-qa='account-captcha-picture']",
+    ],
+)
+def test_hidden_hh_captcha_control_does_not_halt_run(hh_marker_selector):
+    # Те же дампы: контролы капчи отрисованы, но СКРЫТЫ (дремлющий шаблон
+    # на странице редактора резюме) — прогон останавливать нельзя.
+    page = _Page("https://hh.ru/resume/edit/x", {hh_marker_selector: (True, False)})
+
+    assert detect_antibot_on_page(page) is None
+
+
+@pytest.mark.parametrize(
+    "rejected_selector",
+    [
+        'input[placeholder="Текст с картинки"]',
+        'input[name*="captcha" i]',
+        'img[src*="captcha" i]',
+        ".captcha-page",
+    ],
+)
+def test_rejected_1248_candidates_are_not_queried_or_matched(rejected_selector):
+    # #1248: отклонённые кандидаты не входят в allowlist — их разметка не
+    # опрашивается и не останавливает прогон (причины отказа — в комментарии
+    # модуля antibot).
+    page = _Page("https://hh.ru/vacancy/1", {rejected_selector: (True, True)})
+
+    assert detect_antibot_on_page(page) is None
+    assert rejected_selector not in page.queried
 
 
 def test_unknown_observed_marker_is_ignored():
