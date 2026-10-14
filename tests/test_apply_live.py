@@ -126,6 +126,12 @@ class FakeFormChannel:
         option_present: bool = True,
         option_click_lost: bool = False,
         panel_closes: bool = True,
+        # #1249: hh.ru схлопнул панель сам сразу после выбора — повторный
+        # клик по триггеру в этом состоянии РЕОТКРЫВАЕТ её.
+        panel_auto_closes_after_select: bool = False,
+        # Ревью PR #1250: отказ исполнителя на close-клике по карточке-контейнеру
+        # (element_not_found не-div контейнера / ambiguous_target мульти-матча).
+        close_click_error: PrimitiveError | None = None,
         toggle_present: bool = True,
         textarea_after_click: bool = True,
         fill_ok: bool = True,
@@ -167,6 +173,7 @@ class FakeFormChannel:
         self.picker_present = picker_present
         self.option_present = option_present
         self.panel_closes = panel_closes
+        self.close_click_error = close_click_error
         self.toggle_present = toggle_present
         self.textarea_after_click = textarea_after_click
         self.fill_ok = fill_ok
@@ -201,6 +208,7 @@ class FakeFormChannel:
         # потеряться в окне гидрации (#858) — option_click_lost это моделирует.
         self.option_selected = False
         self.option_click_lost = option_click_lost
+        self.panel_auto_closes_after_select = panel_auto_closes_after_select
         self.panel_open = False
         self.submitted = False
         self.filled_text: str | None = None
@@ -263,8 +271,14 @@ class FakeFormChannel:
             if self.modal_after_click:
                 self.panel_open = False
         elif "resume-title" in selector:
-            # Триггер пикера: открыть/закрыть панель.
-            if self.panel_open and self.panel_closes:
+            # Триггер пикера: открыть/закрыть панель. Close-клик (#1249) идёт
+            # по карточке-контейнеру с :has(), не по триггеру.
+            if ":has(" in selector:
+                if self.close_click_error is not None:
+                    raise self.close_click_error
+                if self.panel_open and self.panel_closes:
+                    self.panel_open = False
+            elif self.panel_open and self.panel_closes:
                 self.panel_open = False
             elif not self.panel_open:
                 self.panel_open = True
@@ -378,7 +392,13 @@ class FakeFormChannel:
             # Бой 2026-09-25: Magritte размонтирует drop-панель при закрытии —
             # опции (и их aria-selected) есть в DOM только при ОТКРЫТОЙ панели;
             # чтение после закрытия давало ложный «нет aria-selected».
-            return self.option_selected and self.panel_open, "", 1
+            result = self.option_selected and self.panel_open
+            if result and self.panel_auto_closes_after_select:
+                # #1249: между подтверждением выбора и шагом закрытия hh.ru
+                # сам схлопнул панель — чтение выбора было последним при
+                # открытой панели.
+                self.panel_open = False
+            return result, "", 1
         if "magritte-select-option-" in selector:
             return self.option_present and self.panel_open, "", 1
         if "drop-base" in selector:
@@ -1536,14 +1556,83 @@ def test_picker_option_missing_blocks_submit() -> None:
     assert not channel.submitted
 
 
-def test_panel_must_close_before_submit() -> None:
-    # Панель перекрывает submit физически: не закрылась — отправка запрещена.
+def test_panel_unclosable_still_submits_with_marked_reason() -> None:
+    # #1249 (4 боя 2026-10-09): панель не закрывается синтетическим кликом ни
+    # по какому узлу (Magritte Drop ждёт trusted pointerdown). Требование
+    # «закрыть перед submit» выросло из hit-testing'а РЕАЛЬНОГО клика —
+    # click_element бьёт в цель напрямую, поэтому незакрываемая панель не
+    # отказ: submit идёт, факт помечается в reason. Арбитр — внешний verify.
     channel = FakeFormChannel(panel_closes=False)
-    result = _run(channel, verify=_verify_of("not_found"))
+    result = _run(channel, verify=_verify_of("found"))
 
-    assert (result.success, result.acted) == (False, False)
-    assert "не закрылась" in result.reason
-    assert not channel.submitted
+    assert result.success and channel.submitted
+    assert "панель пикера осталась открытой" in result.reason
+
+
+def test_panel_open_grey_zone_reason_mentions_panel() -> None:
+    # Ревью PR #1250 (мелкое DX): серая зона после submit-клика тоже несёт
+    # факт открытой панели — боевой разбор не путает «submit упёрся в панель»
+    # и «маркер не отрисовался».
+    channel = FakeFormChannel(panel_closes=False, submit_markers=False)
+    result = _run(channel, verify=_verify_of("indeterminate"))
+
+    assert result.uncertain and result.acted
+    assert "панель пикера оставалась открытой" in result.reason
+
+
+def test_panel_auto_closed_after_select_skips_reclick() -> None:
+    # #1249 (бой 2026-10-09, вак. 137661057): hh.ru схлопнул панель сам после
+    # выбора — слепой клик-закрытие РЕОТКРЫЛ её, submit остался перекрыт.
+    # Закрытие только по факту открытой панели: перечитка сказала «нет» —
+    # клика по триггеру нет вовсе, submit доступен.
+    channel = FakeFormChannel(panel_auto_closes_after_select=True)
+    result = _run(channel, verify=_verify_of("found"))
+
+    assert result.success
+    trigger_clicks = [
+        payload
+        for action, payload in channel.calls
+        if action == ACTION_CLICK and "resume-title" in payload["selector"]
+    ]
+    # Единственный клик по триггеру — открытие панели перед выбором.
+    assert len(trigger_clicks) == 1
+    assert trigger_clicks[0]["waitFor"]["state"] == "visible"
+    assert channel.submitted
+
+
+def test_panel_open_after_select_still_reclicked_closed() -> None:
+    # Панель осталась открытой (задокументированный #207-shape) — закрытие
+    # повторным кликом работает как раньше; перечитка не отменяет его.
+    channel = FakeFormChannel()
+    result = _run(channel, verify=_verify_of("found"))
+
+    assert result.success
+    trigger_clicks = [
+        payload
+        for action, payload in channel.calls
+        if action == ACTION_CLICK and "resume-title" in payload["selector"]
+    ]
+    assert len(trigger_clicks) == 2
+    assert channel.submitted
+
+
+def test_panel_close_click_executor_error_still_submits() -> None:
+    # Ревью PR #1250: отказ исполнителя на самом close-клике (не-forwarded
+    # PrimitiveError — element_not_found на не-div контейнере второго shape /
+    # ambiguous_target мульти-матча :has()) — тот же best-effort, а не
+    # терминальный отказ вакансии: выбор подтверждён, submit идёт, факт в
+    # reason. Арбитр — внешний verify.
+    channel = FakeFormChannel(
+        close_click_error=PrimitiveError(
+            "element_not_found",
+            "div[role='button']:has([data-qa='resume-title'])",
+            forwarded=False,
+        )
+    )
+    result = _run(channel, verify=_verify_of("found"))
+
+    assert result.success and channel.submitted
+    assert "панель пикера осталась открытой" in result.reason
 
 
 def test_picker_flow_clicks_option_and_closes_panel() -> None:

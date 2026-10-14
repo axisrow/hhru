@@ -188,6 +188,19 @@ def _is_hh_ru_host(netloc: str) -> bool:
 FORM_WAIT_TIMEOUT_MS = 15_000  # модалка отклика после клика по кнопке (гонка монтажа)
 PAGE_FORM_WAIT_TIMEOUT_MS = 10_000  # второй shape: textarea полной страницы
 PANEL_WAIT_TIMEOUT_MS = 5_000  # панель выбора резюме открылась/закрылась
+# Закрытие панели пикера — кликом по КОНТЕЙНЕРУ тоггла, не по внутреннему
+# узлу [data-qa='resume-title']. Боевой путь закрывает панель кликом по
+# предку role=button (apply_form.APPLY_RESUME_TOGGLE, steps.py:956 — текстовый
+# узел вложен в Magritte-контейнер, «этим предком и закрывать»), но его
+# Playwright-цепочка `>> xpath=ancestor::…` исполнителю невалидна (executor.js
+# resolver — plain CSS). Бой 2026-10-09 (вак. 137661057, #1249): синтетический
+# .click() по внутреннему узлу панель ОТКРЫЛ, повторный НЕ закрыл — кликабельный
+# контейнер карточки без своего data-qa (дамп probe_136244658_form.html:
+# div[role=button].magritte-card с resume-title внутри). `:has()` выбирает
+# ровно карточку с resume-title (Chrome 105+, live-канал на свежем chromium);
+# мульти-матч исполнитель откажет ambiguous_target — fail-closed, не «кликнем
+# первый молча».
+RESUME_TOGGLE_CARD_SELECTOR = "div[role='button']:has([data-qa='resume-title'])"
 LETTER_WAIT_TIMEOUT_MS = 5_000  # textarea после клика по letter-toggle
 SUBMIT_WAIT_TIMEOUT_MS = 20_000  # success-маркеры после submit-клика
 # Перечитка вкладки после навигирующего клика кнопки (#1224): инъекция
@@ -755,6 +768,7 @@ def apply_via_live(
             )
 
         # --- выбор резюме: пикер обязателен на мульти-резюме (#1144) ---------
+        panel_still_open = False
         if require_resume_select:
             trigger = str(APPLY_RESUME_SELECT)
             panel = str(APPLY_RESUME_DROPDOWN)
@@ -819,18 +833,43 @@ def apply_via_live(
                     acted=False,
                     uncertain=False,
                 )
-            # Панель НЕ закрывается сама (#207-форма): она перекрывает submit
-            # физически — закрываем повторным кликом по триггеру и ждём скрытия
-            # САМОЙ панели.
-            if not _click(
-                trigger,
-                {"selector": panel, "state": WAIT_STATE_HIDDEN, "timeoutMs": PANEL_WAIT_TIMEOUT_MS},
-            ):
-                return _grey_zone(
-                    "панель выбора резюме не закрылась — submit перекрыт, отправка запрещена",
-                    acted=False,
-                    uncertain=False,
-                )
+            # Панель НЕ закрывается сама (#207-форма) и в live-канале не
+            # закрывается ВООБЩЕ: бои 2026-10-09 (#1249) — не закрыли её ни
+            # кликом по внутреннему узлу, ни по карточке-контейнеру, ни полной
+            # pointer-последовательностью (Magritte Drop слушает TRUSTED
+            # pointerdown; синтетика isTrusted не получает — этим live-канал
+            # отличается от CLI-пути с Playwright). Но требование «закрыть
+            # перед submit» выросло из hit-testing'а РЕАЛЬНОГО клика (CLI:
+            # «subtree intercepts pointer events», 30с ретраев) — click_element
+            # бьёт в цель НАПРЯМУЮ, минуя hit-testing, и открытая панель ему
+            # не помеха. Закрытие остаётся best-effort (перечитка drop-base
+            # до клика: hh.ru мог схлопнуть панель сам — клик тогда РЕОТКРЫЛ
+            # бы её); неудача закрытия — не отказ: при подтверждённом выборе
+            # (aria-selected выше) идём на submit с открытой панелью и
+            # помечаем это в reason. Финальный арбитр прежний — внешний
+            # verify (#207): отклик не ушёл → not_found → вердикт сайта.
+            panel_still_open = False
+            if _read(panel).get("visible"):
+                try:
+                    closed = _click(
+                        RESUME_TOGGLE_CARD_SELECTOR,
+                        {
+                            "selector": panel,
+                            "state": WAIT_STATE_HIDDEN,
+                            "timeoutMs": PANEL_WAIT_TIMEOUT_MS,
+                        },
+                    )
+                except _RefusedBeforeAction:
+                    # Ревью PR #1250: отказ исполнителя на самом close-клике —
+                    # тот же best-effort, а не терминальный отказ вакансии:
+                    # element_not_found на не-div контейнере (селектор выше
+                    # захардкодил div, CLI APPLY_RESUME_TOGGLE тего-агностичен),
+                    # ambiguous_target на вложенных div[role=button] (:has()
+                    # мульти-матч). Выбор подтверждён выше, click_element
+                    # минует hit-testing, арбитр — внешний verify (#207).
+                    closed = False
+                if not closed:
+                    panel_still_open = True
 
         # --- письмо: отсутствие textarea = fail-closed отказ ДО submit --------
         if not _wait(textarea_selector, WAIT_STATE_VISIBLE, LETTER_WAIT_TIMEOUT_MS):
@@ -918,9 +957,22 @@ def apply_via_live(
         )
 
     if submitted:
-        return _result(True, "success: маркер отправки подтверждён в живой вкладке", acted=True)
+        reason = "success: маркер отправки подтверждён в живой вкладке"
+        if panel_still_open:
+            reason += (
+                "; панель пикера осталась открытой (синтетический клик минует hit-testing — #1249)"
+            )
+        return _result(True, reason, acted=True)
+    grey_reason = "маркер успешной отправки не подтвердился за бюджет"
+    if panel_still_open:
+        # Ревью PR #1250 (мелкое DX): серая зона тоже должна нести факт
+        # открытой панели — иначе боевой разбор не отличит «submit упёрся в
+        # панель» от «маркер не отрисовался».
+        grey_reason += (
+            "; панель пикера оставалась открытой (синтетический клик минует hit-testing — #1249)"
+        )
     return _grey_zone(
-        "маркер успешной отправки не подтвердился за бюджет",
+        grey_reason,
         acted=True,
         uncertain=True,
     )
