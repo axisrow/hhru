@@ -197,6 +197,27 @@ def _require(mapping: dict, key: str, context: str):
     return mapping[key]
 
 
+def parse_throttle(raw: dict) -> ThrottleConfig:
+    """raw — секция throttle. Нечисловое значение поля — ConfigError при
+    загрузке конфига, а не отложенный крэш сравнения в рантайме (#1256)."""
+
+    def _num(key: str, default, types, cast, kind: str):
+        value = raw.get(key, default)
+        # bool — подкласс int: `daily_apply_limit: true` прошёл бы числовую
+        # проверку и дал бы лимит 1 молча. Режем явно (та же механика, что в
+        # config_sections/questionnaires.py::_parse_threshold).
+        if isinstance(value, bool) or not isinstance(value, types):
+            raise ConfigError(f"Поле 'throttle.{key}' должно быть {kind}, получено: {value!r}")
+        return cast(value)
+
+    return ThrottleConfig(
+        min_delay_seconds=_num("min_delay_seconds", 8, (int, float), float, "числом"),
+        max_delay_seconds=_num("max_delay_seconds", 25, (int, float), float, "числом"),
+        daily_apply_limit=_num("daily_apply_limit", 40, (int,), int, "целым числом"),
+        daily_bump_limit=_num("daily_bump_limit", 10, (int,), int, "целым числом"),
+    )
+
+
 def load_config(path: str | Path) -> AppConfig:
     # Lazy-импорт, чтобы разорвать цикл config <-> config_sections
     # (config_sections.* импортируют типы из config на загрузке).
@@ -237,13 +258,7 @@ def load_config(path: str | Path) -> AppConfig:
     # шаблонам. Отсутствие секции = дефолты с enabled=False (поведение до #482).
     questionnaires = parse_questionnaires(raw.get("questionnaires"), "questionnaires")
 
-    throttle_raw = raw.get("throttle", {})
-    throttle = ThrottleConfig(
-        min_delay_seconds=throttle_raw.get("min_delay_seconds", 8),
-        max_delay_seconds=throttle_raw.get("max_delay_seconds", 25),
-        daily_apply_limit=throttle_raw.get("daily_apply_limit", 40),
-        daily_bump_limit=throttle_raw.get("daily_bump_limit", 10),
-    )
+    throttle = parse_throttle(raw.get("throttle", {}))
 
     cover_letter_default = raw.get("cover_letter_default", "")
     follow_up_letter = raw.get("follow_up_letter", "")
