@@ -33,8 +33,9 @@ def test_show_prints_ascii_table(capsys, tmp_path):
 
     profile.run_show(_args(tmp_path / "history.db"))
     output = capsys.readouterr().out
-    assert "question_key" in output
-    assert "source" in output
+    assert "Вопрос" in output
+    assert "Значение" in output and "Источник" in output and "Обновлено" in output
+    assert "question_key" not in output
     assert "имя" in output
     assert "hh_ru" in output and "manual" in output
 

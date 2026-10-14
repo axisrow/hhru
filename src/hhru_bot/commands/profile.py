@@ -50,7 +50,7 @@ def run_show(args: argparse.Namespace) -> None:
         [field["question_key"], field["value"], field["source"], field["updated_at"]]
         for field in fields
     ]
-    print(_ascii_table(["question_key", "value", "source", "updated_at"], rows))
+    print(_ascii_table(["Вопрос", "Значение", "Источник", "Обновлено"], rows))
 
 
 def run_unset(args: argparse.Namespace) -> None:
