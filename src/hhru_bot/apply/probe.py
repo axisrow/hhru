@@ -29,7 +29,7 @@ from typing import Any
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
-from ..browser import PAGE_STATE, goto_hh, has_login_form
+from ..browser import PAGE_STATE, census_table, goto_hh, has_login_form, rendered_controls_census
 from ..logging_setup import LOG_DIR
 from ..search import VacancyCard
 from ..vacancy_refresh import VacancyBodyCache, refresh_card
@@ -120,6 +120,26 @@ def dump_probe_snapshot(
             metadata_path.write_text(json.dumps(metadata, sort_keys=True) + "\n", encoding="utf-8")
         except OSError as exc:
             logger.warning("probe[%s]: метаданные дампа недоступны: %s", ctx.stage, exc)
+        # #1254: census-компаньон рядом с каждым probe-дампом (инвариант #1002,
+        # как у browser.dump_page_html): разбор отказа обязан начинаться с
+        # картинки отрисованных контролов — сырой HTML содержит JSON/i18n-
+        # литералы, неотличимые от UI. Best-effort: сбой census не должен
+        # ломать сам дамп (в т.ч. строгий успешный).
+        try:
+            rows = rendered_controls_census(page)
+            html_path.with_suffix(".census.txt").write_text(
+                "\n".join(
+                    [
+                        f"# census для {html_path.name}",
+                        "# rendered_controls_census: только отрисованные DOM-элементы;",
+                        "# вхождения строк в .html (JSON/i18n-бандлы) не являются полями.",
+                        census_table(rows),
+                    ]
+                ),
+                encoding="utf-8",
+            )
+        except Exception:  # noqa: BLE001 — компаньон не должен ломать сам дамп
+            logger.debug("probe[%s]: census-компаньон недоступен", ctx.stage, exc_info=True)
         logger.info(
             "probe[%s]: дамп сохранён — %s",
             ctx.stage,
@@ -209,7 +229,25 @@ def probe_vacancy(
         if reason := check_already_responded(page, vacancy):
             logger.info("[PROBE] Вакансия '%s' уже откликнута — пропускаю без дампа", vacancy.title)
             return ProbeResult(vacancy, False, reason, skipped=True)
-        return ProbeResult(vacancy, False, "кнопка отклика не найдена на странице")
+        # #1254: вердикт «кнопка не найдена» без подтверждения состояния страницы
+        # недостоверен (инвариант №5 CLAUDE.md) — синтетический диагноз «дрейф
+        # селектора» на 404-странице. Сначала распознаём подтверждённую
+        # недоступность вакансии (404/архив), затем в любом случае пишем дамп
+        # с census-компаньоном: probe обязан оставить артефакт «что было на
+        # странице» на обоих исходах.
+        unavailable_reason = apply_steps.vacancy_unavailable_reason(page)
+        fail_ctx = ProbeContext(
+            vacancy_id=vacancy.vacancy_id,
+            vacancy_url=vacancy.url,
+            stage="no_apply_button",
+            run_id=run_id,
+            logs_dir=ctx_dir.logs_dir,
+        )
+        dump_paths = dump_probe_snapshot(page, fail_ctx, best_effort=True)
+        if unavailable_reason:
+            logger.warning("[PROBE] %s — %s", vacancy.title, unavailable_reason)
+            return ProbeResult(vacancy, False, unavailable_reason, dump_paths)
+        return ProbeResult(vacancy, False, "кнопка отклика не найдена на странице", dump_paths)
 
     navigation_result = apply_steps.navigate_to_response_form(
         page,

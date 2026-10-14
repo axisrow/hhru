@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Callable
 
 from playwright.sync_api import Error as PlaywrightError
@@ -61,6 +62,24 @@ RESUME_SELECT_TIMEOUT_MS = APPLY_TIMEOUT_MS
 # (там ждём рендер опций). Отдельная константа, а не переиспользование: иначе
 # каждая вакансия с незакрывшимся dropdown стоила бы лишние 10с.
 RESUME_DROPDOWN_CLOSE_TIMEOUT_MS = 3_000
+
+# #1254: текстовые маркеры страницы-ошибки hh.ru («вакансия не найдена», 404).
+# Сопоставляется ОТРИСОВАННЫЙ inner_text (census-правило #1002), а не сырой
+# HTML: вхождение литерала в дамп не доказывает состояние страницы. Проверка
+# вызывается только когда страница УЖЕ не выглядит живой вакансией (кнопка
+# отклика и маркеры «уже откликались» не найдены), поэтому ложный сигнал на
+# здоровой вакансии практически недостижим.
+VACANCY_UNAVAILABLE_TEXT_MARKERS = (
+    "вакансия не найдена",
+    "страница не найдена",
+    "такой страницы",
+    "ошибка 404",
+)
+
+# Бюджет чтения inner_text: к моменту вызова wait_apply_button уже отдал полный
+# APPLY_TIMEOUT_MS (страница отрисована), читать осталось мгновение; бюджет —
+# на медленную перерисовку, а не на первичный рендер.
+UNAVAILABLE_TEXT_TIMEOUT_MS = 3_000
 
 
 class SubmitClickUncertain(Exception):
@@ -221,6 +240,27 @@ def wait_apply_button(page: Page, *, timeout_ms: int = APPLY_TIMEOUT_MS) -> bool
     except PlaywrightTimeoutError:
         return False
     return apply_button.count() > 0
+
+
+def vacancy_unavailable_reason(page: Page) -> str | None:
+    """#1254: подтверждённое состояние «вакансия недоступна» (404/архив) или None.
+
+    Вызывается ПОСЛЕ неудачного wait_apply_button() и check_already_responded():
+    страница уже не выглядит ни живой вакансией, ни откликнутой. Положительный
+    сигнал (текст страницы-ошибки) объясняет отказ честно; None — состояние НЕ
+    подтверждено, в том числе при ошибке чтения DOM (fail-closed, инвариант №5
+    CLAUDE.md): отсутствие кнопки само по себе не доказывает ни 404, ни дрейф
+    селектора — вердикт остаётся за вызывающим.
+    """
+    try:
+        text = page.locator("body").inner_text(timeout=UNAVAILABLE_TEXT_TIMEOUT_MS)
+    except (PlaywrightError, AttributeError):
+        return None
+    lowered = re.sub(r"\s+", " ", text).casefold()
+    for marker in VACANCY_UNAVAILABLE_TEXT_MARKERS:
+        if marker in lowered:
+            return f"вакансия недоступна (страница ошибки hh.ru: «{marker}»)"
+    return None
 
 
 def _hidden_resume_warning_is_expanded(page: Page) -> bool:

@@ -525,6 +525,11 @@ def _run(ctx: ApplyContext) -> ApplyResult:
     if reason := check_already_responded(ctx.page, ctx.vacancy):
         return ctx.skip(reason, skip_reason=SKIP_REASONS.ALREADY_APPLIED)
     if not apply_button_found:
+        # #1254: отсутствие кнопки само по себе не диагноз — сначала проверяем
+        # подтверждённое состояние недоступности вакансии (404/архив); без него
+        # остаётся прежний вердикт (инвариант №5: пустой результат недостоверен).
+        if unavailable := apply_steps.vacancy_unavailable_reason(ctx.page):
+            return ctx.fail(unavailable)
         return ctx.fail("кнопка отклика не найдена на странице")
 
     # #17: рендер письма через провайдер, если он задан (AI/шаблон). Провайдер
