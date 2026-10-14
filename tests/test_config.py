@@ -57,6 +57,52 @@ def test_load_config_minimal(tmp_path):
     assert config.throttle.min_delay_seconds == 8
 
 
+def _config_with_throttle(throttle_line: str) -> str:
+    return f"""
+        account:
+          storage_state_file: data/storage_state/hh_session.json
+        resumes:
+          - id: r1
+            resume_url: "https://hh.ru/resume/AAA111"
+            search:
+              text: "python developer"
+        throttle:
+          {throttle_line}
+    """
+
+
+# #1256: нечисловое значение поля throttle — ConfigError при загрузке,
+# а не молчаливая строка в датаклассе («0 / abc» в whoami) и не отложенный
+# крэш сравнения в рантайме.
+@pytest.mark.parametrize(
+    "throttle_line",
+    [
+        "daily_apply_limit: abc",
+        "daily_bump_limit: abc",
+        "min_delay_seconds: abc",
+        "max_delay_seconds: abc",
+        # bool — подкласс int: без явной отсечки прошёл бы как 1.
+        "daily_apply_limit: true",
+        # float в int-поле — ошибка, а не молчаливое усечение до 40.
+        "daily_apply_limit: 40.5",
+    ],
+)
+def test_throttle_rejects_non_numeric_values(tmp_path, throttle_line):
+    field = throttle_line.split(":")[0]
+    with pytest.raises(ConfigError, match=f"throttle.{field}"):
+        load_config(_write_config(tmp_path, _config_with_throttle(throttle_line)))
+
+
+def test_throttle_numeric_values_coerced(tmp_path):
+    config = load_config(_write_config(tmp_path, _config_with_throttle("min_delay_seconds: 5")))
+    assert config.throttle.min_delay_seconds == 5.0
+    assert isinstance(config.throttle.min_delay_seconds, float)
+    assert config.throttle.daily_apply_limit == 40
+
+    config = load_config(_write_config(tmp_path, _config_with_throttle("daily_apply_limit: 50")))
+    assert config.throttle.daily_apply_limit == 50
+
+
 @pytest.mark.parametrize(
     "resume_url",
     [
