@@ -20,6 +20,8 @@ from __future__ import annotations
 import argparse
 import json
 
+from playwright.sync_api import Error as PlaywrightError
+
 from ..areas import (
     AREA_MATCH_EXACT_MULTIPLE,
     AREA_MATCH_EXACT_UNIQUE,
@@ -124,7 +126,17 @@ def run(args: argparse.Namespace) -> bool | None:
         # Алиас — см. docstring модуля: это контекстный клиент Playwright,
         # а не отдельный HTTP-клиент; source-guard требует именно такую запись.
         api_request = context.request
-        response = api_request.get(AREAS_ENDPOINT)
+        # #1253: сетевой сбой (таймаут тела при 200 OK, обрыв, DDoS-Guard) —
+        # ожидаемая ошибка публичного запроса; PlaywrightTimeoutError —
+        # подкласс PlaywrightError, ловим базовый.
+        try:
+            response = api_request.get(AREAS_ENDPOINT)
+        except PlaywrightError as exc:
+            # Однострочный лимит — как в call-api: сообщение TimeoutError
+            # многострочно (Call log), [FAIL] обязан остаться читаемым.
+            detail = " ".join(str(exc).split())[:_FAIL_BODY_LIMIT]
+            print(f"[FAIL] GET {AREAS_ENDPOINT}: {detail}")
+            return True
         areas, failed = _load_catalog(response)
     if failed or areas is None:
         return True
