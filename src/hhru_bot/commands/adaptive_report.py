@@ -30,5 +30,5 @@ def run(args: argparse.Namespace) -> None:
     )
     print(format_adaptive(metrics))
     if not metrics or not any(m.samples for m in metrics):
-        print("[INFO] insufficient data: score для резюме пока не накоплен")
+        print("[INFO] нет данных: score для резюме пока не накоплен")
     print(success_statement(metrics))
