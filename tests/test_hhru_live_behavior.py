@@ -582,6 +582,25 @@ def test_hhru_live_executor_picker_drop_panel_allowed_with_permission():
     assert scenario["clickCount"] == 1
 
 
+def test_hhru_live_executor_relocation_confirm_allowed_with_permission():
+    """Боевой факт #1251 (census live-канала 2026-10-09, дамп CLI-пути
+    2026-09-16): попап подтверждения переезда (alertdialog/ambiguous/close=0)
+    монтируется ВМЕСТО формы отклика. allowApply + ТОЧНАЯ цель
+    relocation-warning-confirm проходит (apply_flow_relocation_alert); без
+    allowApply — отказ; abort «Отменить» и посторонний ambiguous-диалог не
+    адресуются даже с флагом: мутация профиля (решение владельца #1132)
+    авторизуется только явной confirm-командой сценария."""
+    scenario = _run_executor_scenario("click_relocation_confirm_allowed_with_permission")
+    assert scenario["noFlagError"] == "policy_refused" and scenario["noFlagReason"] == "ambiguous"
+    assert scenario["allowedContext"] == "apply_flow_relocation_alert"
+    assert scenario["allowedClicked"] is True and scenario["clickedConfirm"] is True
+    assert scenario["abortError"] == "policy_refused" and scenario["abortReason"] == "ambiguous"
+    assert scenario["clickedAbort"] is False
+    assert scenario["strangerError"] == "policy_refused"
+    assert scenario["strangerReason"] == "ambiguous"
+    assert scenario["clickCount"] == 1
+
+
 def test_hhru_live_executor_click_invisible_target_refused():
     """Действие по невидимому контролю — действие без оснований: отказ до
     policy-гейта, кликов 0."""

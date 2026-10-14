@@ -323,6 +323,66 @@ const SCENARIOS = {
     };
   },
 
+  // Боевой факт #1251 (census live-канала 2026-10-09, дамп CLI-пути
+  // 2026-09-16): попап подтверждения переезда (alertdialog
+  // magritte-desktop-container, ambiguous, close=0 — текст и класс как в
+  // боевом census overlay-13) монтируется ВМЕСТО формы отклика. allowApply +
+  // ambiguous + ТОЧНАЯ цель relocation-warning-confirm («Все равно
+  // откликнуться») проходит (context apply_flow_relocation_alert); без
+  // allowApply — отказ; abort «Отменить» и контрол постороннего ambiguous-
+  // диалога не адресуются даже с флагом (мутация профиля — только явная
+  // confirm-команда сценария при allow_relocation, решение владельца #1132).
+  click_relocation_confirm_allowed_with_permission: async () => {
+    const title = el('div', { 'data-qa': 'relocation-warning-title' }, 'Вы откликаетесь на вакансию в другой стране');
+    const confirm = el('button', { 'data-qa': 'relocation-warning-confirm' }, 'Все равно откликнуться');
+    const abort = el('button', { 'data-qa': 'relocation-warning-abort' }, 'Отменить');
+    const popup = el('div', { class: 'magritte-desktop-container', role: 'alertdialog' }, '');
+    popup.appendChild(title);
+    popup.appendChild(confirm);
+    popup.appendChild(abort);
+    append(popup);
+    const noFlag = await send({
+      action: 'click_element',
+      dataQa: 'relocation-warning-confirm',
+      waitFor: { state: 'visible', dataQa: 'relocation-warning-confirm', timeoutMs: 1000 },
+    });
+    const allowed = await send({
+      action: 'click_element',
+      dataQa: 'relocation-warning-confirm',
+      allowApply: true,
+      waitFor: { state: 'visible', dataQa: 'relocation-warning-confirm', timeoutMs: 1000 },
+    });
+    const abortClick = await send({
+      action: 'click_element',
+      dataQa: 'relocation-warning-abort',
+      allowApply: true,
+      waitFor: { state: 'visible', dataQa: 'relocation-warning-abort', timeoutMs: 1000 },
+    });
+    const stranger = el('button', { 'data-qa': 'stranger-ok' }, 'OK');
+    const strangerDialog = el('div', { class: 'modal', role: 'dialog' }, 'Незнакомое окно');
+    strangerDialog.appendChild(stranger);
+    append(strangerDialog);
+    const strangerRefused = await send({
+      action: 'click_element',
+      dataQa: 'stranger-ok',
+      allowApply: true,
+      waitFor: { state: 'visible', dataQa: 'stranger-ok', timeoutMs: 1000 },
+    });
+    return {
+      noFlagError: noFlag.error ?? null,
+      noFlagReason: noFlag.policy?.reason ?? null,
+      allowedContext: allowed.result?.policy?.context ?? null,
+      allowedClicked: allowed.result?.clicked ?? null,
+      clickedConfirm: env.clicks.includes(confirm),
+      abortError: abortClick.error ?? null,
+      abortReason: abortClick.policy?.reason ?? null,
+      clickedAbort: env.clicks.includes(abort),
+      strangerError: strangerRefused.error ?? null,
+      strangerReason: strangerRefused.policy?.reason ?? null,
+      clickCount: env.clicks.length,
+    };
+  },
+
   // fill_element (#1162): the letter text lands in the field through the
   // native setter path and is read back; a mismatch is ok:false, never a
   // silent half-filled form.

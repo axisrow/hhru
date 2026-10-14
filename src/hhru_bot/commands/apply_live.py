@@ -212,6 +212,9 @@ def _run(
                 verify=None if args.dry_run else _verify,
                 before_submit=_before_submit,
                 require_resume_select=require_select,
+                # #1251: подтверждение попапа переезда — та же семантика, что у
+                # боевого пути (apply_service: allow_relocation -> pipeline).
+                allow_relocation=resume.search.allow_relocation,
             )
         finally:
             channel.close()

@@ -150,6 +150,15 @@ hh.ru принимает этот класс клиента (#1206: клон к�
    видимый apply_step-overlay, то есть форма отклика открыта (context
    `apply_flow_picker_overlay`). Посторонний ambiguous-диалог рядом с
    apply_step отказывает и с allowApply (ревью Codex PR #1221);
+   **#1251 (боевой census live-канала 2026-10-09, дамп CLI-пути 2026-09-16)**:
+   попап подтверждения переезда (alertdialog, ambiguous, close=0) монтируется
+   ВМЕСТО формы отклика — гейт «открытая apply-модалка» там неприменим, поэтому
+   allowApply понижает ambiguous-предка ТОЛЬКО для точной цели
+   `relocation-warning-confirm` («Все равно откликнуться», 187 боевых
+   срабатываний CLI-пути; context `apply_flow_relocation_alert`). Клик мутирует
+   профиль (решение владельца #1132) — авторизует его только явная
+   allowApply-команда сценария при `allow_relocation`; abort «Отменить» и
+   прочие контролы попапа не адресуются (тот же ambiguous отказывает).
    `dangerous` не понижается никогда; без флага (этап 1, авто-режимы)
    поведение не изменилось: тот же ambiguous отказывает, защита #1215
    цела.
@@ -271,6 +280,7 @@ sender и действию вне allowlist, а также сохранност�
 | Форма отклика: `form#RESPONSE_MODAL_FORM_ID`, `data-qa*="vacancy-response"` | подтверждено боевым apply-live (#1162, 2026-09-20 + #1214, 2026-09-23): модалка классифицируется `apply_step` по структурным якорям, клики по пикеру/письму/submit проходят с allowApply | census канала #1214: одна модалка — семейство вложенных overlay-узлов (outer `apply_step`, inner `ambiguous`); вердикт клика снимается по верхнему предку (см. «Исполнитель») |
 | Тест-вопросы: task-question/task-body | **UNCONFIRMED** | заимствовано из konard reference, живым DOM не сверено; подтвердится боевым apply на вакансии с анкетой |
 | Warning скрытого резюме внутри формы: `[data-qa='hidden-resume-warning']` (collapsible «поменяйте видимость резюме на …») | подтверждено живыми дампами probe на testing (2026-09-09: 136244658, 137014905 — элемент внутри `RESPONSE_MODAL_FORM_ID`, в неблокированных формах отсутствует) | боевой случай #1214 (2026-09-23): модалка требования видимости → skip `resume_visibility` в сценарии apply-live; переключатель видимости — мутация профиля, кодом не кликается |
+| Попап переезда: контейнер alertdialog `magritte-desktop-container` (ambiguous, close=0), `[data-qa='relocation-warning-title']`, кнопки `relocation-warning-confirm` «Все равно откликнуться» / `relocation-warning-abort` «Отменить» | подтверждено боем CLI-пути (#1135: дамп apply_136789544_form_timeout.html 2026-09-16, 187 срабатываний confirm) + census live-канала 2026-10-09 (overlay-13) | #1251: попап монтируется ВМЕСТО формы; allowApply понижает ambiguous-предка только для точной цели confirm (context `apply_flow_relocation_alert`) — клик мутирует профиль (решение владельца #1132); abort кодом не адресуется |
 | Тост «Резюме доставлено» / «Отклик отправлен» | **UNCONFIRMED** | transient UI (#586: popup исчез до снятия); ловить только перехватом сразу после боевого действия |
 
 Permissions минимальны: `storage` (журнал диагностики в `storage.session`,
