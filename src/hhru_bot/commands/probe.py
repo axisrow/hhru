@@ -605,7 +605,10 @@ def _vacancy_from_url(url: str):
         )
     return VacancyCard(
         vacancy_id=vacancy_id,
-        title=f"(probe target #{vacancy_id})",
+        # #1259: title остаётся пустым — при адресации по id название вакансии
+        # ещё неизвестно, и изображать его фейковым плейсхолдером нельзя:
+        # артефакт отладки «(probe target #N)» утекал в пользовательский лог.
+        title="",
         company="",
         url=url,
     )

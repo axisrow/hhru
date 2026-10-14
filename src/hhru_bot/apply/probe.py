@@ -215,7 +215,11 @@ def probe_vacancy(
         logs_dir=logs_dir or PROBE_LOG_DIR,
     )
 
-    logger.info("[PROBE] Открываю вакансию: %s (%s)", vacancy.title, vacancy.url)
+    # #1259: при адресации по --vacancy-id title ещё неизвестен (пустой) —
+    # печатаем только URL, никаких фейковых плейсхолдеров в пользовательском
+    # логе; реальное название появляется в последующих сообщениях, когда
+    # известно из данных hh.ru.
+    logger.info("[PROBE] Открываю вакансию: %s", vacancy.url)
     goto_hh(page, vacancy.url)
     vacancy = refresh_card(page, vacancy, cache=VacancyBodyCache())
     if has_login_form(page):

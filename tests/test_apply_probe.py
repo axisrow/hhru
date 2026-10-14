@@ -502,6 +502,26 @@ def test_probe_unavailable_page_reports_honest_reason_with_dump(tmp_path: Path):
     assert (tmp_path / "probe_42_no_apply_button.html").exists()
 
 
+def test_probe_no_internal_placeholder_in_user_log(tmp_path: Path, caplog):
+    """#1259: внутренний плейсхолдер не попадает в пользовательский лог.
+
+    При адресации по --vacancy-id название ещё неизвестно (title пуст) —
+    лог-строка открытия печатает только URL, никаких «(probe target #N)».
+    """
+    import logging
+
+    untitled = VacancyCard(vacancy_id="42", title="", company="", url="https://hh.ru/vacancy/42")
+    page = FakeProbePage(apply_button=False, body_text="Вакансия не найдена")
+
+    with caplog.at_level(logging.INFO, logger="hhru_bot.apply.probe"):
+        result = probe_vacancy(page, untitled, "RID", "x", tmp_path)
+
+    assert "вакансия недоступна" in result.reason
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert "(probe target" not in logged
+    assert "[PROBE] Открываю вакансию: https://hh.ru/vacancy/42" in logged
+
+
 def test_probe_indeterminate_saves_partial_dump(tmp_path: Path):
     """A form-scope timeout leaves a diagnostic DOM artifact when possible."""
     page = FakeProbePage(submit=False)
