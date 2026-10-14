@@ -70,7 +70,12 @@ def register(subparsers) -> None:
         required=True,
         help="Slug из конфига или реальный resume_id HH.ru (#319)",
     )
-    parser.add_argument("--mode", choices=("fresh", "append"), default="append")
+    parser.add_argument(
+        "--mode",
+        choices=("fresh", "append"),
+        default="append",
+        help="fresh — пересоздать список, append — дополнить",
+    )
     parser.add_argument(
         "--skill",
         action="append",

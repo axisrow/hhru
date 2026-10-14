@@ -29,7 +29,12 @@ def register(subparsers) -> None:
             "выбора аккаунт-сессии; языки общие для всего профиля"
         ),
     )
-    parser.add_argument("--mode", choices=("fresh", "append"), default="append")
+    parser.add_argument(
+        "--mode",
+        choices=("fresh", "append"),
+        default="append",
+        help="fresh — пересоздать список, append — дополнить",
+    )
     parser.add_argument(
         "--language",
         action="append",

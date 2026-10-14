@@ -9,7 +9,9 @@ def register(subparsers) -> None:
     parser = subparsers.add_parser(
         "adaptive-report", help="Метрика качества пула резюме (только чтение)"
     )
-    parser.add_argument("--format", choices=("table",), default="table", help="ASCII-таблица")
+    parser.add_argument(
+        "--format", choices=("table",), default="table", help="Формат вывода: table"
+    )
     parser.set_defaults(func=run)
 
 
