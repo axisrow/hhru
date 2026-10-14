@@ -243,16 +243,20 @@ function describeMatches(params) {
   };
 }
 
-// #1249 (бои 2026-10-09, вак. 137661057): панель пикера резюме закрывается
-// pointer-веткой (Magritte Drop слушает pointerdown вне панели), а голый
-// target.click() не несёт pointer-события — панель ОТКРЫВАЛАСЬ кликом (у
-// триггера есть click-handler), но не закрывалась ни по внутреннему узлу,
-// ни по карточке-контейнеру. Боевой путь тем же целевым элементом закрывает
-// панель Playwright-кликом — то есть решает ПОЛНАЯ последовательность
-// реального клика: pointerdown → mousedown → pointerup → mouseup → click
-// (bubbles, cancelable, координаты — центр цели). Policy-ядро отработало ДО
-// диспетча и не меняется; события неотменяемых фаз не диспетчируются, если
-// предыдущая preventDefault'нута — как у настоящего клика.
+// #1249 (бои 2026-10-09, вак. 137661057): dispatchRealClick — PARITY с
+// Playwright-кликом боевого пути, не средство закрытия панели пикера. Боевой
+// факт: панель Magritte Drop слушает TRUSTED pointerdown, а dispatchEvent
+// всегда даёт isTrusted=false — синтетическая ПОЛНАЯ последовательность
+// pointerdown → mousedown → pointerup → mouseup → click панель НЕ закрывает
+// (ни по внутреннему узлу, ни по карточке-контейнеру), как и голый
+// target.click() («закрывается Playwright-кликом → значит решает полная
+// последовательность» — невалидный вывод: Playwright-клик trusted, диспатч
+// нет; в live-канале закрытие best-effort в scenarios.py). Ценность диспетча
+// в другом: слушатели, реагирующие на pointer-фазы, получают их так же, как
+// от Playwright — parity поведения канала с CLI (bubbles, cancelable,
+// координаты — центр цели). Policy-ядро отработало ДО диспетча и не меняется;
+// события неотменяемых фаз не диспетчируются, если предыдущая
+// preventDefault'нута — как у настоящего клика.
 function dispatchRealClick(target) {
   // Координаты — у живого DOM; фейки js-харнесса без геометрии диспетчат
   // те же фазы без clientX/Y.
@@ -420,10 +424,12 @@ function fillElement(params, sendResponse) {
     if (typeof document.createEvent === 'function' && typeof target.dispatchEvent === 'function') {
       // #1249: node-харнесс без конструкторов событий идёт через
       // createEvent-стаб; в браузере — настоящий Event, как раньше.
+      // initEvent(type, true, false): input/change НЕ cancelable — прежняя
+      // семантика new Event(type, { bubbles: true }) (ревью PR #1250).
       const event = typeof Event === 'function'
         ? new Event(type, { bubbles: true })
         : document.createEvent('Event');
-      if (typeof event.initEvent === 'function') event.initEvent(type, true, true);
+      if (typeof event.initEvent === 'function') event.initEvent(type, true, false);
       target.dispatchEvent(event);
     }
   });

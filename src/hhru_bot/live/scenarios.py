@@ -850,14 +850,25 @@ def apply_via_live(
             # verify (#207): отклик не ушёл → not_found → вердикт сайта.
             panel_still_open = False
             if _read(panel).get("visible"):
-                if not _click(
-                    RESUME_TOGGLE_CARD_SELECTOR,
-                    {
-                        "selector": panel,
-                        "state": WAIT_STATE_HIDDEN,
-                        "timeoutMs": PANEL_WAIT_TIMEOUT_MS,
-                    },
-                ):
+                try:
+                    closed = _click(
+                        RESUME_TOGGLE_CARD_SELECTOR,
+                        {
+                            "selector": panel,
+                            "state": WAIT_STATE_HIDDEN,
+                            "timeoutMs": PANEL_WAIT_TIMEOUT_MS,
+                        },
+                    )
+                except _RefusedBeforeAction:
+                    # Ревью PR #1250: отказ исполнителя на самом close-клике —
+                    # тот же best-effort, а не терминальный отказ вакансии:
+                    # element_not_found на не-div контейнере (селектор выше
+                    # захардкодил div, CLI APPLY_RESUME_TOGGLE тего-агностичен),
+                    # ambiguous_target на вложенных div[role=button] (:has()
+                    # мульти-матч). Выбор подтверждён выше, click_element
+                    # минует hit-testing, арбитр — внешний verify (#207).
+                    closed = False
+                if not closed:
                     panel_still_open = True
 
         # --- письмо: отсутствие textarea = fail-closed отказ ДО submit --------
@@ -952,8 +963,16 @@ def apply_via_live(
                 "; панель пикера осталась открытой (синтетический клик минует hit-testing — #1249)"
             )
         return _result(True, reason, acted=True)
+    grey_reason = "маркер успешной отправки не подтвердился за бюджет"
+    if panel_still_open:
+        # Ревью PR #1250 (мелкое DX): серая зона тоже должна нести факт
+        # открытой панели — иначе боевой разбор не отличит «submit упёрся в
+        # панель» от «маркер не отрисовался».
+        grey_reason += (
+            "; панель пикера оставалась открытой (синтетический клик минует hit-testing — #1249)"
+        )
     return _grey_zone(
-        "маркер успешной отправки не подтвердился за бюджет",
+        grey_reason,
         acted=True,
         uncertain=True,
     )
