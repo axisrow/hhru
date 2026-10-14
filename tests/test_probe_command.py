@@ -18,6 +18,9 @@ def test_vacancy_from_url_plain():
     v = _vacancy_from_url("https://hh.ru/vacancy/12345")
     assert v.vacancy_id == "12345"
     assert v.url == "https://hh.ru/vacancy/12345"
+    # #1259: title пуст — при адресации по id название ещё неизвестно, и
+    # фейковый плейсхолдер не должен попадать в пользовательский лог.
+    assert v.title == ""
 
 
 def test_vacancy_from_url_strips_query():

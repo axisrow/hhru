@@ -112,6 +112,16 @@ class _FakeLocator:
         return self
 
 
+class _BodyTextLocator:
+    """Локатор ``body`` с читаемым inner_text — для #1254 (состояние страницы)."""
+
+    def __init__(self, text: str):
+        self._text = text
+
+    def inner_text(self, *, timeout: float = 0) -> str:  # noqa: ARG002
+        return self._text
+
+
 class _VisibleLocator(_FakeLocator):
     """Локатор с рабочим is_visible — только для попапа переезда (#1135).
 
@@ -151,6 +161,7 @@ class FakePage:
         ssr_resume_id: str | None = None,
         ssr_resume_multi: bool = False,
         relocation_visible: bool = False,
+        body_text: str = "",
     ):
         self.url = ""
         self.context = SimpleNamespace(
@@ -180,6 +191,8 @@ class FakePage:
         # #176: PlaywrightError в момент submit-клика (клик мог уйти).
         self._submit_click_error = submit_click_error
         self._relocation_visible = relocation_visible
+        # #1254: отрисованный текст <body> для vacancy_unavailable_reason.
+        self._body_text = body_text
         # #226 cycle-review: общий счётчик wait_for-вызовов apply-button/
         # already-responded локаторов — считает, что wait_apply_button ждёт
         # объединённым локатором (1 wait_for), а не последовательно.
@@ -227,6 +240,9 @@ class FakePage:
         from hhru_bot.apply import success
         from hhru_bot.selector_groups import apply_form, vacancy_page
 
+        if selector == "body":
+            # #1254: helper vacancy_unavailable_reason читает отрисованный текст.
+            return _BodyTextLocator(self._body_text)
         if selector == vacancy_page.VACANCY_APPLY_BUTTON:
             return _FakeLocator(
                 present=self._apply_button,
@@ -385,6 +401,19 @@ def test_apply_no_apply_button():
     result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=True)
     assert result.success is False
     assert "кнопка отклика не найдена" in result.reason
+
+
+def test_apply_unavailable_page_reports_honest_reason():
+    """#1254: 404-страница даёт честную причину вместо синтетического диагноза.
+
+    На несуществующей вакансии «кнопка отклика не найдена» звучит как дрейф
+    селектора; подтверждённый маркер страницы-ошибки (отрисованный текст)
+    заменяет причину на «вакансия недоступна». Без маркера вердикт прежний.
+    """
+    page = FakePage(apply_button=False, body_text="Вакансия не найдена — возможно, удалена")
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=True)
+    assert result.success is False
+    assert "вакансия недоступна" in result.reason
     assert result.acted is False  # #163: до submit — без паузы и записи
 
 

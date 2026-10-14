@@ -123,6 +123,20 @@ class _ClickTrackingLocator(_FakeLocator):
         super().click()
 
 
+class _BodyTextLocator:
+    """Локатор ``body`` с читаемым inner_text — для #1254 (состояние страницы).
+
+    Реальный Playwright возвращает отрисованный текст; фейк возвращает строку,
+    заданную странице (body_text). Больше методов helper'у не нужно.
+    """
+
+    def __init__(self, text: str):
+        self._text = text
+
+    def inner_text(self, *, timeout: float = 0) -> str:  # noqa: ARG002
+        return self._text
+
+
 class FakeProbePage:
     """Имитация Playwright Page для probe-пути. Отслеживает submit.click и дамп-методы."""
 
@@ -137,6 +151,7 @@ class FakeProbePage:
         resume_options: tuple[str, ...] = ("RID",),
         screenshot_error_from_call: int | None = None,
         ssr_letter_required: bool = True,
+        body_text: str = "",
     ):
         self.ssr_letter_required = ssr_letter_required
         # Дефолты моделируют ЖИВУЮ форму: `resume-title` присутствует всегда —
@@ -154,6 +169,7 @@ class FakeProbePage:
         self._screenshot_error_from_call = screenshot_error_from_call
         self._resume_select = resume_select
         self._resume_options = resume_options
+        self._body_text = body_text
         self.goto_calls: list[str] = []
         self.screenshot_calls = 0
         self.content_calls = 0
@@ -208,6 +224,9 @@ class FakeProbePage:
         # удалён из dedup, поэтому здесь нет ветки для него. probe не блокируется
         # дедупом (он идёт через history до apply_to_vacancy, а probe — диагностический
         # режим на конкретной вакансии).
+        if selector == "body":
+            # #1254: helper vacancy_unavailable_reason читает отрисованный текст.
+            return _BodyTextLocator(self._body_text)
         if selector == vacancy_page.VACANCY_APPLY_BUTTON:
             return _FakeLocator(present=self._apply_button)
         if selector == apply_form.APPLY_COVER_LETTER_TEXTAREA:
@@ -441,13 +460,66 @@ def test_probe_success_dump_stays_strict(tmp_path: Path):
 
 
 def test_probe_no_apply_button_fails(tmp_path: Path):
-    page = FakeProbePage(apply_button=False)
+    """Без подтверждённого состояния страницы вердикт прежний, но дамп есть.
+
+    #1254: отсутствие кнопки само по себе — не диагноз. Если страница не
+    подтверждена как 404/ошибка, остаётся прежняя причина «кнопка отклика не
+    найдена», однако probe теперь оставляет артефакт (что было на странице) —
+    раньше этот путь не писал ничего.
+    """
+    page = FakeProbePage(apply_button=False, body_text="Обычная страница без маркеров ошибки")
 
     result = probe_vacancy(page, _vacancy(), "RID", "x", tmp_path)
 
     assert result.success is False
     assert "кнопка отклика не найдена" in result.reason
-    assert page.screenshot_calls == 0
+    assert "вакансия недоступна" not in result.reason
+    # Дамп на fail-пути написан (best-effort), файлы различимы по стадии.
+    assert page.screenshot_calls == 1
+    assert (tmp_path / "probe_42_no_apply_button.html").exists()
+
+
+def test_probe_unavailable_page_reports_honest_reason_with_dump(tmp_path: Path):
+    """#1254: 404-страница — честная причина «вакансия недоступна» + дамп.
+
+    Раньше probe на несуществующей вакансии печатал синтетический диагноз
+    «кнопка отклика не найдена» (словно дрейф селектора) и не писал дамп.
+    Маркер недоступности читается из ОТРИСОВАННОГО inner_text (census-правило),
+    а не из сырого HTML.
+    """
+    page = FakeProbePage(
+        apply_button=False,
+        body_text="Вакансия\nне найдена  Возможно, она была удалена или архивирована",
+    )
+
+    result = probe_vacancy(page, _vacancy(), "RID", "x", tmp_path)
+
+    assert result.success is False
+    assert "вакансия недоступна" in result.reason
+    assert "кнопка отклика не найдена" not in result.reason
+    # Артефакт написан: владелец видит, что было на странице.
+    assert page.screenshot_calls == 1
+    assert (tmp_path / "probe_42_no_apply_button.html").exists()
+
+
+def test_probe_no_internal_placeholder_in_user_log(tmp_path: Path, caplog):
+    """#1259: внутренний плейсхолдер не попадает в пользовательский лог.
+
+    При адресации по --vacancy-id название ещё неизвестно (title пуст) —
+    лог-строка открытия печатает только URL, никаких «(probe target #N)».
+    """
+    import logging
+
+    untitled = VacancyCard(vacancy_id="42", title="", company="", url="https://hh.ru/vacancy/42")
+    page = FakeProbePage(apply_button=False, body_text="Вакансия не найдена")
+
+    with caplog.at_level(logging.INFO, logger="hhru_bot.apply.probe"):
+        result = probe_vacancy(page, untitled, "RID", "x", tmp_path)
+
+    assert "вакансия недоступна" in result.reason
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert "(probe target" not in logged
+    assert "[PROBE] Открываю вакансию: https://hh.ru/vacancy/42" in logged
 
 
 def test_probe_indeterminate_saves_partial_dump(tmp_path: Path):
