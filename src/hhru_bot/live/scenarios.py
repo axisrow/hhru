@@ -949,7 +949,7 @@ def apply_via_live(
         reason = "success: маркер отправки подтверждён в живой вкладке"
         if panel_still_open:
             reason += (
-                "; панель пикера осталась открытой (синтетический клик минуует hit-testing — #1249)"
+                "; панель пикера осталась открытой (синтетический клик минует hit-testing — #1249)"
             )
         return _result(True, reason, acted=True)
     return _grey_zone(
