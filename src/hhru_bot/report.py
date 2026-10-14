@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import csv
 import io
+import unicodedata
 from collections.abc import Iterable
 
 SUPPORTED_FORMATS = ("table", "csv", "md")
@@ -165,6 +166,29 @@ def format_actions(rows: Iterable[dict], fmt: str) -> str:
 # --- ASCII-таблица ----------------------------------------------------------
 
 
+def display_width(text: str) -> int:
+    """Отображаемая ширина строки в терминале (#1255).
+
+    combining-символы (ё = е+U+0308) не занимают колонку, East Asian
+    Wide/Fullwidth (эмодзи hh.ru, CJK) занимают две, остальное — одну.
+    ponytail: ZWJ-последовательности (семьи-эмодзи) считаются по частям —
+    без стороннего wcwidth точнее нельзя, для данных hh.ru достаточно.
+    """
+    return sum(
+        0
+        if unicodedata.combining(ch)
+        else 2
+        if unicodedata.east_asian_width(ch) in ("W", "F")
+        else 1
+        for ch in text
+    )
+
+
+def pad(text: str, width: int) -> str:
+    """Дополнить строку пробелами до заданной display-ширины."""
+    return text + " " * max(0, width - display_width(text))
+
+
 def _ascii_table(header: list[str], rows: list[list[str]], footer: list[str] | None = None) -> str:
     """Простая ASCII-таблица с рамкой +---+. footer (если есть) — итоговая строка
     без попадания в основное тело. Пустое тело всё равно рисует шапку."""
@@ -175,14 +199,14 @@ def _ascii_table(header: list[str], rows: list[list[str]], footer: list[str] | N
     widths = [0] * n_cols
     for r in all_rows:
         for i, cell in enumerate(r):
-            widths[i] = max(widths[i], len(cell))
+            widths[i] = max(widths[i], display_width(cell))
 
     def border() -> str:
         return "+" + "+".join("-" * (w + 2) for w in widths) + "+"
 
     def line(r: list[str]) -> str:
         cells = [
-            str(r[i]).ljust(widths[i]) if i < len(r) else " " * widths[i] for i in range(n_cols)
+            pad(str(r[i]), widths[i]) if i < len(r) else " " * widths[i] for i in range(n_cols)
         ]
         return "| " + " | ".join(cells) + " |"
 
