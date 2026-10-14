@@ -459,7 +459,7 @@ Write-команды (`apply`/`bump`/`run`/...) сначала `--dry-run`, по
 
 ### `adaptive-report`
 
-- `--format` — ASCII-таблица (по умолчанию: 'table')
+- `--format` — Формат вывода: table (по умолчанию: 'table')
 
 ### `adaptive-resume`
 
@@ -482,6 +482,14 @@ Write-команды (`apply`/`bump`/`run`/...) сначала `--dry-run`, по
 - `--approved ID` — Отправить ровно approved-запись review-очереди
 - `--permit` — Одноразовый permit из `review approve`
 - `--vacancy-id` — Точечный отклик: открыть вакансию по id напрямую, минуя поиск (#1085)
+
+### `apply-live`
+
+- `--resume` — Slug из конфига или resume_id HH.ru (по умолчанию — все)
+- `--dry-run` — Показать, что будет сделано, без реальных действий
+- `--max-pages MAX_PAGES` — Явный максимум страниц поиска (по умолчанию — адаптивный)
+- `--vacancy` — Вакансия-цель: URL страницы вакансии или числовой ID
+- `--port PORT` — Порт канала на 127.0.0.1 (расширение слушает 8765) (по умолчанию: 8765)
 
 ### `areas`
 
@@ -739,7 +747,7 @@ READ hh.ru: competitors collect --text QUERY [--search-in SCOPE] [--max-pages N]
 Без --language: LLM только предлагает языки (уровень CEFR не угадывается и не пишется на hh.ru). С --language NAME=CEFR: записывает явно подтверждённые языки. Раздел 'Языки' общий для всего профиля hh.ru: запись применяется ко всем резюме аккаунта, а не только к --resume.
 
 - `--resume` — Slug из конфига или resume_id HH.ru — используется только для выбора аккаунт-сессии; языки общие для всего профиля
-- `--mode` —  (по умолчанию: 'append')
+- `--mode` — fresh — пересоздать список, append — дополнить (по умолчанию: 'append')
 - `--language` — Добавить язык вручную; CEFR: A1, A2, B1, B2, C1 или C2 (можно повторять)
 - `--dry-run` — Показать план без записи (только с --language; без него запись не идёт всегда)
 - `--force` — Подтвердить WRITE без prompt (только с --language)
@@ -749,7 +757,7 @@ READ hh.ru: competitors collect --text QUERY [--search-in SCOPE] [--max-pages N]
 Предлагает навыки с уровнями и, после явного подтверждения, добавляет их в inline-форму hh.ru. Без --dry-run боевой запуск требует --force или TTY-подтверждение.
 
 - `--resume` — Slug из конфига или реальный resume_id HH.ru (#319)
-- `--mode` —  (по умолчанию: 'append')
+- `--mode` — fresh — пересоздать список, append — дополнить (по умолчанию: 'append')
 - `--skill` — Добавить навык вручную; LEVEL: basic, intermediate или advanced (можно повторять)
 - `--dry-run` — Показать план и отменить форму без сохранения
 - `--force` — Подтвердить WRITE без интерактивного вопроса
@@ -805,6 +813,12 @@ READ hh.ru: competitors collect --text QUERY [--search-in SCOPE] [--max-pages N]
 - `--status` — Дополнительно: можно ли поднять (кулдаун) и дата последнего поднятия
 - `--local` — Без похода на hh.ru: только записи config.yaml (overlay настроек)
 
+### `live-browser`
+
+- `--profile-dir PROFILE_DIR` — Каталог профиля браузера (user-data-dir); по умолчанию data/extension-profile (по умолчанию: PosixPath('data/extension-profile'))
+- `--headless` — Без окна (расширение работает и в новом headless)
+- `--url` — Стартовая вкладка (по умолчанию https://hh.ru/applicant/resumes) (по умолчанию: 'https://hh.ru/applicant/resumes')
+
 ### `live-doctor`
 
 - `--port PORT` — Порт сервера на 127.0.0.1 (по умолчанию 8765 — единственный, к которому расширение подключается само) (по умолчанию: 8765)
@@ -844,6 +858,11 @@ READ hh.ru: competitors collect --text QUERY [--search-in SCOPE] [--max-pages N]
 ### `market`
 
 - `--estimates` — Достроить медиану эвристическими оценками ЗП для вакансий без указанной (помечаются ~). По умолчанию только реальные ЗП
+
+### `overlay-census`
+
+- `--port PORT` — Порт сервера на 127.0.0.1 (по умолчанию 8765 — единственный, к которому расширение подключается само) (по умолчанию: 8765)
+- `--wait-seconds WAIT_SECONDS` — Сколько секунд ждать подключения расширения (по умолчанию: 10.0)
 
 ### `probe`
 
@@ -1111,7 +1130,7 @@ Account-wide ответы в чатах: план из локальной ист
 
 ### `robot-queue`
 
-- `--limit LIMIT` —  (по умолчанию: 50)
+- `--limit LIMIT` — Сколько строк очереди вывести (по умолчанию: 50)
 
 ### `robot-reply`
 
@@ -1167,7 +1186,7 @@ Account-wide ответы в чатах: план из локальной ист
 
 ### `session-seed`
 
-Переносит сессию hh.ru файлом: читает storage_state аккаунта (--account как у остальных команд) и сеет куки в указанный каталог профиля браузера (user-data-dir) через launch_persistent_context + add_cookies. Без единого запроса к hh.ru — интерактивный login это не заменяет (#1195). Без hhtoken в storage_state профиль не мутируется (fail-closed, как import-cookies).
+Переносит сессию hh.ru файлом: читает storage_state аккаунта (--account как у остальных команд) и сеет куки в указанный каталог профиля браузера (user-data-dir) через launch_persistent_context + add_cookies. Без единого запроса к hh.ru — интерактивный login это не заменяет (#1195). Без hhtoken в storage_state профиль не мутируется (fail-closed, как import-cookies). ВАЖНО (#1206): hh.ru привязывает токен к отпечатку клиента — посев в браузер с другим отпечатком может быть отвергнут сервером (анонимный session-hhtoken взамен); для целевого браузера надёжнее одноразовый вход в нём же.
 
 - `<PROFILE_DIR>` — Каталог профиля браузера (user-data-dir); создаётся при отсутствии (обязательный)
 
@@ -1207,7 +1226,7 @@ Account-wide ответы в чатах: план из локальной ист
 
 #### `uncertain list`
 
-- `--limit LIMIT` (по умолчанию: 50)
+- `--limit LIMIT` — Сколько строк вывести (по умолчанию: 50)
 
 #### `uncertain reconcile`
 

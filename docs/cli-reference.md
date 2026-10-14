@@ -53,7 +53,7 @@
 
 ### `adaptive-report`
 
-- `--format` — ASCII-таблица (по умолчанию: 'table')
+- `--format` — Формат вывода: table (по умолчанию: 'table')
 
 ### `adaptive-resume`
 
@@ -341,7 +341,7 @@ READ hh.ru: competitors collect --text QUERY [--search-in SCOPE] [--max-pages N]
 Без --language: LLM только предлагает языки (уровень CEFR не угадывается и не пишется на hh.ru). С --language NAME=CEFR: записывает явно подтверждённые языки. Раздел 'Языки' общий для всего профиля hh.ru: запись применяется ко всем резюме аккаунта, а не только к --resume.
 
 - `--resume` — Slug из конфига или resume_id HH.ru — используется только для выбора аккаунт-сессии; языки общие для всего профиля
-- `--mode` —  (по умолчанию: 'append')
+- `--mode` — fresh — пересоздать список, append — дополнить (по умолчанию: 'append')
 - `--language` — Добавить язык вручную; CEFR: A1, A2, B1, B2, C1 или C2 (можно повторять)
 - `--dry-run` — Показать план без записи (только с --language; без него запись не идёт всегда)
 - `--force` — Подтвердить WRITE без prompt (только с --language)
@@ -351,7 +351,7 @@ READ hh.ru: competitors collect --text QUERY [--search-in SCOPE] [--max-pages N]
 Предлагает навыки с уровнями и, после явного подтверждения, добавляет их в inline-форму hh.ru. Без --dry-run боевой запуск требует --force или TTY-подтверждение.
 
 - `--resume` — Slug из конфига или реальный resume_id HH.ru (#319)
-- `--mode` —  (по умолчанию: 'append')
+- `--mode` — fresh — пересоздать список, append — дополнить (по умолчанию: 'append')
 - `--skill` — Добавить навык вручную; LEVEL: basic, intermediate или advanced (можно повторять)
 - `--dry-run` — Показать план и отменить форму без сохранения
 - `--force` — Подтвердить WRITE без интерактивного вопроса
@@ -724,7 +724,7 @@ Account-wide ответы в чатах: план из локальной ист
 
 ### `robot-queue`
 
-- `--limit LIMIT` —  (по умолчанию: 50)
+- `--limit LIMIT` — Сколько строк очереди вывести (по умолчанию: 50)
 
 ### `robot-reply`
 
@@ -820,7 +820,7 @@ Account-wide ответы в чатах: план из локальной ист
 
 #### `uncertain list`
 
-- `--limit LIMIT` (по умолчанию: 50)
+- `--limit LIMIT` — Сколько строк вывести (по умолчанию: 50)
 
 #### `uncertain reconcile`
 

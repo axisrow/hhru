@@ -5,7 +5,7 @@ from __future__ import annotations
 
 def register(subparsers) -> None:
     parser = subparsers.add_parser("robot-queue", help="Показать диалоги с анкетами-роботами")
-    parser.add_argument("--limit", type=int, default=50)
+    parser.add_argument("--limit", type=int, default=50, help="Сколько строк очереди вывести")
     parser.set_defaults(func=run)
 
 

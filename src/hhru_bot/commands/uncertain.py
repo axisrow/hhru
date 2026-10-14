@@ -9,7 +9,7 @@ def register(subparsers) -> None:
     p = subparsers.add_parser("uncertain", help="Очередь неподтверждённых действий")
     sub = p.add_subparsers(dest="uncertain_command", required=True)
     listing = sub.add_parser("list", help="Показать unresolved записи")
-    listing.add_argument("--limit", type=int, default=50)
+    listing.add_argument("--limit", type=int, default=50, help="Сколько строк вывести")
     listing.set_defaults(func=list_run)
     inspect = sub.add_parser("inspect", help="Открыть evidence и план readback")
     inspect.add_argument("id", type=int)
