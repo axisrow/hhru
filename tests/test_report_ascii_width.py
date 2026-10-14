@@ -29,6 +29,12 @@ def test_display_width():
     assert display_width("е́") == 1
     # Флаг — два региональных индикатора, 2 колонки.
     assert display_width("🇬🇧") == 2
+    # VS16 форсирует emoji-презентацию: ❤️ = U+2764 U+FE0F рендерится в 2,
+    # а U+2764 без VS16 — текстовая презентация в 1 (#1264 review).
+    assert display_width("❤️") == 2
+    assert display_width("❤") == 1
+    # Zero-width joiner/пробелы — 0 колонок.
+    assert display_width("a‍b") == 2
 
 
 def test_pad_by_display_width():

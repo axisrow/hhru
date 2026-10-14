@@ -165,23 +165,32 @@ def format_actions(rows: Iterable[dict], fmt: str) -> str:
 
 # --- ASCII-таблица ----------------------------------------------------------
 
+# Zero-width кодпоинты с EAW=N и ccc=0 (#1264 review): вариационные селекторы
+# (❤️ = U+2764 U+FE0F рендерится в 2 колонки, а не 3) и zero-width
+# пробел/joiner'ы.
+_ZERO_WIDTH = frozenset(("​", "‌", "‍", "︎", "️"))
+
 
 def display_width(text: str) -> int:
     """Отображаемая ширина строки в терминале (#1255).
 
-    combining-символы (ё = е+U+0308) не занимают колонку, East Asian
-    Wide/Fullwidth (эмодзи hh.ru, CJK) занимают две, остальное — одну.
-    ponytail: ZWJ-последовательности (семьи-эмодзи) считаются по частям —
-    без стороннего wcwidth точнее нельзя, для данных hh.ru достаточно.
+    combining-символы (ё = е+U+0308) и zero-width кодпоинты (VS15/VS16,
+    ZWJ) не занимают колонку, East Asian Wide/Fullwidth (эмодзи hh.ru,
+    CJK) занимают две, остальное — одну. VS16 (U+FE0F) форсирует
+    emoji-презентацию предыдущего символа — терминал рисует её в 2
+    колонки, хотя его EAW=N (❤️ = U+2764 U+FE0F → 2, а не 1 и не 3).
+    ponytail: сегментация грифемы недостижима без wcwidth, поэтому
+    ZWJ-семьи (мужчина+женщина+ребёнок) считаются по частям; VS15/VS16
+    и одиночные эмодзи с этим точны.
     """
-    return sum(
-        0
-        if unicodedata.combining(ch)
-        else 2
-        if unicodedata.east_asian_width(ch) in ("W", "F")
-        else 1
-        for ch in text
-    )
+    widths: list[int] = []
+    for ch in text:
+        if unicodedata.combining(ch) or ch in _ZERO_WIDTH:
+            if ch == "️" and widths and widths[-1] == 1:
+                widths[-1] = 2  # emoji-презентация предыдущего символа
+            continue
+        widths.append(2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1)
+    return sum(widths)
 
 
 def pad(text: str, width: int) -> str:
