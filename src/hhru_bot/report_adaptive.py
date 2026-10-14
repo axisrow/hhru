@@ -6,9 +6,7 @@ from .report import _ascii_table
 def format_adaptive(metrics) -> str:
     rows = []
     for metric in metrics:
-        median_score = (
-            "insufficient data" if metric.median_score is None else f"{metric.median_score:.1f}"
-        )
+        median_score = "нет данных" if metric.median_score is None else f"{metric.median_score:.1f}"
         win_rate = "-" if metric.win_rate is None else f"{metric.win_rate * 100:.1f}%"
         rows.append(
             [
@@ -26,7 +24,7 @@ def format_adaptive(metrics) -> str:
         [
             "Резюме",
             "Кластер",
-            "N score",
+            "Оценок (N)",
             "Медиана",
             "Победа над универсальным",
             "Отклики",
@@ -41,7 +39,7 @@ def success_statement(metrics) -> str:
     comparisons = sum(m.comparisons for m in metrics)
     wins = sum(m.wins for m in metrics)
     if not comparisons:
-        return "[INFO] insufficient data: нет сопоставимых score универсального и пула"
+        return "[INFO] нет данных: нет сопоставимых score универсального и пула"
     rate = wins / comparisons
     prefix = "[OK]" if rate > 0.5 else "[INFO]"
     return (

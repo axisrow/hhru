@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from hhru_bot.adaptive_metrics import build_adaptive_metrics
-from hhru_bot.report_adaptive import success_statement
+from hhru_bot.report_adaptive import format_adaptive, success_statement
 
 pytestmark = pytest.mark.unit
 
@@ -41,7 +41,7 @@ def test_pool_wins_against_universal_and_counts_read_only_facts():
     assert pool.applies == pool.successful_applies == pool.invitations == pool.views == 1
 
 
-def test_no_scores_are_reported_as_insufficient_data():
+def test_no_scores_are_reported_as_no_data_in_russian():
     resumes = [resume("universal", ["Excel"]), resume("backend", ["Django"], "python_backend")]
     metrics = build_adaptive_metrics(
         resumes,
@@ -49,6 +49,14 @@ def test_no_scores_are_reported_as_insufficient_data():
     )
     assert all(metric.median_score is None for metric in metrics)
     assert all(metric.win_rate is None for metric in metrics)
+    # #1261: пользовательский вывод адаптивного отчёта — только русский.
+    table = format_adaptive(metrics)
+    assert "Оценок (N)" in table
+    assert "нет данных" in table
+    assert "insufficient data" not in table
+    statement = success_statement(metrics)
+    assert statement.startswith("[INFO] нет данных:")
+    assert "insufficient data" not in statement
 
 
 def test_below_threshold_is_not_reported_as_success():
