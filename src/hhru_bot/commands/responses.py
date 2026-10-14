@@ -18,6 +18,7 @@ import argparse
 import sys
 
 from ..exit_codes import CommandExitCode
+from ..report import display_width, pad
 
 # Backstop адаптивного --max-pages (#1148). Радиус — ВСЯ команда responses,
 # не только read-only просмотр (раскладка по режимам — ниже). Конец списка
@@ -186,13 +187,13 @@ def _print_responses_table(rows: list[dict], title: str) -> None:
         body.append((vac, emp, st, date, changed))
 
     cols = list(zip(headers, *body, strict=False))
-    widths = [max(len(str(c)) for c in col) for col in cols]
+    widths = [max(display_width(str(c)) for c in col) for col in cols]
 
     def border() -> str:
         return "+" + "+".join("-" * (w + 2) for w in widths) + "+"
 
     def line(cells) -> str:
-        return "| " + " | ".join(str(c).ljust(widths[i]) for i, c in enumerate(cells)) + " |"
+        return "| " + " | ".join(pad(str(c), widths[i]) for i, c in enumerate(cells)) + " |"
 
     print(border())
     print(line(headers))

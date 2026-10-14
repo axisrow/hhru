@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import sys
 
+from ..report import display_width, pad
+
 URL = "https://hh.ru/applicant/resumeview/history"
 
 
@@ -25,13 +27,16 @@ def register(subparsers) -> None:
 def _table(rows: list[dict]) -> None:
     headers = ("Дата", "Работодатель", "Резюме")
     body = [(r["viewed_at"], r.get("employer") or "(скрыт)", r["resume_id"]) for r in rows]
-    widths = [max([len(h)] + [len(str(x[i])) for x in body]) for i, h in enumerate(headers)]
+    widths = [
+        max([display_width(h)] + [display_width(str(x[i])) for x in body])
+        for i, h in enumerate(headers)
+    ]
     border = "+" + "+".join("-" * (w + 2) for w in widths) + "+"
     print(border)
-    print("| " + " | ".join(h.ljust(widths[i]) for i, h in enumerate(headers)) + " |")
+    print("| " + " | ".join(pad(h, widths[i]) for i, h in enumerate(headers)) + " |")
     print(border)
     for row in body:
-        print("| " + " | ".join(str(x).ljust(widths[i]) for i, x in enumerate(row)) + " |")
+        print("| " + " | ".join(pad(str(x), widths[i]) for i, x in enumerate(row)) + " |")
     print(border)
 
 
