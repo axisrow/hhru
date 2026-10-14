@@ -12,6 +12,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 
 from hhru_bot.commands import areas as areas_cmd
 
@@ -29,18 +30,21 @@ class _Response:
 
 
 class _Request:
-    def __init__(self, response: _Response) -> None:
+    def __init__(self, response: _Response, error: Exception | None = None) -> None:
         self._response = response
+        self._error = error
         self.calls: list[str] = []
 
     def get(self, url: str) -> _Response:
         self.calls.append(url)
+        if self._error is not None:
+            raise self._error
         return self._response
 
 
 class _Context:
-    def __init__(self, response: _Response) -> None:
-        self.request = _Request(response)
+    def __init__(self, response: _Response, error: Exception | None = None) -> None:
+        self.request = _Request(response, error)
 
     def __enter__(self) -> _Context:
         return self
@@ -142,10 +146,15 @@ def _tree_json() -> str:
 
 
 def _patch_browser(
-    monkeypatch, *, ok: bool = True, status: int = 200, text: str | None = None
+    monkeypatch,
+    *,
+    ok: bool = True,
+    status: int = 200,
+    text: str | None = None,
+    error: Exception | None = None,
 ) -> _Context:
     body = _tree_json() if text is None else text
-    context = _Context(_Response(ok=ok, status=status, text=body))
+    context = _Context(_Response(ok=ok, status=status, text=body), error)
     monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **kw: context)
     monkeypatch.setattr(
         "hhru_bot.config.load_config_or_exit",
@@ -254,4 +263,26 @@ def test_run_malformed_tree_prints_fail(monkeypatch, capsys) -> None:
     assert areas_cmd.run(_args("Казань")) is True
     out, err = capsys.readouterr()
     assert "[FAIL]" in out
+    assert err == ""
+
+
+def test_run_network_error_prints_fail_no_traceback(monkeypatch, capsys) -> None:
+    """#1253: таймаут тела при 200 OK уходил сырым traceback'ом вместо [FAIL].
+    Сообщение PlaywrightError многострочно (Call log) — [FAIL] схлопывается
+    в одну строку и усекается, исключение не прорывается наружу."""
+    error = PlaywrightError(
+        "APIRequestContext.get: Timeout 30000ms exceeded.\n"
+        "Call log:\n"
+        "  - → GET https://api.hh.ru/areas\n"
+        "  - ← 200 OK"
+    )
+    _patch_browser(monkeypatch, error=error)
+    assert areas_cmd.run(_args("Казань")) is True
+    out, err = capsys.readouterr()
+    fail_lines = [line for line in out.splitlines() if line.startswith("[FAIL]")]
+    assert fail_lines == [
+        "[FAIL] GET https://api.hh.ru/areas: APIRequestContext.get: "
+        "Timeout 30000ms exceeded. Call log: - → GET https://api.hh.ru/areas - ← 200 OK"
+    ]
+    assert "Traceback" not in out
     assert err == ""
