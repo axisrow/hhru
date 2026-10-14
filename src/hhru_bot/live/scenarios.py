@@ -362,6 +362,25 @@ def apply_via_live(
         except ChannelError as exc:
             raise _ScenarioInterrupted(f"канал: {exc}") from exc
 
+    def _click_relocation_confirm(wait_for: dict) -> tuple[bool, bool]:
+        """Клик confirm попапа переезда; возвращает (clicked, met).
+
+        Отличается от _click тем, что НЕ сливает факты: пометка мутации #1135
+        вешается по ДОСТАВЛЕННОМУ клику (CLI-зеркало: on_relocation_confirmed
+        сразу после _close_specific, до проверок формы), пост-wait формы —
+        отдельный факт: форма после подтверждения может не отрисоваться,
+        срабатывание попапа обязано остаться видимым в reason любого исхода.
+        """
+        try:
+            result = channel.click(VACANCY_RELOCATION_CONFIRM, wait_for=wait_for, allow_apply=True)
+        except PrimitiveError as exc:
+            if exc.forwarded:
+                raise _ScenarioInterrupted(f"клик отправлен, исход неопределён ({exc})") from exc
+            raise _RefusedBeforeAction(f"{exc}") from exc
+        except ChannelError as exc:
+            raise _ScenarioInterrupted(f"канал: {exc}") from exc
+        return bool(result.get("clicked")), bool((result.get("wait") or {}).get("met"))
+
     def _read(selector: str) -> dict:
         try:
             return channel.check(selector)
@@ -518,9 +537,15 @@ def apply_via_live(
                 uncertain=True,
             )
         if getattr(verdict, "found", False):
+            # Инвариант #1135 «мутация профиля видима в actions.reason» — на
+            # ОБЕХ success-точках, как CLI-зеркало (_finalize_blocker и
+            # _finalize_post_click_failure): found-реконсиляция после
+            # кликнутого confirm без пометки сделала бы срабатывание
+            # невидимым в статистике/аудите.
             return _result(
                 True,
-                f"внешняя сверка подтвердила отклик в /applicant/negotiations ({verdict.detail})",
+                f"внешняя сверка подтвердила отклик в /applicant/negotiations ({verdict.detail})"
+                + ("; попап переезда подтверждён кликом (#1135)" if relocation_confirmed else ""),
                 acted=True,
             )
         if getattr(verdict, "indeterminate", False):
@@ -811,21 +836,28 @@ def apply_via_live(
                         uncertain=True,
                         skip_reason=SKIP_REASONS.RELOCATION_NOT_ALLOWED,
                     )
-                if not _click(
-                    VACANCY_RELOCATION_CONFIRM,
+                clicked, met = _click_relocation_confirm(
                     {
                         "selector": page_form_marker,
                         "state": WAIT_STATE_VISIBLE,
                         "timeoutMs": PAGE_FORM_WAIT_TIMEOUT_MS,
                     },
-                ):
+                )
+                # Мутация профиля — сам доставленный клик: пометка #1135
+                # вешается ДО любых последующих проверок и доходит до reason
+                # любого исхода, включая found-реконсиляцию серой зоны
+                # (инвариант видимости срабатываний, CLI: обе success-точки).
+                relocation_confirmed = clicked
+                if not met:
+                    # Подтверждение — клик со своим ре-рендером: строгие
+                    # проверки по неотстоявшемуся DOM не продолжаются
+                    # (CLAUDE.md п.4, тот же комментарий в CLI-блокере) —
+                    # серая зона, решает внешний verify.
                     return _grey_zone(
-                        "попап переезда подтверждён кликом (#1135), но форма после "
-                        "него не отрисовалась",
+                        "форма отклика не отрисовалась после подтверждения попапа переезда",
                         acted=True,
                         uncertain=True,
                     )
-                relocation_confirmed = True
 
         # --- форма открыта: анкеты → skip в очередь (#482), канал не отвечает -
         questions = _read(str(APPLY_QUESTION_BODY))

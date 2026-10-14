@@ -1018,7 +1018,29 @@ def test_relocation_confirm_click_without_form_after_is_grey_zone() -> None:
 
     assert channel.relocation_confirm_clicked
     assert (result.success, result.acted, result.uncertain) == (False, True, False)
-    assert "форма после него не отрисовалась" in result.reason
+    assert "не отрисовалась после подтверждения попапа переезда" in result.reason
+
+
+def test_relocation_confirm_found_verify_carries_suffix() -> None:
+    # Инвариант #1135 на found-реконсиляции (CLI: суффикс на ОБЕХ
+    # success-точках, _finalize_blocker и _finalize_post_click_failure):
+    # confirm кликнут, форма после него не отрисовалась, внешний verify
+    # нашёл отклик — success-reason обязан нести пометку о подтверждённом
+    # попапе, иначе срабатывание при включённом флаге невидимо в аудите.
+    channel = FakeFormChannel(
+        modal_after_click=False,
+        page_form=False,
+        relocation_overlay_after_click=True,
+        picker_present=False,
+        toggle_present=False,
+        textarea_after_click=False,
+    )
+    result = _run(channel, verify=_verify_of("found"), allow_relocation=True)
+
+    assert channel.relocation_confirm_clicked
+    assert (result.success, result.acted, result.uncertain) == (True, True, False)
+    assert "внешняя сверка подтвердила отклик" in result.reason
+    assert "попап переезда подтверждён кликом (#1135)" in result.reason
 
 
 def test_relocation_confirm_policy_refusal_keeps_site_verdict() -> None:
