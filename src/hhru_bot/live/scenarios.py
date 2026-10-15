@@ -33,6 +33,7 @@ from .modal_registry import (
     ACTION_UNKNOWN,
     GEO_REGION_MODAL,
     MODAL_REGISTRY,
+    RELOCATION_MODAL,
     VISIBILITY_MODAL,
     ModalRecord,
     match_census_text,
@@ -260,17 +261,22 @@ def apply_via_live(
     verify=None,
     before_submit=None,
     require_resume_select: bool = True,
+    allow_relocation: bool = False,
 ):
     """Отклик на вакансию через живую вкладку (#1162): зеркало боевого пути.
 
     Каждый шаг pipeline.py (#207/#1099/#176) превращён в примитив канала,
-    вердикты те же. Анкеты не отвечаются (вопросы — в очередь, вакансия skip);
-    relocation-попап не подтверждается (форма не отрисуется → серая зона →
-    честный not_found). ``verify`` — внешний источник серой зоны #207:
-    found → success, not_found → вердикт сайта, не прочитан → uncertain+acted;
-    отказ канала при submit — uncertain+acted (#176). Dry-run останавливается
-    ДО клика по кнопке отклика: one-click shape через канал недоказуем
-    (stop-before-click fail-closed, #1099).
+    вердикты те же. Анкеты не отвечаются (вопросы — в очередь, вакансия skip).
+    Попап подтверждения переезда (#1251, симметрия CLI-пути #1135):
+    ``allow_relocation and not dry_run`` → клик relocation-warning-confirm
+    (мутация профиля, гейтится конфигом — решение владельца #1132) и форме
+    даётся второй бюджет ожидания; без флага — честный skip с census
+    (RELOCATION_NOT_ALLOWED), финализируемый внешней сверкой #207, как
+    post_navigation-блокер CLI-пути. ``verify`` — внешний источник серой зоны
+    #207: found → success, not_found → вердикт сайта, не прочитан →
+    uncertain+acted; отказ канала при submit — uncertain+acted (#176).
+    Dry-run останавливается ДО клика по кнопке отклика: one-click shape через
+    канал недоказуем (stop-before-click fail-closed, #1099).
     """
     from ..browser import LOGIN_FORM
     from ..config import is_resume_url_placeholder
@@ -291,6 +297,7 @@ def apply_via_live(
         VACANCY_ALREADY_RESPONDED_AGAIN,
         VACANCY_ALREADY_RESPONDED_CHAT,
         VACANCY_APPLY_BUTTON,
+        VACANCY_RELOCATION_CONFIRM,
     )
 
     resume_id = resume.resume_id
@@ -354,6 +361,25 @@ def apply_via_live(
             raise _RefusedBeforeAction(f"{exc}") from exc
         except ChannelError as exc:
             raise _ScenarioInterrupted(f"канал: {exc}") from exc
+
+    def _click_relocation_confirm(wait_for: dict) -> tuple[bool, bool]:
+        """Клик confirm попапа переезда; возвращает (clicked, met).
+
+        Отличается от _click тем, что НЕ сливает факты: пометка мутации #1135
+        вешается по ДОСТАВЛЕННОМУ клику (CLI-зеркало: on_relocation_confirmed
+        сразу после _close_specific, до проверок формы), пост-wait формы —
+        отдельный факт: форма после подтверждения может не отрисоваться,
+        срабатывание попапа обязано остаться видимым в reason любого исхода.
+        """
+        try:
+            result = channel.click(VACANCY_RELOCATION_CONFIRM, wait_for=wait_for, allow_apply=True)
+        except PrimitiveError as exc:
+            if exc.forwarded:
+                raise _ScenarioInterrupted(f"клик отправлен, исход неопределён ({exc})") from exc
+            raise _RefusedBeforeAction(f"{exc}") from exc
+        except ChannelError as exc:
+            raise _ScenarioInterrupted(f"канал: {exc}") from exc
+        return bool(result.get("clicked")), bool((result.get("wait") or {}).get("met"))
 
     def _read(selector: str) -> dict:
         try:
@@ -485,15 +511,21 @@ def apply_via_live(
             pass  # попытка сделана: решит перечитка warning'а, не классификация отказа
         return True
 
-    def _grey_zone(reason: str, *, acted: bool, uncertain: bool):
+    def _grey_zone(reason: str, *, acted: bool, uncertain: bool, skip_reason: str | None = None):
         """Финализация fail-исхода ПОСЛЕ клика по кнопке отклика (#207).
 
         found → success; not_found → вердикт сайта (uncertain снимается —
         список подтверждённо прочитан, отклик не ушёл); не прочитан/упал →
         uncertain+acted (#176). Словарь вердиктов боевого
-        _finalize_post_click_failure, ничего не расширяем.
+        _finalize_post_click_failure, ничего не расширяем. ``skip_reason`` —
+        терминальный skip вместо fail на ветке not_found (попап переезда
+        #1251: вакансия детерминированно блокирована для аккаунта — зеркало
+        skip-вердикта post_navigation-блокера CLI-пути, _finalize_blocker);
+        без верификатора CLI-путь отдаёт skip-вердикт блокера напрямую.
         """
         if verify is None:
+            if skip_reason is not None:
+                return _result(False, reason, skipped=True, skip_reason=skip_reason)
             return _result(False, reason, acted=acted, uncertain=uncertain)
         try:
             verdict = verify(vacancy_id, resume_id)
@@ -505,9 +537,15 @@ def apply_via_live(
                 uncertain=True,
             )
         if getattr(verdict, "found", False):
+            # Инвариант #1135 «мутация профиля видима в actions.reason» — на
+            # ОБЕХ success-точках, как CLI-зеркало (_finalize_blocker и
+            # _finalize_post_click_failure): found-реконсиляция после
+            # кликнутого confirm без пометки сделала бы срабатывание
+            # невидимым в статистике/аудите.
             return _result(
                 True,
-                f"внешняя сверка подтвердила отклик в /applicant/negotiations ({verdict.detail})",
+                f"внешняя сверка подтвердила отклик в /applicant/negotiations ({verdict.detail})"
+                + ("; попап переезда подтверждён кликом (#1135)" if relocation_confirmed else ""),
                 acted=True,
             )
         if getattr(verdict, "indeterminate", False):
@@ -516,6 +554,13 @@ def apply_via_live(
                 f"{reason}; внешняя проверка недоступна ({verdict.detail}) — исход неопределён",
                 acted=True,
                 uncertain=True,
+            )
+        if skip_reason is not None:
+            return _result(
+                False,
+                f"{reason}; внешняя проверка: отклика в /applicant/negotiations нет",
+                skipped=True,
+                skip_reason=skip_reason,
             )
         return _result(
             False,
@@ -545,7 +590,7 @@ def apply_via_live(
         extra = f" | +ещё {len(census) - len(shown)}" if len(census) > len(shown) else ""
         return "; оверлеи: " + " | ".join(shown) + extra
 
-    def _geo_dialog_detail() -> str:
+    def _geo_dialog_detail(overlays: list[dict] | None) -> str:
         """Census-строка гео-диалога региона, '' если его нет (#1226).
 
         Вердикт принял resolve_overlay_action (#1230): refuse записи
@@ -554,10 +599,26 @@ def apply_via_live(
         из ревью PR #1233 — тост с «Ваш регион» отказывать apply не может
         (прецедент #998). Здесь только имя блокера для reason.
         """
-        verdict = resolve_overlay_action(_overlays_best_effort())
+        verdict = resolve_overlay_action(overlays)
         if verdict.action == VERDICT_REFUSE and verdict.record is GEO_REGION_MODAL:
             # refuse-вердикт всегда несёт узел; пустая защита — хелпер только
             # называет блокер, аномалия не должна ронять сценарий.
+            if verdict.overlay is not None:
+                return _overlay_line(verdict.overlay, 200)
+        return ""
+
+    def _relocation_detail(overlays: list[dict] | None) -> str:
+        """Census-строка попапа подтверждения переезда, '' если его нет (#1251).
+
+        Тот же механизм refuse-вердикта (#1230), что у гео-диалога: запись
+        RELOCATION_MODAL — действие unknown (реестр мутацию confirm не
+        авторизует никогда), гейт type == "modal" отсекает тосты (#998).
+        Здесь только имя блокера для reason; решение — клик confirm при
+        ``allow_relocation`` или честный skip — принимает секция формы по
+        семантике CLI-пути (apply/blockers.handle_post_click_blockers).
+        """
+        verdict = resolve_overlay_action(overlays)
+        if verdict.action == VERDICT_REFUSE and verdict.record is RELOCATION_MODAL:
             if verdict.overlay is not None:
                 return _overlay_line(verdict.overlay, 200)
         return ""
@@ -609,6 +670,10 @@ def apply_via_live(
         return _result(False, "плейсхолдер resume_url в конфиге — укажите реальный URL")
 
     grey_zone = False  # True с момента клика по кнопке отклика (#207)
+    # Попап переезда подтверждён кликом (#1135): пометка в reason успеха —
+    # зеркало pipeline._relocation_confirmed_suffix (мутация профиля обязана
+    # быть видимой в actions.reason).
+    relocation_confirmed = False
     try:
         # --- гейты до клика: чтения, мутировать не могут ---------------------
         try:
@@ -639,7 +704,7 @@ def apply_via_live(
         # клик уйдёт в перехват — честный отказ без действия, вакансия
         # остаётся повторопригодной. Селектор кнопок не подтверждён — код
         # диалог не закрывает и не отвечает на него.
-        geo = _geo_dialog_detail()
+        geo = _geo_dialog_detail(_overlays_best_effort())
         if geo:
             return _result(
                 False,
@@ -686,7 +751,7 @@ def apply_via_live(
                 # потерян, вкладка осталась на canonical) — census называет
                 # блокер, вердикт тот же (решает verify #207), причина не
                 # транспортная догадка.
-                geo = _geo_dialog_detail()
+                geo = _geo_dialog_detail(_overlays_best_effort())
                 if geo:
                     return _grey_zone(
                         f"гео-диалог региона перехватил клик отклика ({geo})",
@@ -720,8 +785,8 @@ def apply_via_live(
             # может быть открыта при свёрнутом письме (textarea в DOM нет
             # вовсе, census: resume-title виден, task-body×2, textarea=0) —
             # ожидание одной textarea никогда не заканчивалось бы успехом.
-            # One-click/relocation не рендерят ни один из маркеров — прежняя
-            # серая зона сохранена.
+            # One-click не рендерит ни один из маркеров (relocation-попап
+            # адресуется отдельной веткой ниже) — прежняя серая зона сохранена.
             page_form_marker = ", ".join(
                 (
                     APPLY_COVER_LETTER_TEXTAREA,
@@ -735,18 +800,64 @@ def apply_via_live(
                 # прежний вердикт назывался догадкой «возможен one-click»,
                 # хотя реальный блокер назван в overlay census. Действие
                 # исполнено (клик ушёл) — серая зона, решает внешний verify.
-                geo = _geo_dialog_detail()
+                # Один снимок census на обе проверки блокеров; бюджет ожидания
+                # формы выше уже покрывает окно монтажа модалок 1,5–8 с
+                # (#1135): вердикт по нему — не вердикт по домонтировочному
+                # DOM (settled-механизм #1240 поднимет этот снимок до
+                # устойчивого без изменения потребителей).
+                census = _overlays_best_effort()
+                geo = _geo_dialog_detail(census)
                 if geo:
                     return _grey_zone(
                         f"гео-диалог региона перехватил клик отклика ({geo})",
                         acted=True,
                         uncertain=True,
                     )
-                return _grey_zone(
-                    "форма отклика не отрисовалась после клика (возможен one-click отклик)",
-                    acted=True,
-                    uncertain=True,
+                # Попап переезда ПОСЛЕ клика (#1251, симметрия CLI-пути #1135):
+                # монтируется вместо формы, canonical URL не меняет. С флагом
+                # (и не в dry-run — та точка в dry-run недостижима, останов
+                # выше; гейт зеркалит pipeline._run) кликаем подтверждение —
+                # МУТАЦИЯ профиля, решение владельца #1132 — и даём форме
+                # второй бюджет; без флага — честный skip с census, вакансия
+                # детерминированно блокирована для аккаунта (как CLI-путь,
+                # SKIP_REASONS.RELOCATION_NOT_ALLOWED), финализация — внешняя
+                # сверка #207, как у post_navigation-блокера CLI-пути.
+                relocation = _relocation_detail(census)
+                if not relocation:
+                    return _grey_zone(
+                        "форма отклика не отрисовалась после клика (возможен one-click отклик)",
+                        acted=True,
+                        uncertain=True,
+                    )
+                if not (allow_relocation and not dry_run):
+                    return _grey_zone(
+                        f"{RELOCATION_MODAL.reason} ({relocation})",
+                        acted=True,
+                        uncertain=True,
+                        skip_reason=SKIP_REASONS.RELOCATION_NOT_ALLOWED,
+                    )
+                clicked, met = _click_relocation_confirm(
+                    {
+                        "selector": page_form_marker,
+                        "state": WAIT_STATE_VISIBLE,
+                        "timeoutMs": PAGE_FORM_WAIT_TIMEOUT_MS,
+                    },
                 )
+                # Мутация профиля — сам доставленный клик: пометка #1135
+                # вешается ДО любых последующих проверок и доходит до reason
+                # любого исхода, включая found-реконсиляцию серой зоны
+                # (инвариант видимости срабатываний, CLI: обе success-точки).
+                relocation_confirmed = clicked
+                if not met:
+                    # Подтверждение — клик со своим ре-рендером: строгие
+                    # проверки по неотстоявшемуся DOM не продолжаются
+                    # (CLAUDE.md п.4, тот же комментарий в CLI-блокере) —
+                    # серая зона, решает внешний verify.
+                    return _grey_zone(
+                        "форма отклика не отрисовалась после подтверждения попапа переезда",
+                        acted=True,
+                        uncertain=True,
+                    )
 
         # --- форма открыта: анкеты → skip в очередь (#482), канал не отвечает -
         questions = _read(str(APPLY_QUESTION_BODY))
@@ -962,6 +1073,8 @@ def apply_via_live(
             reason += (
                 "; панель пикера осталась открытой (синтетический клик минует hit-testing — #1249)"
             )
+        if relocation_confirmed:
+            reason += "; попап переезда подтверждён кликом (#1135)"
         return _result(True, reason, acted=True)
     grey_reason = "маркер успешной отправки не подтвердился за бюджет"
     if panel_still_open:

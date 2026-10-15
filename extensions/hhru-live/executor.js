@@ -27,7 +27,10 @@
 // An ambiguous-overlay ancestor refuses too — EXCEPT the picker-drop case
 // (#1220): allowApply + ambiguous + a visible apply_step overlay on the page
 // (the response form is open) is the apply flow's own floating UI (context
-// 'apply_flow_picker_overlay'). Stage-1 auto-dismiss semantics (no
+// 'apply_flow_picker_overlay'), and the relocation-confirm case (#1251):
+// allowApply + ambiguous + the exact relocation-warning-confirm target is
+// the apply flow's own intercepting popup (context
+// 'apply_flow_relocation_alert'). Stage-1 auto-dismiss semantics (no
 // allowApply) are unchanged.
 //
 // The ONLY click in this file is the real-event sequence inside clickElement()
@@ -174,6 +177,24 @@ function evaluateClickPolicy(target, allowApply) {
       && hasVisibleApplyStepOverlay()
     ) {
       return { verdict: 'allowed', context: 'apply_flow_picker_overlay' };
+    }
+    // #1251 (боевой census live-канала 2026-10-09, дамп CLI-пути 2026-09-16):
+    // попап подтверждения переезда (alertdialog/ambiguous/close=0) монтируется
+    // ВМЕСТО формы отклика, поэтому гейт «открытая apply-модалка» (панель
+    // пикера выше) здесь неприменим. Якорь узнавания — ТОЧНЫЙ data-qa кнопки
+    // на самой цели: «Все равно откликнуться» battle-подтверждён (187
+    // срабатываний CLI-пути) и специфичен одному попапу hh.ru. Клик мутирует
+    // профиль (hh.ru сам меняет сигнал «готов к переезду», решение владельца
+    // #1132), поэтому проходит только как явная allowApply-команда сценария
+    // при allow_relocation; abort «Отменить» и прочие контролы попапа не
+    // адресуются — тот же ambiguous отказывает. Dangerous-текст проверен выше
+    // и не пускает и с флагом.
+    if (
+      allowApply === true
+      && disposition === 'ambiguous'
+      && (target.getAttribute('data-qa') || '') === 'relocation-warning-confirm'
+    ) {
+      return { verdict: 'allowed', context: 'apply_flow_relocation_alert' };
     }
     return { verdict: 'refused', reason: disposition, overlay: info };
   }

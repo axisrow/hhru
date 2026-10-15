@@ -22,6 +22,7 @@ from hhru_bot.live.modal_registry import (
     MUTATION_EXTERNAL,
     MUTATION_PROFILE,
     MUTATIONS,
+    RELOCATION_MODAL,
     STALE_CONTACTS_MODAL,
     VISIBILITY_MODAL,
     match_census_text,
@@ -41,6 +42,13 @@ BATTLE_HH_PRO_TEXT = (
     "Хотите быстрее получить приглашение? С hh PRO: Резюме будет выше в "
     "результатах поиска ... Подключить hh PRO Нажимая, вы соглашаетесь "
     "с офертой и регулярными платежами"
+)
+# Боевой census попапа переезда (#1251, 2026-10-09, дамп
+# apply_live_138135538_20261009_144745.overlay-census.json, узел overlay-13).
+BATTLE_RELOCATION_TEXT = (
+    "Вы откликаетесь на вакансию в другой стране Если это не удалённая "
+    "работа и вы не указали, что хотите переехать, скорее всего, будет "
+    "отказ Все равно откликнуться Отменить"
 )
 
 
@@ -79,10 +87,12 @@ def test_registry_text_markers_do_not_overlap() -> None:
 def test_registry_actions_never_mutate_profile() -> None:
     # Граница #1229: primary-кнопки-мутации не адресуются — словарь действий
     # закрыт (dismiss/skip/continue/unknown), у profile-записи продолжение
-    # потока без выбора (dismiss/skip) невозможно.
+    # потока без выбора (dismiss/skip) невозможно. unknown допустим: реестр
+    # и им ничего не авторизует (попап переезда #1251 — клик confirm исполняет
+    # сценарий отклика по конфиг-гейту #1132, не реестр).
     for record in MODAL_REGISTRY:
         if record.mutation == MUTATION_PROFILE:
-            assert record.action in {ACTION_DISMISS, ACTION_SKIP}, record.name
+            assert record.action in {ACTION_DISMISS, ACTION_SKIP, ACTION_UNKNOWN}, record.name
 
 
 def test_match_census_text_substring_and_unknown() -> None:
@@ -135,6 +145,20 @@ def test_hh_pro_record_is_unknown_financial_promo() -> None:
     assert "никогда" in HH_PRO_PROMO_MODAL.reason
 
 
+def test_relocation_record_is_unknown_mutation_profile() -> None:
+    # #1251: confirm «Все равно откликнуться» — мутация профиля (боевой факт
+    # 2026-09-19), реестром не авторизуется; кликает только сценарий отклика
+    # при allow_relocation (решение владельца #1132, симметрия CLI-пути).
+    # Текст — боевой census live-канала 2026-10-09; data-qa якоря и кнопки —
+    # боевой дамп CLI-пути 2026-09-16 (relocation-warning-{title,confirm,abort}).
+    assert match_census_text(BATTLE_RELOCATION_TEXT) is RELOCATION_MODAL
+    assert RELOCATION_MODAL.action == ACTION_UNKNOWN
+    assert RELOCATION_MODAL.mutation == MUTATION_PROFILE
+    assert RELOCATION_MODAL.data_qa == "relocation-warning-title"
+    assert RELOCATION_MODAL.text_marker in BATTLE_RELOCATION_TEXT
+    assert "allow_relocation" in RELOCATION_MODAL.reason
+
+
 def test_scenarios_use_registry_not_local_marker_copies() -> None:
     # Перенос обработчиков на реестр (#1229): локальные константы-маркеры
     # убраны — копия якоря рядом с реестром скрывала бы дрейф матчинга.
@@ -142,3 +166,4 @@ def test_scenarios_use_registry_not_local_marker_copies() -> None:
     assert not hasattr(scenarios, "GEO_DIALOG_TEXT_MARKER")
     assert scenarios.VISIBILITY_MODAL is VISIBILITY_MODAL
     assert scenarios.GEO_REGION_MODAL is GEO_REGION_MODAL
+    assert scenarios.RELOCATION_MODAL is RELOCATION_MODAL

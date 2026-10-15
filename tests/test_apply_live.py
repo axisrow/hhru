@@ -76,6 +76,21 @@ GEO_OVERLAY = {
     "closeControls": 0,
     "text": "Ваш регион — Москва? Да, верно Нет, другой",
 }
+# Попап подтверждения переезда (#1251, боевой census live-канала 2026-10-09,
+# дамп apply_live_138135538_20261009_144745.overlay-census.json, узел
+# overlay-13): alertdialog/ambiguous/close=0, монтируется ПОСЛЕ клика по
+# кнопке отклика вместо формы; текст дословно из боевого census.
+RELOCATION_OVERLAY = {
+    "id": "overlay-13",
+    "type": "modal",
+    "disposition": "ambiguous",
+    "closeControls": 0,
+    "text": (
+        "Вы откликаетесь на вакансию в другой стране Если это не удалённая "
+        "работа и вы не указали, что хотите переехать, скорее всего, будет "
+        "отказ Все равно откликнуться Отменить"
+    ),
+}
 # Промо-модалка hh PRO (#1242, боевой census 2026-10-09, дамп
 # overlay_census_20261009_023322.json, узел overlay-12): apply_step, близко
 # к цели клика отклика, close-контроля нет.
@@ -152,6 +167,10 @@ class FakeFormChannel:
         # #1226: гео-диалог региона появляется ПЕРЕХВАТОМ клика (в census
         # только после кнопки отклика).
         geo_overlay_after_click: bool = False,
+        # #1251: попап переезда монтируется вместо формы (в census только
+        # после кнопки отклика); confirm-клик открывает форму отклика.
+        relocation_overlay_after_click: bool = False,
+        relocation_click_error: PrimitiveError | None = None,
         submit_click_error: PrimitiveError | None = None,
         fill_error: PrimitiveError | None = None,
         warning_check_error: PrimitiveError | None = None,
@@ -184,6 +203,8 @@ class FakeFormChannel:
         self.state_error_after_click = state_error_after_click
         self.letter_collapsed_on_page_form = letter_collapsed_on_page_form
         self.geo_overlay_after_click = geo_overlay_after_click
+        self.relocation_overlay_after_click = relocation_overlay_after_click
+        self.relocation_click_error = relocation_click_error
         self._nav_pending = False
         self._nav_recheck_answered = False
         self.submit_click_error = submit_click_error
@@ -202,6 +223,7 @@ class FakeFormChannel:
         self.overlays_error = overlays_error
         self.dismissed_ids: list[str] = []
         self.apply_clicked = False
+        self.relocation_confirm_clicked = False
         self.toggle_clicked = False
         self.option_clicked = False
         # Выбор не подтверждён, пока click по опции его не выставил; клик может
@@ -270,6 +292,13 @@ class FakeFormChannel:
             self.apply_clicked = True
             if self.modal_after_click:
                 self.panel_open = False
+        elif "relocation-warning-confirm" in selector:
+            # #1251: подтверждение попапа переезда — МУТАЦИЯ профиля (#1132),
+            # после клика hh.ru рендерит форму отклика (модалка).
+            if self.relocation_click_error is not None:
+                raise self.relocation_click_error
+            self.relocation_confirm_clicked = True
+            self.modal_after_click = True
         elif "resume-title" in selector:
             # Триггер пикера: открыть/закрыть панель. Close-клик (#1249) идёт
             # по карточке-контейнеру с :has(), не по триггеру.
@@ -330,6 +359,10 @@ class FakeFormChannel:
             # Гео-диалог монтируется ПЕРЕХВАТОМ клика (#1226) — в census
             # появляется только после кнопки отклика.
             result.append(dict(GEO_OVERLAY))
+        if self.relocation_overlay_after_click and self.apply_clicked:
+            # Попап переезда монтируется вместо формы (#1251) — в census
+            # появляется только после кнопки отклика.
+            result.append(dict(RELOCATION_OVERLAY))
         return result
 
     def dismiss_overlay(self, overlay_id: str) -> dict:
@@ -883,6 +916,148 @@ def test_geo_dialog_named_when_click_interrupted_and_tab_stays() -> None:
     assert (result.success, result.acted, result.uncertain) == (False, True, False)
     assert "гео-диалог региона перехватил клик" in result.reason
     assert "Ваш регион" in result.reason
+
+
+def test_relocation_popup_without_flag_is_skip_with_census() -> None:
+    # #1251 (бой 2026-10-09): попап переезда смонтировался вместо формы —
+    # прежний вердикт гадал «возможен one-click». Без allow_relocation —
+    # честный skip RELOCATION_NOT_ALLOWED (вакансия детерминированно
+    # блокирована для аккаунта, симметрия CLI-пути #1135), финализированный
+    # внешней сверкой #207 как post_navigation-блокер CLI-пути: not_found →
+    # skip с census-строкой попапа, confirm НЕ кликается.
+    channel = FakeFormChannel(
+        modal_after_click=False,
+        page_form=False,
+        relocation_overlay_after_click=True,
+    )
+    result = _run(channel, verify=_verify_of("not_found"))
+
+    assert result.skipped and result.skip_reason == SKIP_REASONS.RELOCATION_NOT_ALLOWED
+    assert (result.success, result.acted, result.uncertain) == (False, False, False)
+    assert "переезда" in result.reason
+    assert "Вы откликаетесь на вакансию в другой стране" in result.reason
+    assert "[relocation_confirm->unknown]" in result.reason
+    assert not channel.relocation_confirm_clicked
+    assert not channel.submitted
+
+
+def test_relocation_skip_verify_found_reconciles_success() -> None:
+    # #207: hh.ru мог принять отклик несмотря на попап (класс #207/YADRO) —
+    # внешний источник главнее локального вердикта: success+acted.
+    channel = FakeFormChannel(
+        modal_after_click=False,
+        page_form=False,
+        relocation_overlay_after_click=True,
+    )
+    result = _run(channel, verify=_verify_of("found"))
+
+    assert (result.success, result.acted, result.uncertain) == (True, True, False)
+    assert not result.skipped
+    assert not channel.relocation_confirm_clicked
+
+
+def test_relocation_skip_verify_unreadable_is_uncertain_acting() -> None:
+    # Внешняя проверка недоступна — fail-closed #176: uncertain+acted,
+    # не skip (skip зарезервирован подтверждённым «отклика нет»).
+    channel = FakeFormChannel(
+        modal_after_click=False,
+        page_form=False,
+        relocation_overlay_after_click=True,
+    )
+    result = _run(channel, verify=_verify_of("indeterminate"))
+
+    assert (result.success, result.acted, result.uncertain) == (False, True, True)
+    assert not result.skipped
+
+
+def test_relocation_skip_without_verifier_is_terminal_skip() -> None:
+    # CLI-прецедент (_finalize_blocker): верификатора нет — skip-вердикт
+    # блокера самостоятелен (census попапа доказывает перехват).
+    channel = FakeFormChannel(
+        modal_after_click=False,
+        page_form=False,
+        relocation_overlay_after_click=True,
+    )
+    result = _run(channel)
+
+    assert result.skipped and result.skip_reason == SKIP_REASONS.RELOCATION_NOT_ALLOWED
+    assert (result.acted, result.uncertain) == (False, False)
+
+
+def test_relocation_confirm_click_with_flag_continues_to_submit() -> None:
+    # #1251/#1132: allow_relocation → клик «Все равно откликнуться» (мутация
+    # профиля, гейтится конфигом), форме даётся второй бюджет — флоу доходит
+    # до submit, success несёт пометку о подтверждённом попапе (зеркало
+    # pipeline._relocation_confirmed_suffix).
+    channel = FakeFormChannel(
+        modal_after_click=False,
+        page_form=False,
+        relocation_overlay_after_click=True,
+    )
+    result = _run(channel, verify=_verify_of("not_found"), allow_relocation=True)
+
+    assert (result.success, result.acted, result.uncertain) == (True, True, False)
+    assert channel.relocation_confirm_clicked
+    assert channel.submitted and channel.filled_text == "Здравствуйте!"
+    assert "попап переезда подтверждён кликом (#1135)" in result.reason
+
+
+def test_relocation_confirm_click_without_form_after_is_grey_zone() -> None:
+    # Форма не отрисовалась и после подтверждения — серая зона #207: мутация
+    # была (клик confirm ушёл), решает внешний verify (not_found → failed
+    # c acted, uncertain снят).
+    channel = FakeFormChannel(
+        modal_after_click=False,
+        page_form=False,
+        relocation_overlay_after_click=True,
+        picker_present=False,
+        toggle_present=False,
+        textarea_after_click=False,
+    )
+    result = _run(channel, verify=_verify_of("not_found"), allow_relocation=True)
+
+    assert channel.relocation_confirm_clicked
+    assert (result.success, result.acted, result.uncertain) == (False, True, False)
+    assert "не отрисовалась после подтверждения попапа переезда" in result.reason
+
+
+def test_relocation_confirm_found_verify_carries_suffix() -> None:
+    # Инвариант #1135 на found-реконсиляции (CLI: суффикс на ОБЕХ
+    # success-точках, _finalize_blocker и _finalize_post_click_failure):
+    # confirm кликнут, форма после него не отрисовалась, внешний verify
+    # нашёл отклик — success-reason обязан нести пометку о подтверждённом
+    # попапе, иначе срабатывание при включённом флаге невидимо в аудите.
+    channel = FakeFormChannel(
+        modal_after_click=False,
+        page_form=False,
+        relocation_overlay_after_click=True,
+        picker_present=False,
+        toggle_present=False,
+        textarea_after_click=False,
+    )
+    result = _run(channel, verify=_verify_of("found"), allow_relocation=True)
+
+    assert channel.relocation_confirm_clicked
+    assert (result.success, result.acted, result.uncertain) == (True, True, False)
+    assert "внешняя сверка подтвердила отклик" in result.reason
+    assert "попап переезда подтверждён кликом (#1135)" in result.reason
+
+
+def test_relocation_confirm_policy_refusal_keeps_site_verdict() -> None:
+    # Старое расширение без #1251-даунгрейда: policy_refused на confirm —
+    # «действия не было» (не-forwarded отказ), мутации профиля нет; вердикт
+    # финализирует внешний verify.
+    channel = FakeFormChannel(
+        modal_after_click=False,
+        page_form=False,
+        relocation_overlay_after_click=True,
+        relocation_click_error=PrimitiveError("policy_refused", "ambiguous", forwarded=False),
+    )
+    result = _run(channel, verify=_verify_of("not_found"), allow_relocation=True)
+
+    assert not channel.relocation_confirm_clicked
+    assert (result.success, result.acted, result.uncertain) == (False, False, False)
+    assert "шаг формы не выполнен" in result.reason
 
 
 def test_hidden_resume_warning_is_skip_with_human_reason() -> None:

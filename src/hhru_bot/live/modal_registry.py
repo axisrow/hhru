@@ -12,7 +12,10 @@ Fail-closed границы:
 
 - **Мутации в действия не попадают**: primary-кнопки-мутации (переключатель
   видимости, «Заменить из профиля») не адресуются никогда; допустимы только
-  dismiss (close-контрол safe-overlay), skip, continue.
+  dismiss (close-контрол safe-overlay), skip, continue. Единственное исключение
+  адресуется СЦЕНАРИЕМ, а не реестром: confirm попапа переезда кликается
+  apply-сценарием при ``allow_relocation`` (решение владельца #1132) — реестр
+  его не авторизует (действие unknown), см. RELOCATION_MODAL.
 - **Записи нет — действия нет**: матч None — потребитель ведёт себя
   по-прежнему (прежний отказ + census). unknown — то же отсутствие действия,
   но у НАЗВАННОЙ модалки: оператор видит, что блокер опознан.
@@ -149,6 +152,33 @@ HH_PRO_PROMO_MODAL = ModalRecord(
     ),
 )
 
+# Попап подтверждения переезда (#1135, live-бой #1251): census live-канала
+# 2026-10-09 (дамп apply_live_138135538_20261009_144745.overlay-census.json,
+# узел overlay-13: alertdialog/ambiguous/close=0), data-qa якоря — боевой дамп
+# CLI-пути apply_136789544_form_timeout.html 2026-09-16. Монтируется ПОСЛЕ
+# клика по кнопке отклика ВМЕСТО формы (гонка 1,5–8 с), canonical URL не
+# меняет. Confirm «Все равно откликнуться» (data-qa relocation-warning-confirm,
+# 187 боевых срабатываний CLI-пути) — МУТАЦИЯ профиля (hh.ru сам меняет сигнал
+# «готов к переезду», боевой факт 2026-09-19): в действия реестра не попадает
+# и реестром не авторизуется никогда — кликается только сценарием отклика при
+# allow_relocation (решение владельца #1132, симметрия CLI-пути
+# apply/blockers.handle_post_click_blockers); без флага — честный skip.
+# Действие unknown = refuse-вердикт policy называет модалку в census, решение
+# (клик confirm / skip) принимает сценарий по конфигу, как у гео-диалога
+# (#1226) — с той разницей, что кнопки здесь подтверждены боем.
+RELOCATION_MODAL = ModalRecord(
+    name="relocation_confirm",
+    text_marker="Вы откликаетесь на вакансию в другой стране",
+    data_qa="relocation-warning-title",
+    mutation=MUTATION_PROFILE,
+    action=ACTION_UNKNOWN,
+    priority=50,
+    reason=(
+        "попап подтверждения переезда перехватил отклик: подтвердите готовность "
+        "к переезду вручную в живой вкладке или включите allow_relocation в конфиге"
+    ),
+)
+
 # Порядок кортежа = приоритет матчинга (меньше — раньше); новые записи
 # добавляются сюда с приоритетом, различающим пересекающиеся маркеры.
 MODAL_REGISTRY: tuple[ModalRecord, ...] = (
@@ -156,6 +186,7 @@ MODAL_REGISTRY: tuple[ModalRecord, ...] = (
     STALE_CONTACTS_MODAL,
     GEO_REGION_MODAL,
     HH_PRO_PROMO_MODAL,
+    RELOCATION_MODAL,
 )
 
 
