@@ -274,6 +274,7 @@ VALUES: dict[str, str] = {
     "search_page.VACANCY_CARD_ACTIVITY": "[data-qa='vacancy-serp-item-activity']",
     "search_page.VACANCY_CARD_ADDRESS": "[data-qa='vacancy-serp__vacancy-address']",
     "search_page.VACANCY_CARD_COMPANY": "[data-qa='vacancy-serp__vacancy-employer']",
+    "search_page.VACANCY_CARD_COMPENSATION": "[data-qa='vacancy-serp__vacancy-compensation']",
     "search_page.VACANCY_CARD_EXPERIENCE": "[data-qa^='vacancy-serp__vacancy-work-experience-']",
     "search_page.VACANCY_CARD_HH_RATING": "[data-qa='vacancy-serp__vacancy_employer-hh-rating']",
     "search_page.VACANCY_CARD_HRBRAND_WINNER": "[data-qa='vacancy-serp__vacancy_hrbrand vacancy-serp__vacancy_hrbrand_winners']",

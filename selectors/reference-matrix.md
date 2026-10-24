@@ -22,7 +22,7 @@
 | account_profile.RESUME_CONTACT_EMAIL | `[data-qa='resume-contact-email-value']` | — | — | — | live_dom |
 | account_profile.RESUME_CONTACT_PHONE | `[data-qa='resume-contact-phone-value-preferred']` | — | — | — | live_dom |
 | account_profile.RESUME_LIST_PROFILE_NAME | `[data-qa='profile-activator-fullname']` | — | — | — | live_dom |
-| account_profile.WORK_PERMIT_WIZARD | `[data-qa='resume-profile-common-work-ticket-selector']` | — | — | — | documented_live |
+| account_profile.WORK_PERMIT_WIZARD | `[data-qa='resume-profile-common-work-ticket-selector']` | — | — | — | live_dom |
 | apply.antibot.ANTIBOT_MARKER_SELECTORS.0.1 | `[data-qa='captcha']` | — | — | — | safety_guard |
 | apply.antibot.ANTIBOT_MARKER_SELECTORS.1.1 | `[data-qa='account-captcha-input']` | — | — | — | safety_guard |
 | apply.antibot.ANTIBOT_MARKER_SELECTORS.2.1 | `[data-qa='account-captcha-picture']` | — | — | — | safety_guard |
@@ -33,7 +33,7 @@
 | apply_form.APPLY_COVER_LETTER_TOGGLE_POPUP | `[data-qa='add-cover-letter']` | — | [data-qa="add-cover-letter"] | — | live_dom |
 | apply_form.APPLY_QUESTION_BODY | `[data-qa='task-body']` | — | — | [data-qa="task-body"] | live_dom |
 | apply_form.APPLY_QUESTION_FORM_BODY | `form[name='vacancy_response'] [data-qa='task-body']` | — | — | — | live_dom |
-| apply_form.APPLY_QUESTION_TEXT | `[data-qa='task-question']` | — | — | — | live_dom |
+| apply_form.APPLY_QUESTION_TEXT | `[data-qa='task-question']` | — | [data-qa="task-question"] | — | live_dom |
 | apply_form.APPLY_RESUME_DROPDOWN | `[data-qa='drop-base']` | — | — | — | live_dom |
 | apply_form.APPLY_RESUME_OPTION | `[data-qa='magritte-select-option-{resume_id}']` | — | — | [data-qa="vacancy-response-popup-form-resume-option"] | live_dom |
 | apply_form.APPLY_RESUME_SELECT | `[data-qa='resume-title']` | — | — | [data-qa="vacancy-response-popup-form-resume-dropdown"] | live_dom |
@@ -50,8 +50,8 @@
 | competitor_resume.SEARCH_AREA_AND_RELOCATION | `[data-qa='resume-serp_resume-item-area-and-relocation-content']` | — | — | — | live_dom |
 | competitor_resume.SEARCH_CARD | `[data-qa='resume-serp__resume']` | — | — | — | live_dom |
 | competitor_resume.SEARCH_EMPTY | `[data-qa='empty-search-block']` | — | — | — | live_dom |
-| competitor_resume.SEARCH_RESULT_TITLE_LINK | `[data-qa='serp-item__title']` | — | — | — | live_dom |
-| create_resume.TREE_ITEM_TEXT | `[data-qa*='tree-selector-item-text-']` | — | — | — | workflow_live |
+| competitor_resume.SEARCH_RESULT_TITLE_LINK | `[data-qa='serp-item__title']` | — | — | [data-qa="serp-item__title"] | live_dom |
+| create_resume.TREE_ITEM_TEXT | `[data-qa*='tree-selector-item-text-']` | — | — | — | live_dom |
 | negotiations.CHAT_AUTHOR_HINT | `[data-qa*='author'], [class*='author'], [aria-label], [title]` | — | — | — | documented_live |
 | negotiations.CHAT_MESSAGE_INPUT | `[data-qa='chatik-message-input'] textarea[data-qa='text-input']` | — | — | [data-qa="chatik-new-message-text"] | live_dom |
 | negotiations.CHAT_MESSAGE_ROOT | `[data-qa^='chatik-chat-message-']` | — | — | — | live_dom |
@@ -64,7 +64,7 @@
 | negotiations.LEGACY_NEGOTIATION_STATUS | `[data-qa='negotiations-item__state']` | — | — | — | documented_live |
 | negotiations.LEGACY_NEGOTIATION_VACANCY_LINK | `[data-qa='negotiations-item__vacancy-link']` | — | — | — | structural_read_fallback |
 | negotiations.NEGOTIATIONS_PAGINATION_BLOCK | `[data-qa='pager-block']` | — | — | — | documented_live |
-| negotiations.NEGOTIATIONS_PAGINATION_NEXT | `[data-qa='pager-next']` | — | — | — | documented_live |
+| negotiations.NEGOTIATIONS_PAGINATION_NEXT | `[data-qa='pager-next']` | — | [data-qa="pager-next"] | — | documented_live |
 | negotiations.NEGOTIATIONS_PAGINATION_PAGE | `[data-qa='pager-page']` | — | — | — | documented_live |
 | negotiations.NEGOTIATION_CHAT_LINK | `[data-qa='open_chat']` | — | — | — | documented_live |
 | negotiations.NEGOTIATION_DATE | `[data-qa='negotiations-item-date']` | — | — | — | documented_live |
@@ -270,14 +270,14 @@
 | search_page.COMPANY_RATING_REVIEWS_COUNT | `[data-qa='company-review-rating-reviews-count']` | — | — | — | live_dom |
 | search_page.COMPANY_RATING_VALUE | `[data-qa='company-review-rating-value']` | — | — | — | live_dom |
 | search_page.PAGINATION_BLOCK | `[data-qa='pager-block']` | — | — | — | documented_live |
-| search_page.PAGINATION_NEXT | `[data-qa='pager-next']` | — | — | — | documented_live |
+| search_page.PAGINATION_NEXT | `[data-qa='pager-next']` | — | [data-qa="pager-next"] | — | documented_live |
 | search_page.PAGINATION_PAGE | `[data-qa='pager-page']` | — | — | — | documented_live |
 | search_page.TRUSTED_EMPLOYER_LINK | `[data-qa='trusted-employer-link']` | — | — | — | live_dom |
-| search_page.VACANCY_CARD | `[data-qa='vacancy-serp__vacancy']` | — | div[data-qa="vacancy-serp__vacancy"] | [data-qa="vacancy-serp__vacancy"] | live_dom |
+| search_page.VACANCY_CARD | `[data-qa='vacancy-serp__vacancy']` | — | [data-qa="vacancy-serp__vacancy"] | [data-qa="vacancy-serp__vacancy"] | consensus |
 | search_page.VACANCY_CARD_ACTIVITY | `[data-qa='vacancy-serp-item-activity']` | — | — | — | live_dom |
 | search_page.VACANCY_CARD_ADDRESS | `[data-qa='vacancy-serp__vacancy-address']` | — | — | [data-qa="vacancy-serp__vacancy-address"] | live_dom |
-| search_page.VACANCY_CARD_COMPANY | `[data-qa='vacancy-serp__vacancy-employer']` | [data-qa="vacancy-serp__vacancy-employer"] | — | [data-qa="vacancy-serp__vacancy-employer"] | consensus |
-| search_page.VACANCY_CARD_COMPENSATION | `[data-qa='vacancy-serp__vacancy-compensation']` | — | — | [data-qa="vacancy-serp__vacancy-compensation"] | unavailable |
+| search_page.VACANCY_CARD_COMPANY | `[data-qa='vacancy-serp__vacancy-employer']` | [data-qa="vacancy-serp__vacancy-employer"] | [data-qa="vacancy-serp__vacancy-employer"] | [data-qa="vacancy-serp__vacancy-employer"] | consensus |
+| search_page.VACANCY_CARD_COMPENSATION | `[data-qa='vacancy-serp__vacancy-compensation']` | — | [data-qa="vacancy-serp__vacancy-compensation"] | [data-qa="vacancy-serp__vacancy-compensation"] | consensus |
 | search_page.VACANCY_CARD_EXPERIENCE | `[data-qa^='vacancy-serp__vacancy-work-experience-']` | — | — | — | live_dom |
 | search_page.VACANCY_CARD_HH_RATING | `[data-qa='vacancy-serp__vacancy_employer-hh-rating']` | — | — | — | live_dom |
 | search_page.VACANCY_CARD_HRBRAND_WINNER | `[data-qa='vacancy-serp__vacancy_hrbrand vacancy-serp__vacancy_hrbrand_winners']` | — | — | — | live_dom |
@@ -314,9 +314,9 @@
 | vacancy_page.VACANCY_ALREADY_RESPONDED_AGAIN | `[data-qa='vacancy-response-link-top-again']` | — | — | — | live_dom |
 | vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT | `[data-qa='vacancy-response-link-view-topic']` | — | [data-qa="vacancy-response-link-view-topic"] | [data-qa="vacancy-response-link-view-topic"] | consensus |
 | vacancy_page.VACANCY_APPLY_BUTTON | `[data-qa='vacancy-response-link-top']` | [data-qa="vacancy-response-link-top"] | [data-qa="vacancy-response-link-top"] | [data-qa="vacancy-response-link-top"] | consensus |
-| vacancy_page.VACANCY_COMPANY_NAME | `[data-qa='vacancy-company-name']` | [data-qa="vacancy-company-name"] | — | — | live_dom |
+| vacancy_page.VACANCY_COMPANY_NAME | `[data-qa='vacancy-company-name']` | [data-qa="vacancy-company-name"] | [data-qa="vacancy-company-name"] | — | consensus |
 | vacancy_page.VACANCY_DESCRIPTION | `[data-qa="vacancy-description"]` | [data-qa="vacancy-description"] | — | [data-qa="vacancy-description"] | consensus |
-| vacancy_page.VACANCY_DIRECT_APPLICATION_ALERT | `[data-qa="magritte-alert"]` | — | — | — | documented_live |
+| vacancy_page.VACANCY_DIRECT_APPLICATION_ALERT | `[data-qa="magritte-alert"]` | — | [data-qa="magritte-alert"] | — | documented_live |
 | vacancy_page.VACANCY_DIRECT_APPLICATION_CANCEL | `[data-qa="vacancy-response-link-advertising-cancel"]` | — | — | — | documented_live |
 | vacancy_page.VACANCY_EXPERIENCE | `[data-qa="vacancy-experience"]` | [data-qa="vacancy-experience"] | — | [data-qa="vacancy-experience"] | consensus |
 | vacancy_page.VACANCY_HIDDEN_RESUME_WARNING | `[data-qa='hidden-resume-warning']` | — | — | — | live_dom |
@@ -325,7 +325,7 @@
 | vacancy_page.VACANCY_RESPONSE_ERROR | `[data-qa="vacancy-response-error-notification"]` | — | — | — | documented_live |
 | vacancy_page.VACANCY_RESPONSE_REJECT_WARNING | `[data-qa="response-reject-warning"]` | — | [data-qa="response-reject-warning"] | — | documented_live |
 | vacancy_page.VACANCY_SIMILAR_VACANCIES_CLOSE | `[data-qa="vacancy-response-similar-vacancies-close"]` | — | — | — | documented_live |
-| vacancy_page.VACANCY_TITLE | `[data-qa='vacancy-title']` | [data-qa="vacancy-title"] | — | [data-qa="vacancy-title"] | consensus |
+| vacancy_page.VACANCY_TITLE | `[data-qa='vacancy-title']` | [data-qa="vacancy-title"] | [data-qa="vacancy-title"] | [data-qa="vacancy-title"] | consensus |
 | vacancy_page.VACANCY_VIEW_EMPLOYMENT_MODE | `[data-qa="vacancy-view-employment-mode"]` | [data-qa="vacancy-view-employment-mode"] | — | [data-qa="vacancy-view-employment-mode"] | consensus |
 | vacancy_page.VACANCY_VIEW_LOCATION | `[data-qa="vacancy-view-location"]` | [data-qa="vacancy-view-location"] | — | — | documented_live |
 | vacancy_page.VACANCY_VIEW_RAW_ADDRESS | `[data-qa="vacancy-view-raw-address"]` | [data-qa="vacancy-view-raw-address"] | — | — | documented_live |
@@ -336,6 +336,7 @@ These rows are extracted from the approved upstream projects even when hhru does
 
 | selector | references |
 |---|---|
+| `[data-qa*="resume" i]` | steev, tgeruzov |
 | `[data-qa="vacancy-company-name"]` | steev, tgeruzov |
 | `[data-qa="vacancy-description"]` | steev, yamakayama |
 | `[data-qa="vacancy-experience"]` | steev, yamakayama |
@@ -344,9 +345,14 @@ These rows are extracted from the approved upstream projects even when hhru does
 | `[data-qa="vacancy-response-link-bottom"]` | tgeruzov, yamakayama |
 | `[data-qa="vacancy-response-link-top"]` | steev, tgeruzov, yamakayama |
 | `[data-qa="vacancy-response-link-view-topic"]` | tgeruzov, yamakayama |
-| `[data-qa="vacancy-serp__vacancy-employer"]` | steev, yamakayama |
+| `[data-qa="vacancy-response-popup-form"]` | steev, tgeruzov |
+| `[data-qa="vacancy-salary"]` | steev, tgeruzov |
+| `[data-qa="vacancy-serp__vacancy"]` | tgeruzov, yamakayama |
+| `[data-qa="vacancy-serp__vacancy-compensation"]` | tgeruzov, yamakayama |
+| `[data-qa="vacancy-serp__vacancy-employer"]` | steev, tgeruzov, yamakayama |
 | `[data-qa="vacancy-title"]` | steev, tgeruzov, yamakayama |
 | `[data-qa="vacancy-view-employment-mode"]` | steev, yamakayama |
+| `a[data-qa*="vacancy-response-link"]` | tgeruzov, yamakayama |
 
 ## Apply/response candidate decisions
 
