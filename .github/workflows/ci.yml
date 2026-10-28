@@ -9,8 +9,9 @@ on:
 jobs:
   lint-test:
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -43,8 +44,8 @@ jobs:
           sudo find /etc/apt/sources.list.d -maxdepth 1 -type f -exec grep -l 'dl.google.com' {} + | sudo xargs -r rm -f || true
           python -m playwright install --with-deps chromium
 
-      - name: Install Chromium (Windows)
-        if: runner.os == 'Windows'
+      - name: Install Chromium (Windows/macOS)
+        if: runner.os != 'Linux'
         run: python -m playwright install chromium
 
       - name: Ruff check
@@ -54,13 +55,13 @@ jobs:
         run: ruff format --check src tests scripts
 
       - name: Plugin manifests in sync with package version
-        run: python3 scripts/sync_plugin_manifests.py --check
+        run: python scripts/sync_plugin_manifests.py --check
 
       - name: Plugin marketplace refs resolve
         # A version-bump PR is allowed to introduce its future release tag;
         # the push checks below validate it before/when release publication runs.
         if: github.event_name != 'pull_request'
-        run: python3 scripts/check_plugin_refs.py
+        run: python scripts/check_plugin_refs.py
 
       - name: Pytest suite budget (Linux)
         if: runner.os == 'Linux'
@@ -83,12 +84,25 @@ jobs:
         # Модель FastAPI/OpenAPI: код = источник правды, .md собирается.
         env:
           PYTHONIOENCODING: utf-8
-        run: python3 scripts/gen_cli_docs.py --check
+        run: python scripts/gen_cli_docs.py --check
 
   packaging:
     # Страховка, что упакованный дистрибутив (wheel) работает при `pip install .`,
     # а не только при запуске из checkout: History создаёт таблицы и пишет/читает.
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            venv-python: .ci-venv/bin/python
+          - os: windows-latest
+            venv-python: .ci-venv/Scripts/python.exe
+          - os: macos-latest
+            venv-python: .ci-venv/bin/python
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
 
@@ -106,13 +120,21 @@ jobs:
             --tag "v${VERSION}" \
             --commit "$(git rev-parse HEAD)" \
             --output dist/release
-          python -m venv /tmp/venv
-          /tmp/venv/bin/pip install --upgrade pip
-          /tmp/venv/bin/pip install dist/*.whl
-          /tmp/venv/bin/pip install playwright PyYAML
+          python -m venv .ci-venv
+          "${{ matrix.venv-python }}" -m pip install --upgrade pip
+          "${{ matrix.venv-python }}" -m pip install dist/*.whl
 
       - name: Smoke — History works from installed wheel
-        run: /tmp/venv/bin/python tests/packaging_smoke.py --plugin-archive dist/release/hhru-cc-plugin-*.tar.gz
+        run: '"${{ matrix.venv-python }}" tests/packaging_smoke.py --plugin-archive dist/release/hhru-cc-plugin-*.tar.gz'
+
+      - name: Save build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: hhru-${{ matrix.os }}
+          path: |
+            dist/*.whl
+            dist/release/*
+          if-no-files-found: error
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
