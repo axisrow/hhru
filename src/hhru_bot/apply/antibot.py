@@ -27,13 +27,47 @@ _CHALLENGE_PATH_SEGMENTS = frozenset({"captcha", "checkpoint", "nocaptcha"})
 # elements), named explicitly in the issue #344 reference implementation
 # (docs/research/reference-selector-diff-audit.md). They carry the same
 # ``filter(visible=True)`` guard as the HH-specific markers, so a dormant
-# template does not trip them either.
+# template does not trip them either.  ``smartcaptcha_iframe`` (#1248) is the
+# third sibling of that vendor-iframe class; status: never sighted on live
+# pages (0 occurrences across 120+ battle dumps), included for vendor parity
+# — an iframe whose src contains "smartcaptcha" is a SmartCaptcha mount by
+# construction, and no captured page produced a false match.
+#
+# Подтверждение живым DOM (#1248, 2026-10-13): боевые дампы
+# ``common_save_failure_2026{0908_002202,0908_002650,0909_145358}.html``
+# (data/logs/, census-сайдкары ``.census.txt``) фиксируют реальную разметку
+# капчи hh.ru — отрисованные контролы ``account-captcha-input`` (input
+# name="captchaText"), ``account-captcha-picture`` (img class
+# hhcaptcha-module_hhcaptcha-picture), рядом captcha-renew-text («Другой
+# текст») и captcha-language («English»).  Во всех трёх захватах контролы
+# отрисованы, но СКРЫТЫ — дремлющий шаблон на странице редактора резюме;
+# видимое состояние капчи живьём пока не захвачено, ``filter(visible=True)``
+# остаётся дискриминатором.
+#
+# Отклонённые кандидаты #1248 (причины записаны, в allowlist не входят):
+# - ``input[placeholder="Текст с картинки"]`` (konard a389a530) — живое
+#   опровержение: реальный input капчи не имеет placeholder-атрибута;
+# - ``img[src*="captcha" i]`` (konard) — живое опровержение: img капчи не
+#   имеет src-атрибута, селектор мимо реального виджета;
+# - ``input[name*="captcha" i]`` (konard) — совпал бы с реальным
+#   name="captchaText", но избыточен к точному account-captcha-input и
+#   расширяет поверхность ложных срабатываний (bare substring-wildcard
+#   исключён политикой #344);
+# - ``.captcha-page`` (fikstt2 3ce5bf9) — в наших дампах только URL ассетов
+#   DDoS-Guard (/.well-known/ddos-guard/ddg-captcha-page/), не отрисованный
+#   класс;
+# - «Доступ ограничен» (``[data-qa='error-page']`` + h1, fikstt2) — 0
+#   вхождений в боевых дампах и логах; отдельный сигнал access_denied не
+#   заводился: не подтверждён живым DOM, read-only воспроизведение невозможно
+#   (страница отдаётся только заблокированным).  Завести при первом живом
+#   попадании.
 ANTIBOT_MARKER_SELECTORS: tuple[tuple[str, str], ...] = (
     ("captcha_data_qa", "[data-qa='captcha']"),
     ("account_captcha_input", "[data-qa='account-captcha-input']"),
     ("account_captcha_picture", "[data-qa='account-captcha-picture']"),
     ("recaptcha_iframe", 'iframe[src*="recaptcha" i]'),
     ("hcaptcha_iframe", 'iframe[src*="hcaptcha" i]'),
+    ("smartcaptcha_iframe", 'iframe[src*="smartcaptcha" i]'),
     ("recaptcha_widget", ".g-recaptcha"),
     ("hcaptcha_widget", ".h-captcha"),
 )
