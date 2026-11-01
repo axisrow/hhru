@@ -111,8 +111,11 @@ BROWSER_COMMANDS = frozenset(
 # явно (return True контракта #148 или sys.exit), поэтому инвариант им не нужен:
 # - log       — хвост чужого лога прошлых прогонов (log_cmd);
 # - config    — сырой YAML конфига (без ключа и по ключу, config_cmd);
-# - call-api  — сырое тело ответа hh.ru API (call_api).
-FAIL_SCAN_EXEMPT_COMMANDS = frozenset({"log", "config", "call-api"})
+# - call-api  — сырое тело ответа hh.ru API (call_api);
+# - query     — результат SELECT к history.db: CSV-строки/шапка — данные
+#   пользователя, ячейка или имя колонки «[FAIL] ...» (#1275) — не вердикт;
+#   отказы SQL/read-only guard/записи -o завершаются sys.exit(1) в stderr.
+FAIL_SCAN_EXEMPT_COMMANDS = frozenset({"log", "config", "call-api", "query"})
 
 WRITE_COMMANDS = frozenset(
     {

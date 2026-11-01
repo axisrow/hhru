@@ -202,6 +202,52 @@ def test_cli_call_api_raw_body_exempt_from_invariant(monkeypatch, tmp_path):
     assert main(argv) is None
 
 
+def test_cli_query_csv_fail_cell_exits_zero(tmp_path):
+    """Точный кейс #1275: CSV-ячейка результата, начинающаяся с [FAIL], —
+    данные SELECT (reason/лог-подобные строки history.db), а не вердикт.
+    Успешный query обязан завершаться exit 0 — иначе ломаются shell-цепочки
+    и автоматический экспорт (`&&`, cron)."""
+    db = tmp_path / "history.db"
+    assert (
+        main(["--history", str(db), "query", "--csv", "SELECT '[FAIL] запись лога' AS message"])
+        is None
+    )
+
+
+def test_cli_query_csv_fail_column_name_exits_zero(tmp_path):
+    """Приёмка #1275 п.1: [FAIL] и в ИМЕНИ колонки CSV-шапки — тоже данные
+    (первая строка CSV начинается с имени колонки), exit 0."""
+    db = tmp_path / "history.db"
+    assert main(["--history", str(db), "query", "--csv", 'SELECT 1 AS "[FAIL] колонка"']) is None
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT FROM actions WHERE",  # синтаксическая ошибка SQL
+        "DELETE FROM actions",  # отказ read-only guard
+    ],
+)
+def test_cli_query_real_errors_still_exit_nonzero(tmp_path, sql):
+    """Приёмка #1275 п.2: после выведения query из-под скана реальные отказы
+    (SQL-ошибка, read-only guard) завершаются явно — exit 1 через sys.exit
+    в run(), независимо от скана stdout."""
+    db = tmp_path / "history.db"
+    with pytest.raises(SystemExit) as excinfo:
+        main(["--history", str(db), "query", sql])
+    assert excinfo.value.code == 1
+
+
+def test_cli_query_output_write_error_still_exits_nonzero(tmp_path):
+    """Приёмка #1275 п.2: ошибка записи файла -o (несуществующий каталог) —
+    exit 1, не «успех» после исключения из-под скана."""
+    db = tmp_path / "history.db"
+    bad_output = tmp_path / "no-such-dir" / "out.csv"
+    with pytest.raises(SystemExit) as excinfo:
+        main(["--history", str(db), "query", "--csv", "SELECT 1", "-o", str(bad_output)])
+    assert excinfo.value.code == 1
+
+
 def test_cli_typed_code_wins_over_fail_scan(monkeypatch, tmp_path):
     """Закрепляет порядок проверок (rev #1153): команда напечатала [FAIL] И
     вернула typed-код — побеждает typed (78), а не скан (1)."""
