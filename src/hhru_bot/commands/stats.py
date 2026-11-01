@@ -70,12 +70,16 @@ def run(args: argparse.Namespace) -> None:
     # Назначения внешних тестов — read-only факты без автоматического перехода
     # на сторонний домен. Пока отдельного acknowledgement нет, все записи
     # считаются ожидающими внимания пользователя.
+    # #1274: с выбранным --resume считаем только однозначно атрибутированные
+    # этому резюме назначения; записи без resume_id (атрибуция недоступна —
+    # см. record_test_assigned) не приписываются конкретному резюме и видны
+    # только в аккаунтном срезе (без --resume, как в whoami).
     test_since = datetime.min
     if args.period == "today":
         test_since = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     elif args.period in {"week", "month"}:
         test_since = datetime.now() - timedelta(days={"week": 7, "month": 30}[args.period])
-    pending_tests = len(history.test_assignments_since(test_since))
+    pending_tests = len(history.test_assignments_since(test_since, resume_id=resume_id))
 
     if args.list:
         rows = history.list_actions(resume_id=resume_id, period=args.period, limit=args.limit)

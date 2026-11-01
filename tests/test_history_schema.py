@@ -313,6 +313,60 @@ def test_record_test_assigned_keeps_same_text_from_different_chats(tmp_path):
     assert len(rows) == 2
 
 
+def test_test_assignments_since_respects_resume_filter(tmp_path):
+    # #1274: stats --resume получал счётчик ожидающих тестов БЕЗ фильтра по
+    # резюме — тест, записанный для beta, показывался и у alpha.
+    from datetime import datetime
+
+    h = History(tmp_path / "h.db")
+    h.record_test_assigned(
+        "11111",
+        "vacancy-1",
+        "topic-1",
+        "Компания А",
+        "https://a.test",
+        "Тест для alpha",
+        detected_at=datetime(2026, 8, 16, 10, 0),
+    )
+    h.record_test_assigned(
+        "22222",
+        "vacancy-2",
+        "topic-2",
+        "Компания Б",
+        "https://b.test",
+        "Тест для beta",
+        detected_at=datetime(2026, 8, 16, 11, 0),
+    )
+
+    since = datetime(2026, 8, 16, 9, 59)
+    assert len(h.test_assignments_since(since)) == 2  # без фильтра — все
+    assert [r["resume_id"] for r in h.test_assignments_since(since, resume_id="11111")] == ["11111"]
+    assert [r["resume_id"] for r in h.test_assignments_since(since, resume_id="22222")] == ["22222"]
+    assert h.test_assignments_since(since, resume_id="99999") == []
+
+
+def test_test_assignments_since_resume_filter_excludes_unknown_attribution(tmp_path):
+    # Записи с resume_id IS NULL (атрибуция чата резюме недоступна) не должны
+    # приписываться конкретному резюме (#1274): фильтр по резюме их не считает,
+    # аккаунтный срез (без фильтра) — считает.
+    from datetime import datetime
+
+    h = History(tmp_path / "h.db")
+    h.record_test_assigned(
+        None,
+        "vacancy-2",
+        "topic-1",
+        "ЯМКЕТ",
+        "https://yay-tech.ru",
+        "Тест с неизвестной атрибуцией",
+        detected_at=datetime(2026, 8, 16, 10, 0),
+    )
+
+    since = datetime(2026, 8, 16, 9, 59)
+    assert len(h.test_assignments_since(since)) == 1
+    assert h.test_assignments_since(since, resume_id="11111") == []
+
+
 def test_unique_index_prevents_duplicate_uncertain_apply():
     # #177: 'uncertain' дедуплицируется в has_applied(), значит UNIQUE-индекс
     # тоже обязан покрывать этот статус — иначе гонка/повтор может вставить
