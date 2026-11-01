@@ -197,9 +197,17 @@ def _require(mapping: dict, key: str, context: str):
     return mapping[key]
 
 
-def parse_throttle(raw: dict) -> ThrottleConfig:
+def parse_throttle(raw: dict | None) -> ThrottleConfig:
     """raw — секция throttle. Нечисловое значение поля — ConfigError при
-    загрузке конфига, а не отложенный крэш сравнения в рантайме (#1256)."""
+    загрузке конфига, а не отложенный крэш сравнения в рантайме (#1256).
+    Неверный тип секции (`throttle: []`) — тоже ConfigError, не AttributeError
+    (#1278); `throttle:` без полей — дефолты, как при отсутствии секции."""
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise ConfigError(
+            f"Раздел 'throttle' должен быть отображением (mapping), получен {type(raw).__name__}"
+        )
 
     def _num(key: str, default, types, cast, kind: str):
         value = raw.get(key, default)
@@ -235,10 +243,21 @@ def load_config(path: str | Path) -> AppConfig:
         )
 
     with path.open("r", encoding="utf-8") as f:
-        raw = yaml.safe_load(f)
+        try:
+            raw = yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            # Синтаксически битый YAML — пользовательская ошибка, не traceback
+            # (#1278); str(e) у PyYAML уже несёт строку/позицию проблемы.
+            raise ConfigError(f"Синтаксическая ошибка YAML в конфиге {path}: {e}") from e
 
     if not raw:
         raise ConfigError(f"Конфиг {path} пуст или некорректен")
+    if not isinstance(raw, dict):
+        # Список/скаляр в корне — раньше AttributeError на raw.get (#1278).
+        raise ConfigError(
+            f"Корень конфига {path} должен быть отображением (mapping), "
+            f"получен {type(raw).__name__}"
+        )
 
     # storage_state_file резолвится относительно директории файла конфига —
     # стабильно, не зависит от cwd (даже при --config с абсолютным путём из
@@ -280,6 +299,12 @@ def load_config(path: str | Path) -> AppConfig:
     seen_ids = set()
     for i, r in enumerate(resumes_raw):
         context = f"resumes[{i}]"
+        # `resumes:` с пустым элементом (null) — раньше TypeError в _require
+        # на None (#1278).
+        if not isinstance(r, dict):
+            raise ConfigError(
+                f"Запись {context} должна быть отображением (mapping), получено: {r!r}"
+            )
         resume_id = _require(r, "id", context)
         if resume_id in seen_ids:
             raise ConfigError(f"Дублирующийся id резюме в конфиге: '{resume_id}'")
