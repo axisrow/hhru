@@ -211,3 +211,51 @@ def test_funnel_run_rejections(capsys, tmp_path):
     assert "Поисковый запрос" in out
     assert "Acme" in out
     assert "Отказов" in out
+
+
+def test_funnel_run_huge_period_exits_with_clear_error(capsys, tmp_path):
+    """#1279: --period больше представимого календарём datetime — [FAIL] на
+    stderr + exit 1, а не OverflowError traceback из timedelta-вычитания.
+
+    10**9 заодно превышает и диапазон самого timedelta (999999999 дней) —
+    гард покрывает оба класса переполнения до вычисления.
+    """
+    config = _write_config(tmp_path, _minimal_config())
+
+    with pytest.raises(SystemExit) as exc:
+        funnel_cmd.run(_args(config, tmp_path / "h.db", period=10**9))
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert err.startswith("[FAIL]")
+    assert "--period" in err
+
+
+def test_funnel_run_period_max_representable_boundary_works(capsys, tmp_path):
+    """#1279: максимум представимого периода остаётся допустимым.
+
+    Граница = дни от datetime.min до сегодня (минус 1 — она ползёт с датой,
+    точное равенство флакует на полуночной смене дня между расчётом в тесте
+    и в команде).
+    """
+    config = _write_config(tmp_path, _minimal_config())
+    max_days = (datetime.now() - datetime.min).days
+
+    funnel_cmd.run(_args(config, tmp_path / "h.db", period=max_days - 1))
+    out = capsys.readouterr().out
+
+    assert "Отправлено" in out  # таблица отрисована, а не отказ
+
+
+def test_funnel_run_huge_dead_days_exits_with_clear_error(capsys, tmp_path):
+    """#1279: --dead-days — та же арифметика timedelta в dead_responses,
+    тот же понятный отказ вместо traceback."""
+    config = _write_config(tmp_path, _minimal_config())
+
+    with pytest.raises(SystemExit) as exc:
+        funnel_cmd.run(_args(config, tmp_path / "h.db", dead=True, dead_days=10**9))
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert err.startswith("[FAIL]")
+    assert "--dead-days" in err
