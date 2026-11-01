@@ -43,6 +43,9 @@ def parse_account(raw, base_dir: Path) -> AccountConfig:
     """
     if not raw:
         raise ConfigError("В конфиге отсутствует обязательное поле 'storage_state_file' (account)")
+    if not isinstance(raw, dict):
+        # `account: [x]` / `account: str` — раньше TypeError в require (#1278).
+        raise ConfigError("Поле 'account' должно быть отображением (mapping)")
     storage_state_file = require(raw, "storage_state_file", "account")
     # user_agent опционален: None = родной UA Playwright (никакого хардкода).
     user_agent = raw.get("user_agent")

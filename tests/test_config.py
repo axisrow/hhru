@@ -5,8 +5,10 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
@@ -18,6 +20,7 @@ from hhru_bot.config import (
     SearchFilters,
     is_resume_url_placeholder,
     load_config,
+    load_config_or_exit,
 )
 from hhru_bot.config_sections.ai import parse_ai
 from hhru_bot.config_sections.ai_profile import AIProfile
@@ -101,6 +104,132 @@ def test_throttle_numeric_values_coerced(tmp_path):
 
     config = load_config(_write_config(tmp_path, _config_with_throttle("daily_apply_limit: 50")))
     assert config.throttle.daily_apply_limit == 50
+
+
+# --- #1278: структурные ошибки YAML — ConfigError с указанием поля, не traceback ---
+
+
+def test_load_config_root_list_raises_config_error(tmp_path):
+    """#1278: список в корне конфига — раньше AttributeError на raw.get."""
+    path = _write_config(tmp_path, "- resume\n")
+    with pytest.raises(ConfigError, match="Корень конфига"):
+        load_config(path)
+
+
+def test_load_config_root_scalar_raises_config_error(tmp_path):
+    """#1278: скаляр в корне конфига — тот же отказ, что и список."""
+    path = _write_config(tmp_path, "just a string\n")
+    with pytest.raises(ConfigError, match="Корень конфига"):
+        load_config(path)
+
+
+def test_load_config_null_resume_entry_raises_config_error(tmp_path):
+    """#1278: пустой элемент списка resumes (null) — раньше TypeError в _require."""
+    path = _write_config(
+        tmp_path,
+        """
+        account:
+          storage_state_file: data/storage_state/hh_session.json
+        resumes:
+          -
+        """,
+    )
+    with pytest.raises(ConfigError, match=r"resumes\[0\]"):
+        load_config(path)
+
+
+def test_load_config_throttle_list_raises_config_error(tmp_path):
+    """#1278: `throttle: []` — раньше AttributeError в parse_throttle."""
+    path = _write_config(
+        tmp_path,
+        """
+        account:
+          storage_state_file: data/storage_state/hh_session.json
+        throttle: []
+        """,
+    )
+    with pytest.raises(ConfigError, match="throttle.*отображением"):
+        load_config(path)
+
+
+def test_load_config_throttle_null_section_uses_defaults(tmp_path):
+    """`throttle:` без полей — дефолты, как при отсутствии секции (#1278)."""
+    path = _write_config(
+        tmp_path,
+        """
+        account:
+          storage_state_file: data/storage_state/hh_session.json
+        throttle:
+        """,
+    )
+    config = load_config(path)
+    assert config.throttle.daily_apply_limit == 40
+    assert config.throttle.min_delay_seconds == 8
+
+
+def test_load_config_account_non_dict_raises_config_error(tmp_path):
+    """#1278: `account: [x]` — раньше TypeError в require."""
+    path = _write_config(tmp_path, "account: [x]\n")
+    with pytest.raises(ConfigError, match="'account' должно быть отображением"):
+        load_config(path)
+
+
+def test_load_config_empty_file_raises_config_error(tmp_path):
+    """Пустой конфиг — пользовательская ошибка (фиксация существующего поведения)."""
+    path = tmp_path / "config.yaml"
+    path.write_text("", encoding="utf-8")
+    with pytest.raises(ConfigError, match="пуст или некорректен"):
+        load_config(path)
+
+
+def test_load_config_yaml_syntax_error_raises_config_error(tmp_path):
+    """#1278: битый YAML — ConfigError, а не yaml.parser.ParserError с traceback."""
+    path = _write_config(tmp_path, "account: [unclosed\n")
+    with pytest.raises(ConfigError, match="Синтаксическая ошибка YAML"):
+        load_config(path)
+
+
+def test_load_config_or_exit_prints_diagnostics_without_traceback(tmp_path, capsys):
+    """#1278, граница CLI: диагностика в stderr + exit 1, без Python traceback."""
+    path = _write_config(tmp_path, "- resume\n")
+    with pytest.raises(SystemExit) as excinfo:
+        load_config_or_exit(path)
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "Ошибка конфигурации" in err
+    assert "Traceback" not in err
+
+
+def test_cli_list_resumes_local_bad_root_yaml_exits_clean(tmp_path):
+    """#1278, приёмка из issue: `list-resumes --local` с корневым списком —
+    реальный CLI-процесс завершается exit 1 с диагностикой конфигурации,
+    stderr не содержит traceback."""
+    config = tmp_path / "config.yaml"
+    config.write_text("- resume\n", encoding="utf-8")
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(
+        filter(None, (str(Path(__file__).parents[1] / "src"), env.get("PYTHONPATH")))
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hhru_bot.cli",
+            "list-resumes",
+            "--local",
+            "--config",
+            str(config),
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+        timeout=60,
+    )
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "Ошибка конфигурации" in result.stderr
 
 
 @pytest.mark.parametrize(
