@@ -99,9 +99,11 @@ def format_funnel(funnel: Iterable[dict], fmt: str, group_key: str = "resume_id"
     header = [_GROUP_HEADERS[group_key]] + [_FUNNEL_HEADERS[c] for c in _FUNNEL_COLUMNS[1:]]
 
     if fmt == "md":
+        from .report import _md_cell
+
         lines = ["| " + " | ".join(header) + " |", "| " + " | ".join("---" for _ in header) + " |"]
         for r in _funnel_rows(rows, group_key):
-            lines.append("| " + " | ".join(r) + " |")
+            lines.append("| " + " | ".join(_md_cell(c) for c in r) + " |")
         return "\n".join(lines)
 
     # table — ASCII (переиспользуем рендер из report.py, чтобы рамка была единая)
@@ -128,9 +130,11 @@ def format_dead(dead: dict, fmt: str) -> str:
     header = [_DEAD_HEADERS["label"], _DEAD_HEADERS["value"]]
 
     if fmt == "md":
+        from .report import _md_cell
+
         lines = ["| " + " | ".join(header) + " |", "| --- | --- |"]
         for r in rows:
-            lines.append("| " + " | ".join(r) + " |")
+            lines.append("| " + " | ".join(_md_cell(c) for c in r) + " |")
         return "\n".join(lines)
 
     from .report import _ascii_table
@@ -172,12 +176,14 @@ def format_rejections(rejections: Iterable[dict], fmt: str) -> str:
         )
 
     if fmt == "md":
+        from .report import _md_cell
+
         lines = [
             "| " + " | ".join(header) + " |",
             "| " + " | ".join("---" for _ in header) + " |",
         ]
         for row in body:
-            lines.append("| " + " | ".join(row) + " |")
+            lines.append("| " + " | ".join(_md_cell(c) for c in row) + " |")
         return "\n".join(lines)
 
     from .report import _ascii_table
