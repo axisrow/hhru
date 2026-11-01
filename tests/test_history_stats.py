@@ -102,6 +102,98 @@ def test_summary_period_month_boundary(tmp_path):
     assert h.summary(resume_id=None, period="all")["apply"]["success"] == 2
 
 
+def test_summary_total_excludes_actions_without_rows(tmp_path):
+    """#1272: «Итого» — сумма строк apply/bump, а не всех action-типов.
+
+    reply/edit_* пишутся в actions, но строк в сводке не имеют — раньше они
+    молча попадали в total, и итог расходился с показанными строками
+    (строки 0, итог 2).
+    """
+    h = History(tmp_path / "h.db")
+    h.record_reply_and_action(
+        "topic1",
+        "message1",
+        vacancy_id="v1",
+        resume_id="r1",
+        status="success",
+        reason="Ответ отправлен",
+    )
+    h.record_action("r1", "v2", "apply", "success")
+    h.record_action("r1", "r1", "bump", "failed", "cooldown")
+    h.record_action("r1", "r1", "edit_education", "success", "Образование сохранено")
+
+    s = h.summary(resume_id=None, period="all")
+    assert s["apply"]["success"] == 1
+    assert s["bump"]["failed"] == 1
+    # только apply + bump; reply и edit_education в итог не входят
+    assert s["total"] == 2
+
+
+def test_summary_total_ignores_foreign_actions_with_filters(tmp_path):
+    """#1272: фильтры --resume/--period применимы и к «неучтённым» типам.
+
+    reply чужого резюме и edit_education за пределами периода не влияют на
+    итог среза — как и apply/bump тех же срезов.
+    """
+    h = History(tmp_path / "h.db")
+    h.record_action("r1", "v1", "apply", "success")
+    h.record_reply_and_action(
+        "topic1",
+        "message1",
+        vacancy_id="v9",
+        resume_id="r2",  # чужое резюме — не проходит фильтр
+        status="success",
+        reason="Ответ отправлен",
+    )
+    with h._connect() as conn:  # старый edit_education — не проходит период week
+        conn.execute(
+            "INSERT INTO actions (resume_id, vacancy_id, action, status, reason, created_at) "
+            "VALUES ('r1','r1','edit_education','success','', ?)",
+            (_iso_days_ago(30),),
+        )
+
+    scoped = h.summary(resume_id="r1", period="week")
+    assert scoped["apply"]["success"] == 1
+    assert scoped["total"] == 1
+
+    # без фильтров apply остаётся единственным учитываемым действием
+    full = h.summary(resume_id=None, period="all")
+    assert full["apply"]["success"] == 1
+    assert full["total"] == 1
+
+
+def test_summary_total_matches_rows_in_all_formats(tmp_path):
+    """#1272: table/csv/md согласованы — «Итого» равен сумме показанных строк."""
+    from hhru_bot.report import format_summary
+
+    h = History(tmp_path / "h.db")
+    h.record_reply_and_action(
+        "topic1",
+        "message1",
+        vacancy_id="v1",
+        resume_id="r1",
+        status="success",
+        reason="Ответ отправлен",
+    )
+    h.record_action("r1", "v2", "apply", "dry_run")
+    h.record_action("r1", "r1", "edit_education", "success", "Образование сохранено")
+    s = h.summary(resume_id=None, period="all")
+    rows_sum = sum(s["apply"].values()) + sum(s["bump"].values())
+    assert rows_sum == 1  # только dry_run apply
+
+    table = format_summary(s, "table")
+    table_total = next(ln for ln in table.splitlines() if "Итого" in ln)
+    assert table_total.split("|")[2].strip() == "1"
+
+    md = format_summary(s, "md")
+    md_total = next(ln for ln in md.splitlines() if "Итого" in ln)
+    assert md_total.split("|")[2].strip() == "1"
+
+    csv_out = format_summary(s, "csv")
+    lines = csv_out.strip().splitlines()
+    assert lines[-1] == "total,1,,,"
+
+
 def test_list_actions_empty(tmp_path):
     h = History(tmp_path / "h.db")
     assert h.list_actions(resume_id=None, period="all", limit=10) == []

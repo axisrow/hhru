@@ -64,7 +64,10 @@ class AnalyticsMixin:
         """Срез счётчиков action × status за период.
 
         Возвращает {"apply": {"success","dry_run","failed","uncertain"},
-        "bump": {...}, "total"}. Пустой период → все нули. resume_id=None
+        "bump": {...}, "total"}. ``total`` — сумма ТОЛЬКО типов со строкой в
+        сводке (apply/bump, #1272): прочие действия (reply, edit_* и т.п.)
+        строк не имеют и в итог не входят, иначе «Итого» расходится с
+        показанными строками. Пустой период → все нули. resume_id=None
         означает «по всем резюме».
         """
         result: dict = {
@@ -93,9 +96,11 @@ class AnalyticsMixin:
             action = row["action"]
             status = row["status"]
             cnt = row["cnt"]
+            # total считается только по типам со строкой в сводке: типы без
+            # строки (reply, edit_*) в «Итого» не попадают (#1272).
             if action in result and status in result[action]:
                 result[action][status] = cnt
-            result["total"] += cnt
+                result["total"] += cnt
         return result
 
     def reply_summary(self, resume_id: str | None, period: str) -> dict:
