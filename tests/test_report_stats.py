@@ -11,7 +11,7 @@ import io
 
 import pytest
 
-from hhru_bot.report import format_actions, format_summary
+from hhru_bot.report import format_actions, format_replies, format_summary
 
 pytestmark = pytest.mark.unit
 
@@ -173,6 +173,43 @@ def test_format_actions_csv_quotes_comma_in_reason():
     reason_col = header.index("reason")
     # значение восстанавливается корректно (csv-модуль справился с запятой)
     assert parsed[1][reason_col] == "ошибка, с запятой"
+
+
+def test_format_actions_md_escapes_pipe_backslash_newline():
+    """#1277: ``|``, ``\\`` и перенос строки в причине остаются одной ячейкой —
+    строка записи не создаёт лишних колонок и не рвёт таблицу."""
+    rows = [
+        {
+            "resume_id": "r1",
+            "vacancy_id": "703",
+            "action": "apply",
+            "status": "failed",
+            "reason": "Компания | Отдел кадров, путь C:\\temp, вторая\nстрока",
+            "created_at": "2026-10-22T17:05:58",
+        },
+        {
+            "resume_id": "r1",
+            "vacancy_id": "704",
+            "action": "apply",
+            "status": "failed",
+            # CRLF — один перенос, а не два подряд
+            "reason": "Первая\r\nВторая",
+            "created_at": "2026-10-22T17:06:58",
+        },
+    ]
+    lines = [ln for ln in format_actions(rows, "md").splitlines() if ln.strip()]
+    assert len(lines) == 4  # шапка, разделитель, две записи — перенос не рвёт строку
+    assert lines[2] == (
+        "| 2026-10-22T17:05:58 | r1 | apply | 703 | failed "
+        "| Компания \\| Отдел кадров, путь C:\\\\temp, вторая<br>строка |"
+    )
+    assert lines[3] == "| 2026-10-22T17:06:58 | r1 | apply | 704 | failed | Первая<br>Вторая |"
+
+
+def test_format_replies_md_escapes_pipe_in_template():
+    summary = {"total": 1, "period": {"success": 1, "failed": 0}, "letter_variants": {"a | b": 1}}
+    out = format_replies(summary, "md")
+    assert "a \\| b" in out
 
 
 def test_unknown_format_raises():

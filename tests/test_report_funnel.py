@@ -154,3 +154,22 @@ def test_format_rejections_md_is_pipe_table():
     out = format_rejections([], "md")
     assert "| Работодатель |" in out
     assert "---" in out
+
+
+def test_format_md_escapes_pipe_backslash_newline():
+    """#1277 (review PR #1285): ``|``/``\\``/LF в ячейках воронки не создают
+    лишних колонок и не рвут строку — общий _md_cell из report.py."""
+    funnel = format_funnel(
+        [{"search_query": "python | senior\nудалёнка", "sent": 1}], "md", group_key="search_query"
+    )
+    assert "| python \\| senior<br>удалёнка | 1 |" in funnel
+
+    rejections = format_rejections(
+        [{"employer": "Ромашка \\ Плюс", "search_query": "a | b", "rejections": 2}], "md"
+    )
+    lines = [ln for ln in rejections.splitlines() if ln.strip()]
+    assert len(lines) == 3
+    assert lines[2] == "| Ромашка \\\\ Плюс | a \\| b |  |  |  | 2 |"
+
+    dead = format_dead({"total_sent": 1, "dead": 1, "dead_rate": 100.0}, "md")
+    assert "| Доля без ответа | 100% |" in dead
