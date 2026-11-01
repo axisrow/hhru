@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import textwrap
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -16,6 +17,10 @@ from hhru_bot.history import History
 from hhru_bot.market_store import MarketStore
 
 pytestmark = pytest.mark.integration
+
+
+def _iso_days_ago(days: int) -> str:
+    return (datetime.now() - timedelta(days=days)).isoformat()
 
 
 @pytest.fixture(autouse=True)
@@ -135,6 +140,32 @@ def test_funnel_run_dead_zone_flag(capsys, tmp_path):
     out = capsys.readouterr().out
     # подпись «мёртвой зоны»
     assert "мёртв" in out.lower() or "без ответ" in out.lower()
+
+
+def test_funnel_run_dead_zone_respects_period(capsys, tmp_path):
+    """#1273: --dead ограничен --period, как и обычная воронка.
+
+    Отклик 45-дневной давности без ответа: в срезе за 1 день счётчики нулевые,
+    без ограничения периода (period=0) — считается мёртвым.
+    """
+    config = _write_config(tmp_path, _minimal_config())
+    h = History(tmp_path / "h.db")
+    h.record_action("12345", "v702", "apply", "success")
+    with h._connect() as conn:
+        conn.execute(
+            "UPDATE actions SET created_at = ? WHERE vacancy_id = ?",
+            (_iso_days_ago(45), "v702"),
+        )
+
+    funnel_cmd.run(_args(config, tmp_path / "h.db", dead=True, period=1, format="md"))
+    out = capsys.readouterr().out
+    assert "| Всего откликов (старше порога) | 0 |" in out
+    assert "| Без ответа («мёртвые») | 0 |" in out
+
+    funnel_cmd.run(_args(config, tmp_path / "h.db", dead=True, period=0, format="md"))
+    out = capsys.readouterr().out
+    assert "| Всего откликов (старше порога) | 1 |" in out
+    assert "| Без ответа («мёртвые») | 1 |" in out
 
 
 def test_funnel_run_search_query(capsys, tmp_path):

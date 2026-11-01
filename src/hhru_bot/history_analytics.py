@@ -680,7 +680,9 @@ class AnalyticsMixin:
             ).fetchall()
         return sum(1 for row in rows if row["vacancy_id"] not in seen_ids)
 
-    def dead_responses(self, days: int, resume_id: str | None = None) -> dict:
+    def dead_responses(
+        self, days: int, resume_id: str | None = None, since: str | None = None
+    ) -> dict:
         """«Мёртвая зона»: доля откликов без ответа старше N дней.
 
         Кандидат на смену письма/резюме — отклик отправлен, но ответа от
@@ -688,6 +690,10 @@ class AnalyticsMixin:
         responses-строка по вакансии (включая ``read`` — работодатель посмотрел
         резюме, это валидный сигнал; invitation/discard/response — тем более).
         JOIN по vacancy_id (как в воронке, account-scope).
+
+        ``since`` — срез ``--period`` команды funnel (#1273): кандидаты
+        дополнительно ограничиваются откликами, созданными не раньше ``since``
+        (None = за всё время, включая --period 0).
 
         total_sent здесь = отклики СТАРШЕ N дней (кандидаты стать мёртвыми), НЕ
         все отправленные (как в воронке) — поле переиспользовано, подпись в
@@ -700,6 +706,9 @@ class AnalyticsMixin:
         if resume_id is not None:
             where.append("a.resume_id = ?")
             params.append(resume_id)
+        if since is not None:
+            where.append("a.created_at >= ?")
+            params.append(since)
         clause = " WHERE " + " AND ".join(where)
 
         with self._connect() as conn:
