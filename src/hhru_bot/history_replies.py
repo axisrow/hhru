@@ -626,16 +626,32 @@ class RepliesMixin:
                 ),
             )
 
-    def test_assignments_since(self, since: datetime) -> list[dict]:
-        """Return detected test assignments newer than ``since``, newest first."""
+    def test_assignments_since(
+        self, since: datetime, *, resume_id: str | None = None
+    ) -> list[dict]:
+        """Return detected test assignments newer than ``since``, newest first.
+
+        ``resume_id`` — опциональный фильтр в стиле ``summary()``/``count_skipped()``.
+        Записи с ``resume_id IS NULL`` (атрибуция чата резюме недоступна —
+        см. docstring ``record_test_assigned``) фильтром НЕ приписываются
+        конкретному резюме (#1274): без фильтра считаются все, с фильтром —
+        только однозначно атрибутированные указанному резюме.
+        """
+        clause = ""
+        params: list = [since.isoformat()]
+        if resume_id is not None:
+            clause = " AND resume_id = ?"
+            params.append(resume_id)
         with self._connect() as conn:
             rows = conn.execute(
                 """
                 SELECT resume_id, vacancy_id, topic, employer, test_url, message_text, detected_at
                 FROM test_assignments
-                WHERE detected_at > ?
+                WHERE detected_at > ?"""
+                + clause
+                + """
                 ORDER BY detected_at DESC, id DESC
                 """,
-                (since.isoformat(),),
+                params,
             ).fetchall()
         return [dict(row) for row in rows]

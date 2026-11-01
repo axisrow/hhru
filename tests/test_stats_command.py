@@ -90,6 +90,51 @@ def test_stats_run_shows_pending_external_tests(capsys, tmp_path):
     assert "Тестов ожидает: 1" in out
 
 
+def test_stats_run_pending_tests_respect_resume_filter(capsys, tmp_path):
+    """--resume фильтрует счётчик ожидающих тестов (#1274).
+
+    Регрессия: pending_tests считался без resume_id — тест, записанный для
+    другого резюме, показывался у выбранного (alpha видел тест beta)."""
+    config = _write_config(tmp_path, _minimal_config())
+    h = History(tmp_path / "h.db")
+    # запись атрибутирована resume_id 99999, а не 12345 (выбранное "python")
+    h.record_test_assigned(
+        "99999", "v9", "topic-9", "Acme", "https://example.test/quiz", "Пройдите тест"
+    )
+
+    stats_cmd.run(_args(config, tmp_path / "h.db", resume="python"))
+    out = capsys.readouterr().out
+    assert "Тестов ожидает: 0" in out
+
+    stats_cmd.run(_args(config, tmp_path / "h.db"))
+    out = capsys.readouterr().out
+    assert "Тестов ожидает: 1" in out
+
+
+def test_stats_run_pending_tests_count_own_resume_and_skip_unknown(capsys, tmp_path):
+    """Собственные назначения считаются, NULL-атрибуция резюме не приписывается (#1274).
+
+    resume_id IS NULL — атрибуция чата резюме недоступна (см.
+    record_test_assigned): такая запись не приписывается конкретному резюме,
+    но видна в аккаунтном срезе (без --resume)."""
+    config = _write_config(tmp_path, _minimal_config())
+    h = History(tmp_path / "h.db")
+    h.record_test_assigned(
+        "12345", "v1", "topic-1", "Acme", "https://example.test/quiz", "Тест для python"
+    )
+    h.record_test_assigned(
+        None, "v2", "topic-2", "Acme", "https://example.test/quiz2", "Атрибуция неизвестна"
+    )
+
+    stats_cmd.run(_args(config, tmp_path / "h.db", resume="python"))
+    out = capsys.readouterr().out
+    assert "Тестов ожидает: 1" in out
+
+    stats_cmd.run(_args(config, tmp_path / "h.db"))
+    out = capsys.readouterr().out
+    assert "Тестов ожидает: 2" in out
+
+
 def test_stats_run_list_mode_md(capsys, tmp_path):
     config = _write_config(tmp_path, _minimal_config())
     h = History(tmp_path / "h.db")
