@@ -60,3 +60,18 @@ def test_ascii_table_emoji_widens_column():
     border = table.splitlines()[0]
     assert border == "+----+"
     _lines_aligned(table)
+
+
+def test_ascii_table_newline_in_cell_keeps_frame():
+    """#1276: LF/CRLF/CR в ячейке не рвут рамку и не смещают соседние колонки —
+    перенос показывается видимым литералом ``\\n``, а не сырым переводом строки."""
+    for br in ("\n", "\r\n", "\r"):
+        table = _ascii_table(
+            ["text", "n"],
+            [[f"Первая{br}Вторая", "42"], ["Первая Вторая", "42"]],
+            footer=["Итог", "2"],
+        )
+        _lines_aligned(table)
+        data = table.splitlines()[3]  # первая строка тела: рамка, шапка, рамка
+        assert "Первая\\nВторая" in data  # видимый литерал \n
+        assert data.rstrip().endswith("| 42 |")  # соседняя колонка в той же строке

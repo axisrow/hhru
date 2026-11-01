@@ -93,7 +93,7 @@ def format_summary(summary: dict, fmt: str) -> str:
         sep = "| " + " | ".join(["---"] * len(header)) + " |"
         lines = ["| " + " | ".join(header) + " |", sep]
         for r in rows:
-            lines.append("| " + " | ".join(r) + " |")
+            lines.append("| " + " | ".join(_md_cell(c) for c in r) + " |")
         tail = " | ".join([str(total)] + [""] * (len(header) - 2))
         lines.append(f"| **Итого** | {tail} |")
         return "\n".join(lines)
@@ -121,7 +121,7 @@ def format_replies(summary: dict, fmt: str) -> str:
         return out.getvalue().rstrip("\n")
     if fmt == "md":
         return "| Метрика | Значение |\n| --- | --- |\n" + "\n".join(
-            f"| {label} | {value} |" for label, value in rows
+            f"| {_md_cell(label)} | {_md_cell(value)} |" for label, value in rows
         )
     return _ascii_table(header, rows)
 
@@ -152,9 +152,8 @@ def format_actions(rows: Iterable[dict], fmt: str) -> str:
 
     if fmt == "md":
         lines = ["| " + " | ".join(header) + " |", "| " + " | ".join("---" for _ in header) + " |"]
-        body = _action_rows(rows)
-        for r in body:
-            lines.append("| " + " | ".join(r) + " |")
+        for r in _action_rows(rows):
+            lines.append("| " + " | ".join(_md_cell(c) for c in r) + " |")
         return "\n".join(lines)
 
     # table — ASCII
@@ -198,9 +197,34 @@ def pad(text: str, width: int) -> str:
     return text + " " * max(0, width - display_width(text))
 
 
+def _oneline(text: str) -> str:
+    """Переносы строк в ячейке — видимый литерал ``\\n`` (#1276): сырой LF/CRLF/CR
+    разрывает рамку ASCII-таблицы и смещает соседние колонки."""
+    return text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\\n")
+
+
+def _md_cell(text: str) -> str:
+    """Экранировать значение ячейки Markdown-таблицы (#1277): ``\\\\`` и ``\\|`` —
+    GFM-escape (порядок важен: сначала обратная косая, иначе заэкранируется сам
+    escape), перенос строки — ``<br>`` (сырой LF заканчивает строку таблицы)."""
+    return (
+        text.replace("\\", "\\\\")
+        .replace("|", "\\|")
+        .replace("\r\n", "\n")
+        .replace("\r", "\n")
+        .replace("\n", "<br>")
+    )
+
+
 def _ascii_table(header: list[str], rows: list[list[str]], footer: list[str] | None = None) -> str:
     """Простая ASCII-таблица с рамкой +---+. footer (если есть) — итоговая строка
     без попадания в основное тело. Пустое тело всё равно рисует шапку."""
+    # #1276: нормализуем переносы ДО расчёта ширин — widths считаются по тому,
+    # что реально рисуется.
+    header = [_oneline(str(h)) for h in header]
+    rows = [[_oneline(str(c)) for c in r] for r in rows]
+    if footer is not None:
+        footer = [_oneline(str(f)) for f in footer]
     all_rows = [header, *rows]
     if footer is not None:
         all_rows = [header, *rows, footer]
