@@ -260,3 +260,46 @@ def test_stats_run_relocation_counter_absent_in_csv(capsys, tmp_path):
     out = capsys.readouterr().out
 
     assert "Relocation" not in out
+
+
+def test_stats_run_list_limit_beyond_sqlite_int64_exits_with_clear_error(capsys, tmp_path):
+    """#1279: --limit за пределами int64 — [FAIL] на stderr + exit 1.
+
+    Раньше значение долетало до list_actions и падало OverflowError
+    («Python int too large to convert to SQLite INTEGER») с traceback.
+    """
+    config = _write_config(tmp_path, _minimal_config())
+
+    with pytest.raises(SystemExit) as exc:
+        stats_cmd.run(_args(config, tmp_path / "h.db", list=True, limit=2**63))
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert err.startswith("[FAIL]")
+    assert "--limit" in err
+
+
+def test_stats_run_list_limit_sqlite_int64_max_boundary_works(capsys, tmp_path):
+    """#1279: верхняя граница int64 (2**63-1) остаётся допустимой."""
+    config = _write_config(tmp_path, _minimal_config())
+    h = History(tmp_path / "h.db")
+    h.record_action("r1", "v1", "apply", "success")
+
+    stats_cmd.run(_args(config, tmp_path / "h.db", list=True, limit=2**63 - 1))
+    out = capsys.readouterr().out
+
+    assert "v1" in out
+
+
+def test_stats_run_list_negative_limit_keeps_sqlite_semantics(capsys, tmp_path):
+    """#1279: отрицательный --limit — не новый отказ: SQLite LIMIT -1 = без
+    лимита, прежняя семантика сохранена."""
+    config = _write_config(tmp_path, _minimal_config())
+    h = History(tmp_path / "h.db")
+    h.record_action("r1", "v1", "apply", "success")
+    h.record_action("r1", "v2", "apply", "success")
+
+    stats_cmd.run(_args(config, tmp_path / "h.db", list=True, limit=-1))
+    out = capsys.readouterr().out
+
+    assert "v1" in out and "v2" in out

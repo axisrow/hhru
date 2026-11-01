@@ -79,6 +79,24 @@ def _resolve_resume_id(args: argparse.Namespace):
     return resume.resume_id
 
 
+def _check_days_range(value: int, flag: str) -> None:
+    """#1279: период в днях за пределами календаря datetime — понятный отказ
+    аргумента ([FAIL] + exit 1), а не OverflowError traceback из вычитания
+    timedelta. Верхняя граница зависит от текущей даты (datetime.min → сейчас),
+    поэтому проверяется вычислением, а не константой. Период 0 и отрицательные
+    сюда не попадают — их прежняя семантика («за всё время») не меняется.
+    """
+    from datetime import datetime
+
+    max_days = (datetime.now() - datetime.min).days
+    if value > max_days:
+        print(
+            f"[FAIL] {flag} {value} слишком велик: максимум {max_days} дней",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
 def run(args: argparse.Namespace) -> None:
     from datetime import datetime, timedelta
 
@@ -89,6 +107,7 @@ def run(args: argparse.Namespace) -> None:
 
     # since: отсечка created_at за N дней, либо None (period=0 → за всё время).
     if args.period and args.period > 0:
+        _check_days_range(args.period, "--period")
         since = (datetime.now() - timedelta(days=args.period)).isoformat()
     else:
         since = None
@@ -109,6 +128,8 @@ def run(args: argparse.Namespace) -> None:
         # «мёртвая зона»: доля откликов без ответа старше --dead-days.
         # since (--period) ограничивает выборку тем же периодом, что и воронку (#1273);
         # market.db не нужен: этап считается только по actions × responses.
+        # --dead-days — та же арифметика timedelta в dead_responses, тот же гард (#1279).
+        _check_days_range(args.dead_days, "--dead-days")
         dead = history.dead_responses(days=args.dead_days, resume_id=resume_id, since=since)
         print(format_dead(dead, args.format))
         return

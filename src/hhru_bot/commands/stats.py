@@ -13,6 +13,13 @@ from datetime import datetime, timedelta
 PERIODS = ("today", "week", "month", "all")
 FORMATS = ("table", "csv", "md")
 
+# #1279: параметр за пределами int64 падает OverflowError уже в недрах SQLite
+# («Python int too large to convert to SQLite INTEGER») — валидируем ДО запроса.
+# Граничная семантика сохранена: 2**63-1 (максимум int64) и отрицательные
+# значения (SQLite трактует LIMIT -1 как «без лимита») работают как раньше.
+_SQLITE_INT_MIN = -(2**63)
+_SQLITE_INT_MAX = 2**63 - 1
+
 
 def register(subparsers) -> None:
     p = subparsers.add_parser("stats", help="Сводка и экспорт истории откликов/поднятий")
@@ -82,6 +89,14 @@ def run(args: argparse.Namespace) -> None:
     pending_tests = len(history.test_assignments_since(test_since, resume_id=resume_id))
 
     if args.list:
+        # #1279: понятный отказ аргумента вместо OverflowError из list_actions.
+        if not _SQLITE_INT_MIN <= args.limit <= _SQLITE_INT_MAX:
+            print(
+                f"[FAIL] --limit {args.limit} вне диапазона SQLite INTEGER: "
+                f"от {_SQLITE_INT_MIN} до {_SQLITE_INT_MAX}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         rows = history.list_actions(resume_id=resume_id, period=args.period, limit=args.limit)
         print(format_actions(rows, args.format))
     else:
