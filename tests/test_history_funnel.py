@@ -399,6 +399,46 @@ def test_dead_responses_empty_is_zero(tmp_path):
     assert dead["dead_rate"] == 0.0
 
 
+def test_dead_responses_respects_since(tmp_path):
+    """#1273: since (--period) ограничивает «мёртвую зону» тем же периодом, что и воронку.
+
+    Отклик 45-дневной давности без ответа не должен попадать в срез за 1 день.
+    """
+    h = History(tmp_path / "h.db")
+    h.record_action("r1", "v1", "apply", "success")
+    with h._connect() as conn:
+        conn.execute(
+            "UPDATE actions SET created_at = ? WHERE vacancy_id = ?",
+            (_iso_days_ago(45), "v1"),
+        )
+
+    # без since (за всё время, --period 0) отклик — кандидат в мёртвые
+    dead = h.dead_responses(days=14)
+    assert dead["total_sent"] == 1
+    assert dead["dead"] == 1
+
+    # срез за последний день исключает 45-дневный отклик
+    dead = h.dead_responses(days=14, since=_iso_days_ago(1))
+    assert dead["total_sent"] == 0
+    assert dead["dead"] == 0
+    assert dead["dead_rate"] == 0.0
+
+
+def test_dead_responses_since_keeps_in_window_stale(tmp_path):
+    """since не пере-фильтровывает: старый отклик ВНУТРИ периода считается."""
+    h = History(tmp_path / "h.db")
+    h.record_action("r1", "v2", "apply", "success")
+    with h._connect() as conn:
+        conn.execute(
+            "UPDATE actions SET created_at = ? WHERE vacancy_id = ?",
+            (_iso_days_ago(20), "v2"),
+        )
+
+    dead = h.dead_responses(days=14, since=_iso_days_ago(30))
+    assert dead["total_sent"] == 1
+    assert dead["dead"] == 1
+
+
 # --- rejections_by_employer: отказы с атрибуцией карточки -------------------
 
 

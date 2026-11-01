@@ -107,8 +107,9 @@ def run(args: argparse.Namespace) -> None:
 
     if args.dead:
         # «мёртвая зона»: доля откликов без ответа старше --dead-days.
+        # since (--period) ограничивает выборку тем же периодом, что и воронку (#1273);
         # market.db не нужен: этап считается только по actions × responses.
-        dead = history.dead_responses(days=args.dead_days, resume_id=resume_id)
+        dead = history.dead_responses(days=args.dead_days, resume_id=resume_id, since=since)
         print(format_dead(dead, args.format))
         return
 
