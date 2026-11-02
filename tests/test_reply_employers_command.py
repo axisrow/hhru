@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 
 import pytest
 
@@ -177,6 +178,83 @@ def test_negative_limit_rejected_before_confirmation(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         command.run(_args(limit=-1))
     assert exc.value.code == 1
+
+
+# --- #1288: --limit/--after-days за пределами представимости -----------------
+
+
+def test_limit_beyond_sqlite_int64_rejected_before_confirmation(monkeypatch, capsys):
+    """#1288: --limit сверх int64 — [FAIL] на stderr + exit 1 до confirm_write:
+    раньше OverflowError падал при связке LIMIT в SQLite (reply_candidates)."""
+
+    def _boom(*a, **k):
+        raise AssertionError("must fail before reaching confirm_write")
+
+    monkeypatch.setattr(command, "confirm_write", _boom)
+    with pytest.raises(SystemExit) as exc:
+        command.run(_args(limit=2**63))
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert err.startswith("[FAIL]")
+    assert "--limit" in err
+
+
+def test_limit_sqlite_int64_max_boundary_runs_plan(tmp_path, monkeypatch, capsys):
+    """#1288: верхняя граница int64 (2**63-1) остаётся допустимой —
+    dry-run доходит до плана (binding и в command_runs, и в LIMIT ?)."""
+    history = History(tmp_path / "history.db")
+    _seed_response(history, vacancy_id="1", topic="tp1")
+    Ref = TopicRef("tp1", "c1", None, "96223331")
+    chat = ChatMessage(author="employer", inbound_marker="m1")
+
+    def _boom_send(*a, **k):
+        raise AssertionError("dry-run must never call send_reply_current")
+
+    _patch_common(
+        monkeypatch,
+        history,
+        refs=[Ref],
+        reader=lambda page, topic, refs: chat,
+        send=_boom_send,
+    )
+
+    command.run(_args(limit=2**63 - 1, dry_run=True))
+
+    assert "[DRY-RUN]" in capsys.readouterr().out
+
+
+def test_after_days_beyond_calendar_rejected_before_confirmation(monkeypatch, capsys):
+    """#1288: --after-days больше представимого календарём datetime — [FAIL]
+    + exit 1, а не OverflowError из timedelta-вычитания в follow_up_candidates
+    (тот же гард _check_days_range, что у funnel --period, #1279)."""
+
+    def _boom(*a, **k):
+        raise AssertionError("must fail before reaching confirm_write")
+
+    monkeypatch.setattr(command, "confirm_write", _boom)
+    with pytest.raises(SystemExit) as exc:
+        command.run(_args(follow_up=True, after_days=10**9))
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert err.startswith("[FAIL]")
+    assert "--after-days" in err
+
+
+def test_after_days_max_representable_boundary_runs(tmp_path, monkeypatch, capsys):
+    """#1288: максимум представимого периода остаётся допустимым.
+
+    Граница = дни от datetime.min до сегодня (минус 1 — она ползёт с датой,
+    точное равенство флакует на полуночной смене дня, см. тест #1279 funnel).
+    """
+    history = History(tmp_path / "history.db")
+    _patch_common(monkeypatch, history, refs=[])
+    max_days = (datetime.now() - datetime.min).days
+
+    command.run(_args(follow_up=True, after_days=max_days - 1, dry_run=True))
+
+    out = capsys.readouterr().out
+    assert "Напоминания работодателям" in out
+    assert "[INFO] В локальной истории нет чатов для проверки." in out
 
 
 # --- plan from local history, zero hh.ru requests during planning ----------

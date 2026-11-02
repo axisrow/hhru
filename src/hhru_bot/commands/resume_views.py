@@ -48,6 +48,11 @@ def run(args: argparse.Namespace) -> None:
 
     if args.limit < 1 or args.max_pages < 1:
         raise ValueError("limit и max-pages должны быть >= 1")
+    # #1288: значение за пределами int64 — гард до чтения страниц:
+    # браузер при таком отказе даже не открывается.
+    from ._common import check_sqlite_int
+
+    check_sqlite_int(args.limit, "--limit")
     config = load_config_or_exit(args.config)
     history = History(args.history)
     if args.resume is None:

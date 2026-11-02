@@ -125,6 +125,11 @@ def _limit(args: argparse.Namespace) -> int:
     if limit < 1:
         print("[FAIL] --limit должен быть >= 1", file=sys.stderr)
         sys.exit(1)
+    # #1288: значение за пределами int64 падало OverflowError при связке
+    # LIMIT в SQLite — гард до запроса (общий для pending/learn/audit).
+    from ._common import check_sqlite_int
+
+    check_sqlite_int(limit, "--limit")
     return limit
 
 

@@ -17,6 +17,11 @@ def run(args: argparse.Namespace) -> None:
     from ..market_store import open_market
     from ..report import _ascii_table
     from ..skill_gaps import aggregate_skill_gaps
+    from ._common import check_sqlite_int
+
+    # #1288: значение за пределами int64 — гард до использования (отказ
+    # не требует ни конфига, ни market.db).
+    check_sqlite_int(args.limit, "--limit")
 
     current: list[str] = []
     if args.resume:

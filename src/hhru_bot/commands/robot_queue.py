@@ -15,6 +15,11 @@ def run(args) -> None:
     if args.limit < 1:
         print("[FAIL] --limit должен быть >= 1")
         return
+    # #1288: значение за пределами int64 падало OverflowError при связке
+    # LIMIT в SQLite — гард до запроса.
+    from ._common import check_sqlite_int
+
+    check_sqlite_int(args.limit, "--limit")
     history = History(args.history)
     rows = history.list_robot_questionnaires(args.limit)
     if not rows:
