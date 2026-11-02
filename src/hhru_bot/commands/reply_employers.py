@@ -646,6 +646,11 @@ def run(args: argparse.Namespace):
     if args.limit < 0:
         print("[FAIL] --limit не может быть отрицательным", file=sys.stderr)
         sys.exit(1)
+    # #1288: значение за пределами int64 падало OverflowError при связке
+    # LIMIT в SQLite (reply_candidates / start_command_run) — гард до запроса.
+    from ._common import check_sqlite_int
+
+    check_sqlite_int(args.limit, "--limit")
     max_pages = getattr(args, "max_pages", 5)
     if max_pages < 1:
         print(f"[FAIL] --max-pages должен быть >= 1 (получено {max_pages}).", file=sys.stderr)
@@ -661,6 +666,13 @@ def run(args: argparse.Namespace):
     if after_days is not None and after_days < 1:
         print(f"[FAIL] --after-days должен быть >= 1 (получено {after_days}).", file=sys.stderr)
         sys.exit(1)
+    if after_days is not None:
+        # #1288: период в днях за пределами календаря datetime — понятный отказ,
+        # а не OverflowError из timedelta-вычитания в follow_up_candidates
+        # (тот же гард, что у funnel --period/--dead-days, #1279).
+        from .funnel import _check_days_range
+
+        _check_days_range(after_days, "--after-days")
     if follow_up and getattr(args, "suggest", False):
         print("[FAIL] --suggest несовместим с --follow-up", file=sys.stderr)
         sys.exit(1)

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import sys
 
 from ..config import AppConfig, ResumeConfig
 
@@ -113,6 +114,26 @@ def _nonnegative_limit(value: str) -> int:
     if parsed < 0:
         raise argparse.ArgumentTypeError("--limit не может быть отрицательным")
     return parsed
+
+
+# #1288: числовой флаг за пределами int64 падает OverflowError уже в недрах
+# SQLite («Python int too large to convert to SQLite INTEGER») — валидируем
+# до запроса. Тот же класс, что #1279 у stats --list (у которого свой
+# инлайн-гард); здесь общий хелпер для остальных команд. Более узкие проверки
+# команд (>= 1, >= 0) стоят раньше и не меняются.
+_SQLITE_INT_MIN = -(2**63)
+_SQLITE_INT_MAX = 2**63 - 1
+
+
+def check_sqlite_int(value: int, flag: str) -> None:
+    if _SQLITE_INT_MIN <= value <= _SQLITE_INT_MAX:
+        return
+    print(
+        f"[FAIL] {flag} {value} вне диапазона SQLite INTEGER: "
+        f"от {_SQLITE_INT_MIN} до {_SQLITE_INT_MAX}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 
 def add_limit_arg(p: argparse.ArgumentParser) -> None:

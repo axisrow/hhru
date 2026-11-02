@@ -26,6 +26,10 @@ def _history(args):
 
 
 def list_run(args: argparse.Namespace) -> None:
+    # #1288: LIMIT за пределами int64 — гард до запроса.
+    from ._common import check_sqlite_int
+
+    check_sqlite_int(args.limit, "--limit")
     rows = _history(args).list_unresolved_uncertain(args.limit)
     if not rows:
         print("[INFO] Очередь uncertain пуста.")

@@ -288,6 +288,49 @@ def test_pending_empty_prints_info(capsys, tmp_path):
     assert "[INFO]" in capsys.readouterr().out
 
 
+# --- #1288: --limit за пределами int64 ---------------------------------------
+
+
+def test_pending_limit_beyond_sqlite_int64_exits_with_clear_error(capsys, tmp_path):
+    """#1288: --limit за пределами int64 — [FAIL] на stderr + exit 1.
+
+    Раньше значение долетало до list_questionnaire_pending и падало
+    OverflowError («Python int too large to convert to SQLite INTEGER»)
+    с traceback — тот же класс, что #1279 у stats --list.
+    """
+    with pytest.raises(SystemExit) as exc:
+        cmd.run_pending(_args(tmp_path, limit=2**63))
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert err.startswith("[FAIL]")
+    assert "--limit" in err
+
+
+def test_pending_limit_sqlite_int64_max_boundary_works(capsys, tmp_path):
+    """#1288: верхняя граница int64 (2**63-1) остаётся допустимой."""
+    History(tmp_path / "h.db").record_questionnaire_pending(
+        "r1", [{"text": "Ваш опыт?", "kind": "text", "reason": "нет шаблона"}]
+    )
+
+    cmd.run_pending(_args(tmp_path, limit=2**63 - 1))
+
+    assert "Ваш опыт?" in capsys.readouterr().out
+
+
+def test_learn_limit_beyond_sqlite_int64_exits_with_clear_error(capsys, tmp_path, monkeypatch):
+    """#1288: questionnaire learn --limit — тот же гард в _limit(); в не-TTY
+    режиме флаг игнорируется и нового отказа не добавляет (см.
+    test_learn_is_a_noop_without_a_tty)."""
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+
+    with pytest.raises(SystemExit) as exc:
+        cmd.run_learn(_args(tmp_path, limit=2**63))
+
+    assert exc.value.code == 1
+    assert "[FAIL]" in capsys.readouterr().err
+
+
 def test_output_has_no_emoji(capsys, tmp_path):
     cmd.run_set(_args(tmp_path, answer="от 250000"))
     cmd.run_templates(_args(tmp_path))
