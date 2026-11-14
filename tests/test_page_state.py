@@ -39,7 +39,14 @@ def test_hhru_live_extension_manifest_and_detector_contract():
     # его top-level биндинги (классификация) в том же isolated world.
     # #1160: executor.js между ними — примитивы исполнителя тоже потребляют
     # policy-ядро, а content.js диспетчеризует его функции.
-    assert manifest["content_scripts"][0]["js"] == ["policy.js", "executor.js", "content.js"]
+    # #1227: overlay_registry.js (данные реестра известных модалок) ДО
+    # executor.js — evaluateClickPolicy читает строки таблицы в момент клика.
+    assert manifest["content_scripts"][0]["js"] == [
+        "policy.js",
+        "overlay_registry.js",
+        "executor.js",
+        "content.js",
+    ]
     source = (root / "content.js").read_text()
     policy = (root / "policy.js").read_text()
     # policy.js ОПРЕДЕЛЯЕТ классификацию, content.js только потребляет.

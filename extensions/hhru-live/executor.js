@@ -30,8 +30,10 @@
 // 'apply_flow_picker_overlay'), and the relocation-confirm case (#1251):
 // allowApply + ambiguous + the exact relocation-warning-confirm target is
 // the apply flow's own intercepting popup (context
-// 'apply_flow_relocation_alert'). Stage-1 auto-dismiss semantics (no
-// allowApply) are unchanged.
+// 'apply_flow_relocation_alert') — the target anchor and the issued context
+// live as a DATA ROW of the known-overlays registry (overlay_registry.js,
+// #1227), not as a code branch here; a rowless target keeps the ambiguous
+// refusal. Stage-1 auto-dismiss semantics (no allowApply) are unchanged.
 //
 // The ONLY click in this file is the real-event sequence inside clickElement()
 // (#1249: pointerdown → mousedown → pointerup → mouseup → click, как у
@@ -181,20 +183,18 @@ function evaluateClickPolicy(target, allowApply) {
     // #1251 (боевой census live-канала 2026-10-09, дамп CLI-пути 2026-09-16):
     // попап подтверждения переезда (alertdialog/ambiguous/close=0) монтируется
     // ВМЕСТО формы отклика, поэтому гейт «открытая apply-модалка» (панель
-    // пикера выше) здесь неприменим. Якорь узнавания — ТОЧНЫЙ data-qa кнопки
-    // на самой цели: «Все равно откликнуться» battle-подтверждён (187
-    // срабатываний CLI-пути) и специфичен одному попапу hh.ru. Клик мутирует
-    // профиль (hh.ru сам меняет сигнал «готов к переезду», решение владельца
-    // #1132), поэтому проходит только как явная allowApply-команда сценария
-    // при allow_relocation; abort «Отменить» и прочие контролы попапа не
-    // адресуются — тот же ambiguous отказывает. Dangerous-текст проверен выше
-    // и не пускает и с флагом.
-    if (
-      allowApply === true
-      && disposition === 'ambiguous'
-      && (target.getAttribute('data-qa') || '') === 'relocation-warning-confirm'
-    ) {
-      return { verdict: 'allowed', context: 'apply_flow_relocation_alert' };
+    // пикера выше) здесь неприменим. Якорь узнавания и контекст — СТРОКА
+    // РЕЕСТРА overlay_registry.js (данные, #1227): точный data-qa кнопки
+    // «Все равно откликнуться» battle-подтверждён (187 срабатываний CLI-пути)
+    // и специфичен одному попапу hh.ru. Клик мутирует профиль (hh.ru сам
+    // меняет сигнал «готов к переезду», решение владельца #1132), поэтому
+    // проходит только как явная allowApply-команда сценария при
+    // allow_relocation; abort «Отменить» и прочие контролы попапа строки не
+    // имеют — тот же ambiguous отказывает. Dangerous-текст проверен выше
+    // и не пускает и с флагом; записи нет — прежний отказ (fail-closed).
+    if (allowApply === true && disposition === 'ambiguous') {
+      const rule = findOverlayContextRule(target);
+      if (rule) return { verdict: 'allowed', context: rule.context };
     }
     return { verdict: 'refused', reason: disposition, overlay: info };
   }

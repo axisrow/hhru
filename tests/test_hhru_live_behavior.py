@@ -601,6 +601,24 @@ def test_hhru_live_executor_relocation_confirm_allowed_with_permission():
     assert scenario["clickCount"] == 1
 
 
+def test_hhru_live_executor_relocation_context_served_from_registry_data():
+    """Реестр как данные (#1227): контекст разрешения переезда приходит из
+    строки таблицы overlay_registry.js, а не из if-ветки executor.js.
+    Подмена context в таблице видна в вердикте (сентинел в ответе
+    исполнителя — решение управляется данными); опустошение таблицы
+    возвращает прежний fail-closed ambiguous-отказ без клика (записи нет —
+    действия нет)."""
+    scenario = _run_executor_scenario("relocation_context_served_from_registry_data")
+    assert scenario["fromDataContext"] == "apply_flow_relocation_alert"
+    assert scenario["fromDataClicked"] is True
+    assert scenario["sentinelContext"] == "sentinel_context_from_data"
+    assert scenario["sentinelClicked"] is True
+    assert scenario["withoutRowError"] == "policy_refused"
+    assert scenario["withoutRowReason"] == "ambiguous"
+    assert scenario["withoutRowClicked"] is None
+    assert scenario["clickCount"] == 2
+
+
 def test_hhru_live_executor_click_invisible_target_refused():
     """Действие по невидимому контролю — действие без оснований: отказ до
     policy-гейта, кликов 0."""
