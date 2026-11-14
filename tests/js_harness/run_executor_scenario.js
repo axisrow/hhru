@@ -383,6 +383,48 @@ const SCENARIOS = {
     };
   },
 
+  // Реестр как данные (#1227): контекст разрешённого клика приходит ИЗ
+  // СТРОКИ ТАБЛИЦЫ overlay_registry.js, а не из if-ветки executor.js.
+  // Подмена context в таблице видна в вердикте (сентинел в ответе
+  // исполнителя — решение управляется данными), опустошение таблицы
+  // возвращает прежний fail-closed ambiguous-отказ без клика (записи нет —
+  // действия нет, граница #1229/#1227).
+  relocation_context_served_from_registry_data: async () => {
+    const title = el('div', { 'data-qa': 'relocation-warning-title' }, 'Вы откликаетесь на вакансию в другой стране');
+    const confirm = el('button', { 'data-qa': 'relocation-warning-confirm' }, 'Все равно откликнуться');
+    const popup = el('div', { class: 'magritte-desktop-container', role: 'alertdialog' }, '');
+    popup.appendChild(title);
+    popup.appendChild(confirm);
+    append(popup);
+    const clickConfirm = () => send({
+      action: 'click_element',
+      dataQa: 'relocation-warning-confirm',
+      allowApply: true,
+      waitFor: { state: 'visible', dataQa: 'relocation-warning-confirm', timeoutMs: 1000 },
+    });
+    const fromData = await clickConfirm();
+    // Spread обязателен: splice без него вставил бы массив как ОДИН элемент.
+    vm.runInContext(
+      `OVERLAY_CONTEXT_RULES.splice(0, OVERLAY_CONTEXT_RULES.length, ...${JSON.stringify([
+        { id: 'sentinel', targetQa: 'relocation-warning-confirm', context: 'sentinel_context_from_data' },
+      ])})`,
+      context,
+    );
+    const sentinel = await clickConfirm();
+    vm.runInContext('OVERLAY_CONTEXT_RULES.splice(0, OVERLAY_CONTEXT_RULES.length)', context);
+    const withoutRow = await clickConfirm();
+    return {
+      fromDataContext: fromData.result?.policy?.context ?? null,
+      fromDataClicked: fromData.result?.clicked ?? null,
+      sentinelContext: sentinel.result?.policy?.context ?? null,
+      sentinelClicked: sentinel.result?.clicked ?? null,
+      withoutRowError: withoutRow.error ?? null,
+      withoutRowReason: withoutRow.policy?.reason ?? null,
+      withoutRowClicked: withoutRow.result?.clicked ?? null,
+      clickCount: env.clicks.length,
+    };
+  },
+
   // fill_element (#1162): the letter text lands in the field through the
   // native setter path and is read back; a mismatch is ok:false, never a
   // silent half-filled form.

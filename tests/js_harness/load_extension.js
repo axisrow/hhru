@@ -1,4 +1,5 @@
 // Loads the extension sources in manifest order (policy.js, then
+// overlay_registry.js — the known-overlays data layer (#1227), then
 // executor.js (#1160), then content.js) so every scenario runner mirrors
 // what MV3 does for content_scripts of the same isolated world: top-level
 // bindings of earlier files are visible to later ones.
@@ -10,7 +11,7 @@ const path = require('path');
 const EXTENSION_DIR = path.join(__dirname, '..', '..', 'extensions', 'hhru-live');
 
 function loadExtensionSources() {
-  return ['policy.js', 'executor.js', 'content.js'].map((name) => ({
+  return ['policy.js', 'overlay_registry.js', 'executor.js', 'content.js'].map((name) => ({
     name,
     source: fs.readFileSync(path.join(EXTENSION_DIR, name), 'utf8'),
   }));

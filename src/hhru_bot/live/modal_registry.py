@@ -165,7 +165,10 @@ HH_PRO_PROMO_MODAL = ModalRecord(
 # apply/blockers.handle_post_click_blockers); без флага — честный skip.
 # Действие unknown = refuse-вердикт policy называет модалку в census, решение
 # (клик confirm / skip) принимает сценарий по конфигу, как у гео-диалога
-# (#1226) — с той разницей, что кнопки здесь подтверждены боем.
+# (#1226) — с той разницей, что кнопки здесь подтверждены боем. Точный
+# data-qa кнопки confirm адресует запись JS-реестра расширения
+# (extensions/hhru-live/overlay_registry.js, #1227) — строки двух слоёв
+# связывает стюард tests/test_overlay_registry_js.py.
 RELOCATION_MODAL = ModalRecord(
     name="relocation_confirm",
     text_marker="Вы откликаетесь на вакансию в другой стране",
